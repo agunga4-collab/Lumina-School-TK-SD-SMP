@@ -118,6 +118,8 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       return;
     }
 
+    let isCancelled = false;
+
     const fetchCutoffAttendance = async () => {
       setLoadingAttendance(true);
       try {
@@ -134,6 +136,8 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
         const snap = await getDocs(attQuery);
         const docs = snap.docs.map(d => d.data());
+
+        if (isCancelled) return;
 
         const rosterSet = new Set(safeStudents.map(s => s.id));
         const map: Record<string, { sickLeave: number | null; excusedLeave: number | null; absent: number | null }> = {};
@@ -167,13 +171,17 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
         setCutoffAttendanceMap(map);
       } catch (err) {
-        console.error("Error fetching cutoff attendance:", err);
+        if (!isCancelled) console.error("Error fetching cutoff attendance:", err);
       } finally {
-        setLoadingAttendance(false);
+        if (!isCancelled) setLoadingAttendance(false);
       }
     };
 
     fetchCutoffAttendance();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedClass?.id, academicYear, semester, cutoffDateRaw, studentsKey]);
 
   React.useEffect(() => {

@@ -4,7 +4,7 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw, FileSpreadsheet,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck, AlertTriangle, FileWarning
+  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck, AlertTriangle, FileWarning, Shield
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -862,6 +862,7 @@ export function Layout() {
                       )}
                       
                       <NavItem to="/junior-high/midterm" icon={<FileCheck size={18} />} label="Midterm Report" />
+                      <NavItem to="/junior-high/midterm-sn" icon={<Shield size={18} />} label="Midterm Report SN" />
                       <NavItem to="/junior-high/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
 
                       {/* Daily Notes Dropdown */}

@@ -1475,6 +1475,28 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /jh_sn_students/{docId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
+      allow create, update, delete: if isActive() && (isAdmin() || isJuniorHighStaffAuthorized());
+    }
+
+    match /jh_sn_midterm_reports/{reportId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isJuniorHighTeacher());
+      allow create, update: if isActive() && (isJuniorHighStaffAuthorized() || isJuniorHighTeacher() || isJuniorHighStaff());
+      allow delete: if isActive() && (isAdmin() || isJuniorHighStaffAuthorized());
+    }
+
+    match /jh_sn_midterm_published_reports/{reportId} {
+      allow read: if isActive() && (
+        isJuniorHighStaff() ||
+        isJuniorHighTeacher() ||
+        isAdmin() ||
+        (resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)))
+      );
+      allow create, update: if isActive() && (isJuniorHighStaffAuthorized() || isJuniorHighTeacher() || isJuniorHighStaff());
+      allow delete: if isActive() && isAdmin();
+    }
+
     match /elem_midterm_master_goals/{goalId} {
       allow read, write: if isElementaryStaff();
     }

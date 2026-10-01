@@ -1,0 +1,579 @@
+import * as React from 'react';
+import { Component } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
+import {
+  FileText, Calendar, Users, Layers, Sparkles,
+  Shield, UserCheck, AlertCircle, RefreshCw, Layers3,
+  BookOpen, MessageSquare, FileCheck2, Send, BarChart3
+} from 'lucide-react';
+import { useAuth } from '../../../context/AuthContext';
+import { useAcademicYear } from '../../../context/AcademicYearContext';
+import { getClasses, getReportConfig, getStudentById } from '../../../lib/firebase';
+import {
+  fetchSnStudentsForClass,
+  fetchSnMidtermReport,
+  fetchSnPublishedReportsForClass,
+  canUserManageSnStatus
+} from '../../../services/juniorHighSnMidtermService';
+import { ManageSnStudentsModal } from './ManageSnStudentsModal';
+import { MidtermSnLearningGoalsTab } from './MidtermSnLearningGoalsTab';
+import { MidtermSnGeneralCommentsTab } from './MidtermSnGeneralCommentsTab';
+import { MidtermSnReviewApprovalGenComTab } from './MidtermSnReviewApprovalGenComTab';
+import { MidtermSnPublishPdfTab } from './MidtermSnPublishPdfTab';
+import { MidtermSnRekapTab } from './MidtermSnRekapTab';
+import type { SnStudentDoc, SnMidtermReportDoc, SnPublishedMidtermReportDoc } from '../../../types/midtermSnReport';
+import type { Class, Student, ReportConfig, User } from '../../../types';
+
+class SnErrorBoundary extends Component<any, any> {
+  props: any;
+  state: any;
+  setState: any;
+
+  constructor(props: any) {
+    super(props);
+    this.props = props;
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Rapor Midterm SN Error Boundary:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 max-w-2xl mx-auto my-12 bg-white rounded-3xl border border-rose-200 shadow-sm text-center space-y-6">
+          <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
+            <AlertCircle size={32} />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">
+              Modul Rapor Midterm SN Mengalami Kendala
+            </h2>
+            <p className="text-xs text-slate-500 font-medium">
+              Gagal memuat data rapor. Silakan muat ulang halaman.
+            </p>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-2xl transition-all cursor-pointer"
+          >
+            Muat Ulang
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function MidtermSnReportPageContent() {
+  const { currentUser, profile } = useAuth();
+  const effectiveUser = (currentUser || profile) as User;
+  const { activeYear } = useAcademicYear();
+
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Primary Context Filters
+  const [selectedYear, setSelectedYear] = React.useState<string>(
+    searchParams.get('academicYear') || activeYear || '2025/2026'
+  );
+  const [selectedSemester, setSelectedSemester] = React.useState<string>(
+    searchParams.get('semester') === '2' ? '2' : '1'
+  );
+  const [selectedTerm, setSelectedTerm] = React.useState<string>(
+    searchParams.get('period') === '2' ? '2' : '1'
+  );
+
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(
+    searchParams.get('classId') || ''
+  );
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string>(
+    searchParams.get('studentId') || ''
+  );
+
+  const [activeTab, setActiveTab] = React.useState<
+    'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP'
+  >((searchParams.get('tab') as any) || 'GOALS');
+
+  // Loaded Collections
+  const [allClasses, setAllClasses] = React.useState<Class[]>([]);
+  const [selectedClass, setSelectedClass] = React.useState<Class | null>(null);
+
+  const [snStudents, setSnStudents] = React.useState<SnStudentDoc[]>([]);
+  const [selectedStudentObj, setSelectedStudentObj] = React.useState<Student | null>(null);
+
+  const [snReportDoc, setSnReportDoc] = React.useState<SnMidtermReportDoc | null>(null);
+  const [publishedReports, setPublishedReports] = React.useState<SnPublishedMidtermReportDoc[]>([]);
+  const [reportConfig, setReportConfig] = React.useState<ReportConfig | null>(null);
+
+  const [loading, setLoading] = React.useState<boolean>(false);
+  const [isManageModalOpen, setIsManageModalOpen] = React.useState<boolean>(false);
+
+  const canManageSn = canUserManageSnStatus(effectiveUser);
+
+  // Load Classes & Config on Mount
+  React.useEffect(() => {
+    const initMaster = async () => {
+      try {
+        const [classList, cfg] = await Promise.all([
+          getClasses(),
+          getReportConfig('JUNIOR_HIGH')
+        ]);
+        const jhClasses = (classList || []).filter(
+          (c) => c.unitId === 'JUNIOR_HIGH' || (c as any).unit === 'JUNIOR_HIGH'
+        );
+        setAllClasses(jhClasses);
+        setReportConfig(cfg);
+
+        if (!selectedClassId && jhClasses.length > 0) {
+          setSelectedClassId(jhClasses[0].id);
+        }
+      } catch (err) {
+        console.error("Gagal memuat daftar kelas Junior High:", err);
+      }
+    };
+    initMaster();
+  }, []);
+
+  // Update selected class object when classId changes
+  React.useEffect(() => {
+    if (selectedClassId && allClasses.length > 0) {
+      const cls = allClasses.find((c) => c.id === selectedClassId) || null;
+      setSelectedClass(cls);
+    } else {
+      setSelectedClass(null);
+    }
+  }, [selectedClassId, allClasses]);
+
+  // Sync Search Params to URL
+  React.useEffect(() => {
+    const params = new URLSearchParams();
+    if (selectedYear) params.set('academicYear', selectedYear);
+    if (selectedSemester) params.set('semester', selectedSemester);
+    if (selectedTerm) params.set('period', selectedTerm);
+    if (selectedClassId) params.set('classId', selectedClassId);
+    if (selectedStudentId) params.set('studentId', selectedStudentId);
+    if (activeTab) params.set('tab', activeTab);
+    setSearchParams(params, { replace: true });
+  }, [
+    selectedYear,
+    selectedSemester,
+    selectedTerm,
+    selectedClassId,
+    selectedStudentId,
+    activeTab,
+    setSearchParams
+  ]);
+
+  // Load SN Students list when class or academic year changes
+  const loadSnStudents = React.useCallback(async () => {
+    if (!selectedClassId) {
+      setSnStudents([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const list = await fetchSnStudentsForClass(selectedClassId, selectedYear);
+      setSnStudents(list || []);
+
+      // If current selectedStudentId is not in the list, auto-select first or clear
+      if (selectedStudentId) {
+        const match = list.find((s) => s.studentId === selectedStudentId);
+        if (!match) {
+          if (list.length > 0) {
+            setSelectedStudentId(list[0].studentId);
+          } else {
+            setSelectedStudentId('');
+            setSelectedStudentObj(null);
+            setSnReportDoc(null);
+          }
+        }
+      } else if (list.length > 0) {
+        setSelectedStudentId(list[0].studentId);
+      }
+    } catch (err) {
+      console.error("Gagal memuat siswa SN:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedClassId, selectedYear]);
+
+  React.useEffect(() => {
+    loadSnStudents();
+  }, [loadSnStudents]);
+
+  // Load Selected SN Student's Data & Report Doc
+  const loadStudentReport = React.useCallback(async () => {
+    if (!selectedStudentId || !selectedClass) {
+      setSelectedStudentObj(null);
+      setSnReportDoc(null);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const [stdDoc, publishedList] = await Promise.all([
+        getStudentById(selectedStudentId),
+        fetchSnPublishedReportsForClass(selectedClass.id, selectedYear, selectedSemester, selectedTerm)
+      ]);
+
+      const studentData: Student = stdDoc || {
+        id: selectedStudentId,
+        name: snStudents.find((s) => s.studentId === selectedStudentId)?.studentName || 'Siswa SN',
+        classId: selectedClass.id,
+        currentUnit: 'JUNIOR_HIGH'
+      };
+
+      setSelectedStudentObj(studentData);
+      setPublishedReports(publishedList || []);
+
+      const report = await fetchSnMidtermReport(
+        studentData,
+        selectedClass,
+        selectedYear,
+        selectedSemester,
+        selectedTerm
+      );
+
+      setSnReportDoc(report);
+    } catch (err) {
+      console.error("Gagal memuat rapor siswa SN:", err);
+      toast.error('Gagal memuat data rapor siswa SN.');
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    selectedStudentId,
+    selectedClass,
+    selectedYear,
+    selectedSemester,
+    selectedTerm,
+    snStudents
+  ]);
+
+  React.useEffect(() => {
+    loadStudentReport();
+  }, [loadStudentReport]);
+
+  const handleSelectStudent = (studentId: string) => {
+    // Reset state before loading new student
+    setSelectedStudentId(studentId);
+    setSelectedStudentObj(null);
+    setSnReportDoc(null);
+  };
+
+  return (
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 font-sans pb-16">
+      {/* Page Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="p-2.5 bg-purple-100 text-purple-900 rounded-2xl">
+              <Shield size={22} />
+            </span>
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">
+                Rapor Midterm SN (Junior High)
+              </h1>
+              <p className="text-xs text-slate-500 font-semibold">
+                Modul Khusus Pengelolaan Rapor Midterm Siswa Special Needs
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Dynamic Context Pills */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="px-3.5 py-1.5 bg-purple-50 text-purple-950 border border-purple-200 rounded-xl text-xs font-black">
+            Kelas: <span className="text-purple-700">{selectedClass?.name || 'Belum Dipilih'}</span>
+          </div>
+          <div className="px-3.5 py-1.5 bg-amber-50 text-amber-950 border border-amber-200 rounded-xl text-xs font-black">
+            Siswa SN: <span className="text-amber-700">{selectedStudentObj?.name || 'Belum Dipilih'}</span>
+          </div>
+          {canManageSn && selectedClass && (
+            <button
+              onClick={() => setIsManageModalOpen(true)}
+              className="px-3.5 py-1.5 bg-purple-900 hover:bg-purple-800 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <UserCheck size={14} /> Kelola Siswa SN
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Selectors Bar */}
+      <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
+        {/* Academic Year */}
+        <div>
+          <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+            Tahun Ajaran
+          </label>
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+          >
+            <option value="2024/2025">2024/2025</option>
+            <option value="2025/2026">2025/2026</option>
+            <option value="2026/2027">2026/2027</option>
+          </select>
+        </div>
+
+        {/* Semester */}
+        <div>
+          <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+            Semester
+          </label>
+          <select
+            value={selectedSemester}
+            onChange={(e) => setSelectedSemester(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+          >
+            <option value="1">Semester 1</option>
+            <option value="2">Semester 2</option>
+          </select>
+        </div>
+
+        {/* Midterm Period */}
+        <div>
+          <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+            Periode Midterm
+          </label>
+          <select
+            value={selectedTerm}
+            onChange={(e) => setSelectedTerm(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+          >
+            <option value="1">Midterm 1</option>
+            <option value="2">Midterm 2</option>
+          </select>
+        </div>
+
+        {/* Class Selector */}
+        <div>
+          <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
+            Pilih Kelas
+          </label>
+          <select
+            value={selectedClassId}
+            onChange={(e) => {
+              setSelectedClassId(e.target.value);
+              setSelectedStudentId('');
+            }}
+            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+          >
+            {allClasses.map((cls) => (
+              <option key={cls.id} value={cls.id}>
+                {cls.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* SN Student Selector */}
+        <div>
+          <label className="block text-[10px] font-black uppercase text-purple-700 mb-1">
+            Siswa Special Needs (SN)
+          </label>
+          <select
+            value={selectedStudentId}
+            onChange={(e) => handleSelectStudent(e.target.value)}
+            disabled={snStudents.length === 0}
+            className="w-full px-3 py-2 bg-purple-50 border border-purple-300 rounded-2xl text-xs font-black text-purple-950 focus:outline-none focus:ring-2 focus:ring-purple-500/30 disabled:opacity-50"
+          >
+            {snStudents.length === 0 ? (
+              <option value="">-- Belum ada Siswa SN --</option>
+            ) : (
+              snStudents.map((sn) => (
+                <option key={sn.studentId} value={sn.studentId}>
+                  {sn.studentName}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
+      </div>
+
+      {/* No SN Students Alert Banner */}
+      {snStudents.length === 0 && selectedClass && (
+        <div className="p-5 bg-purple-50 border border-purple-200 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-purple-950">
+          <div className="flex items-center gap-3">
+            <Shield size={20} className="text-purple-700 shrink-0" />
+            <p className="font-bold">
+              Belum ada siswa SN yang ditetapkan Admin pada kelas <span className="underline">{selectedClass.name}</span>.
+            </p>
+          </div>
+          {canManageSn && (
+            <button
+              onClick={() => setIsManageModalOpen(true)}
+              className="px-4 py-2 bg-purple-900 text-white rounded-xl font-bold hover:bg-purple-800 transition-all shadow-2xs shrink-0 cursor-pointer"
+            >
+              Tetapkan Siswa SN
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-slate-200 overflow-x-auto pb-1">
+        <button
+          onClick={() => setActiveTab('GOALS')}
+          disabled={!selectedStudentId}
+          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+            activeTab === 'GOALS'
+              ? 'bg-purple-900 text-white shadow-xs'
+              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+          }`}
+        >
+          <BookOpen size={16} /> 1. Learning Goals & Remarks
+        </button>
+
+        <button
+          onClick={() => setActiveTab('COMMENTS')}
+          disabled={!selectedStudentId}
+          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+            activeTab === 'COMMENTS'
+              ? 'bg-purple-900 text-white shadow-xs'
+              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+          }`}
+        >
+          <MessageSquare size={16} /> 2. General Comments
+        </button>
+
+        <button
+          onClick={() => setActiveTab('REVIEW')}
+          disabled={!selectedStudentId}
+          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+            activeTab === 'REVIEW'
+              ? 'bg-purple-900 text-white shadow-xs'
+              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+          }`}
+        >
+          <FileCheck2 size={16} /> 3. Review & Approval GenCom
+        </button>
+
+        <button
+          onClick={() => setActiveTab('PUBLISH')}
+          disabled={!selectedStudentId}
+          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+            activeTab === 'PUBLISH'
+              ? 'bg-purple-900 text-white shadow-xs'
+              : 'text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed'
+          }`}
+        >
+          <Send size={16} /> 4. Publish PDF
+        </button>
+
+        <button
+          onClick={() => setActiveTab('REKAP')}
+          className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+            activeTab === 'REKAP'
+              ? 'bg-purple-900 text-white shadow-xs'
+              : 'text-slate-500 hover:bg-slate-100'
+          }`}
+        >
+          <BarChart3 size={16} /> 5. Rekap Publikasi & Tracking
+        </button>
+      </div>
+
+      {/* Tab Content Display */}
+      {!selectedStudentId && activeTab !== 'REKAP' ? (
+        <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 space-y-3">
+          <AlertCircle size={36} className="mx-auto text-amber-500" />
+          <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+            Siswa SN Belum Dipilih
+          </h3>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            Silakan pilih siswa SN dari dropdown di atas untuk mengelola Learning Goals, General Comment, atau merilis rapor.
+          </p>
+        </div>
+      ) : (
+        selectedClass && (
+          <>
+            {activeTab === 'GOALS' && selectedStudentObj && snReportDoc && (
+              <MidtermSnLearningGoalsTab
+                currentUser={effectiveUser}
+                selectedClass={selectedClass}
+                selectedStudent={selectedStudentObj}
+                reportDoc={snReportDoc}
+                onRefreshData={loadStudentReport}
+                loading={loading}
+              />
+            )}
+
+            {activeTab === 'COMMENTS' && selectedStudentObj && snReportDoc && (
+              <MidtermSnGeneralCommentsTab
+                currentUser={effectiveUser}
+                selectedClass={selectedClass}
+                selectedStudent={selectedStudentObj}
+                reportDoc={snReportDoc}
+                onRefreshData={loadStudentReport}
+                loading={loading}
+              />
+            )}
+
+            {activeTab === 'REVIEW' && selectedStudentObj && snReportDoc && (
+              <MidtermSnReviewApprovalGenComTab
+                currentUser={effectiveUser}
+                selectedClass={selectedClass}
+                selectedStudent={selectedStudentObj}
+                reportDoc={snReportDoc}
+                onRefreshData={loadStudentReport}
+                loading={loading}
+              />
+            )}
+
+            {activeTab === 'PUBLISH' && selectedStudentObj && snReportDoc && (
+              <MidtermSnPublishPdfTab
+                currentUser={effectiveUser}
+                selectedClass={selectedClass}
+                selectedStudent={selectedStudentObj}
+                reportDoc={snReportDoc}
+                publishedReports={publishedReports}
+                reportConfig={reportConfig}
+                onRefreshData={loadStudentReport}
+                loading={loading}
+              />
+            )}
+
+            {activeTab === 'REKAP' && (
+              <MidtermSnRekapTab
+                selectedClass={selectedClass}
+                snStudents={snStudents}
+                publishedReports={publishedReports}
+                onRefreshData={loadSnStudents}
+                loading={loading}
+              />
+            )}
+          </>
+        )
+      )}
+
+      {/* Admin Manage SN Students Modal */}
+      {selectedClass && (
+        <ManageSnStudentsModal
+          isOpen={isManageModalOpen}
+          onClose={() => setIsManageModalOpen(false)}
+          selectedClass={selectedClass}
+          academicYear={selectedYear}
+          currentUser={effectiveUser}
+          onRefresh={loadSnStudents}
+        />
+      )}
+    </div>
+  );
+}
+
+export default function MidtermSnReportPage() {
+  return (
+    <SnErrorBoundary>
+      <MidtermSnReportPageContent />
+    </SnErrorBoundary>
+  );
+}

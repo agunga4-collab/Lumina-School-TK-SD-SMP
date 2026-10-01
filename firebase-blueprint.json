@@ -1321,6 +1321,15 @@
     "midterm_folders/{folderId}": {
       "schema": "MidtermFolder",
       "description": "Cached structures and parent directory references on Google Drive for Midterm reports."
+    },
+    "jh_sn_students/{docId}": {
+      "description": "SN designated students list managed by Admin."
+    },
+    "jh_sn_midterm_reports/{reportId}": {
+      "description": "Custom SN midterm report drafts."
+    },
+    "jh_sn_midterm_published_reports/{reportId}": {
+      "description": "Published SN midterm reports and PDF snapshots."
     }
   }
 }

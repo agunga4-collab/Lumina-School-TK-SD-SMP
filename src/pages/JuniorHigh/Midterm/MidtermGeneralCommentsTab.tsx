@@ -86,6 +86,8 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   React.useEffect(() => {
     if (!selectedClass) return;
 
+    let isCancelled = false;
+
     const loadConfig = async () => {
       setLoadingConfig(true);
       try {
@@ -95,6 +97,8 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
           semester,
           midtermTerm
         );
+
+        if (isCancelled) return;
 
         if (config) {
           setCustomStrengths(Array.isArray(config.customStrengths) ? config.customStrengths : []);
@@ -112,13 +116,17 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
           setNeedsImprovementEnabled(true);
         }
       } catch (err) {
-        console.error('Error loading class comments config:', err);
+        if (!isCancelled) console.error('Error loading class comments config:', err);
       } finally {
-        setLoadingConfig(false);
+        if (!isCancelled) setLoadingConfig(false);
       }
     };
 
     loadConfig();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedClass?.id, academicYear, semester, midtermTerm]);
 
   // Helper to merge banks and avoid case-insensitive/trimmed duplicates
