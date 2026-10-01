@@ -2981,7 +2981,7 @@ export default function MidtermSummary() {
     const startDateVal = getAcademicYearAttendanceStartDate(activeYear || '2026/2027');
 
     return (
-      <div className="space-y-1 mt-3.5 break-inside-avoid">
+      <div className="space-y-1 mt-2.5 break-inside-avoid">
         <h4 className="text-[11.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-0.5 font-sans">
           Catatan Ketidakhadiran
         </h4>
@@ -2994,38 +2994,38 @@ export default function MidtermSummary() {
             Tanggal penandatanganan rapor tidak boleh sebelum 20 Juli pada tahun ajaran terkait.
           </div>
         ) : (
-          <table className="w-full border-collapse border border-gray-300 text-left text-[10px] text-gray-900 font-sans mt-2">
+          <table className="w-full border-collapse border border-gray-300 text-left text-[10px] text-gray-900 font-sans mt-1.5">
             <thead>
               <tr className="bg-gray-100/80 text-gray-900 border-b border-gray-300">
-                <th className="py-1.5 px-3 font-bold border-r border-gray-300 text-center w-[10%]">No</th>
-                <th className="py-1.5 px-3 font-bold border-r border-gray-300 w-[45%]">Alasan</th>
-                <th className="py-1.5 px-3 font-bold border-r border-gray-300 text-center w-[20%]">Jumlah</th>
-                <th className="py-1.5 px-3 font-bold w-[25%]">Keterangan</th>
+                <th className="py-1 px-3 font-bold border-r border-gray-300 text-center w-[10%]">No</th>
+                <th className="py-1 px-3 font-bold border-r border-gray-300 w-[45%]">Alasan</th>
+                <th className="py-1 px-3 font-bold border-r border-gray-300 text-center w-[20%]">Jumlah</th>
+                <th className="py-1 px-3 font-bold w-[25%]">Keterangan</th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-b border-gray-300">
-                <td className="py-1.5 px-3 text-center border-r border-gray-300">1</td>
-                <td className="py-1.5 px-3 border-r border-gray-300 font-medium">Sakit</td>
-                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-bold">{attendance.sick} Hari</td>
-                <td className="py-1.5 px-3 text-gray-400">-</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300">1</td>
+                <td className="py-1 px-3 border-r border-gray-300 font-medium">Sakit</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300 font-bold">{attendance.sick} Hari</td>
+                <td className="py-1 px-3 text-gray-400">-</td>
               </tr>
               <tr className="border-b border-gray-300">
-                <td className="py-1.5 px-3 text-center border-r border-gray-300">2</td>
-                <td className="py-1.5 px-3 border-r border-gray-300 font-medium">Izin</td>
-                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-bold">{attendance.izin} Hari</td>
-                <td className="py-1.5 px-3 text-gray-400">-</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300">2</td>
+                <td className="py-1 px-3 border-r border-gray-300 font-medium">Izin</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300 font-bold">{attendance.izin} Hari</td>
+                <td className="py-1 px-3 text-gray-400">-</td>
               </tr>
               <tr className="border-b border-gray-300">
-                <td className="py-1.5 px-3 text-center border-r border-gray-300">3</td>
-                <td className="py-1.5 px-3 border-r border-gray-300 font-medium">Tanpa Keterangan</td>
-                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-bold">{attendance.noNews} Hari</td>
-                <td className="py-1.5 px-3 text-gray-400">-</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300">3</td>
+                <td className="py-1 px-3 border-r border-gray-300 font-medium">Tanpa Keterangan</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300 font-bold">{attendance.noNews} Hari</td>
+                <td className="py-1 px-3 text-gray-400">-</td>
               </tr>
               <tr className="bg-gray-50 font-bold">
-                <td className="py-1.5 px-3 text-center border-r border-gray-300" colSpan={2}>Total Ketidakhadiran</td>
-                <td className="py-1.5 px-3 text-center border-r border-gray-300 font-black text-gray-950">{attendance.sick + attendance.izin + attendance.noNews} Hari</td>
-                <td className="py-1.5 px-3 text-gray-400">-</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300" colSpan={2}>Total Ketidakhadiran</td>
+                <td className="py-1 px-3 text-center border-r border-gray-300 font-black text-gray-950">{attendance.sick + attendance.izin + attendance.noNews} Hari</td>
+                <td className="py-1 px-3 text-gray-400">-</td>
               </tr>
             </tbody>
           </table>
@@ -3036,7 +3036,7 @@ export default function MidtermSummary() {
 
   const renderSignaturesSection = () => {
     return (
-      <div className="pt-3.5 border-t border-dashed border-gray-200 mt-4 shrink-0 break-inside-avoid">
+      <div className="pt-3 border-t border-dashed border-gray-200 mt-3 shrink-0 break-inside-avoid">
         <div className="text-left text-[10px] font-sans text-gray-900 mb-2 pl-1">
           Depok, {formattedSigningDate}
         </div>
@@ -4556,7 +4556,7 @@ export default function MidtermSummary() {
                               <span className="text-[11.5px] font-bold text-emerald-900 block text-center border-b border-emerald-100 pb-2 mb-2.5 font-sans">
                                 Nilai Agama & Budi Pekerti
                               </span>
-                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[10.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[11.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
                                 {getAgamaGoalText() ? (
                                   getAgamaGoalText()
                                 ) : (
@@ -4570,7 +4570,7 @@ export default function MidtermSummary() {
                               <span className="text-[11.5px] font-bold text-emerald-900 block text-center border-b border-emerald-100 pb-2 mb-2.5 font-sans">
                                 Jati Diri
                               </span>
-                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[10.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[11.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
                                 {getJatiDiriGoalText() ? (
                                   getJatiDiriGoalText()
                                 ) : (
@@ -4584,7 +4584,7 @@ export default function MidtermSummary() {
                               <span className="text-[11.5px] font-bold text-emerald-900 block text-center border-b border-emerald-100 pb-2 mb-2.5 font-sans">
                                 Dasar-dasar Literasi & STEAM
                               </span>
-                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[10.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
+                              <div className="overflow-y-auto flex-1 pr-1 custom-scrollbar text-[11.5px] text-gray-900 leading-[1.4] space-y-2 font-serif whitespace-pre-wrap">
                                 {getSteamGoalText() ? (
                                   getSteamGoalText()
                                 ) : (
@@ -4611,7 +4611,7 @@ export default function MidtermSummary() {
                            <h3 className="text-[11.5px] font-bold text-emerald-900 uppercase tracking-widest border-b border-dashed border-emerald-600 pb-0.5 text-center font-sans">
                              General Comments (Catatan Umum)
                            </h3>
-                           <div id="preview-comments-container" className="bg-white border border-gray-200 p-3.5 sm:p-4 rounded-xl text-[10px] sm:text-[10.5px] text-gray-900 font-serif leading-[1.45] h-auto">
+                           <div id="preview-comments-container" className="bg-white border border-gray-200 p-3.5 sm:p-4 rounded-xl text-[11px] sm:text-[11.5px] text-gray-900 font-serif leading-[1.45] h-auto">
                              {getGeneralCommentText() ? (
                                renderFormattedParagraphs(getGeneralCommentText(), true)
                              ) : (
