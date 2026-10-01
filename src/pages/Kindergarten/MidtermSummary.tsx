@@ -4430,16 +4430,6 @@ export default function MidtermSummary() {
                           {isPublishing ? "Menerbitkan Ulang..." : "Terbitkan Ulang"}
                         </button>
                       )}
-
-                      {canPublishForCurrentClass && selectedStudentObj && (
-                        <button
-                          onClick={() => handleSendReport(selectedStudentObj)}
-                          className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
-                        >
-                          <Send size={14} />
-                          <span>Kirim Ulang</span>
-                        </button>
-                      )}
                     </>
                   ) : (
                     /* Case 2: Not yet published */
