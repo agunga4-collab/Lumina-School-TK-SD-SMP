@@ -34,6 +34,7 @@ interface ElementaryMidtermPdfTemplateProps {
   reportSigningLocation?: string;
   attendanceCutoffDate?: string;
   showAttendanceRecap?: boolean;
+  onReadyChange?: (ready: boolean) => void;
 }
 
 interface PageData {
@@ -73,7 +74,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   reportSigningDate,
   reportSigningLocation = 'Depok',
   attendanceCutoffDate,
-  showAttendanceRecap
+  showAttendanceRecap,
+  onReadyChange
 }) => {
   // Derive student identity
   const effShowAttendanceRecap = snapshot && ('showAttendanceRecap' in snapshot)
@@ -297,186 +299,286 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   };
 
   // ----------------------------------------------------
-  // DYNAMIC PACKING ALGORITHM FOR PAGINATION NATURAL
+  // REAL-DOM MEASUREMENT AND GREEDY PACKING SYSTEM
   // ----------------------------------------------------
-  const getGoalHeight = (text: string) => {
-    if (!text) return 8;
-    const len = text.length;
-    // Tight estimations conforming to standard row height (text row ≈ 4.5mm + padding/margins ≈ 2mm)
-    if (len > 180) return 18;
-    if (len > 120) return 14;
-    if (len > 60) return 11;
-    return 8;
-  };
+  const [pages, setPages] = React.useState<PageData[]>([]);
+  const [isMeasured, setIsMeasured] = React.useState<boolean>(false);
+  const [paginationError, setPaginationError] = React.useState<boolean>(false);
 
-  const buildPages = (): PageData[] => {
-    const pagesList: PageData[] = [];
-    let currentPageIndex = 0;
-    // Page 1 budget = 297mm - 15mm (top) - 20mm (bottom/footer) - 15mm (logo) - 22mm (identity) = 225 mm.
-    let remainingHeight = 225; 
+  React.useEffect(() => {
+    let isCancelled = false;
 
-    let currentPage: PageData = {
-      academicSubjects: [],
-      projectSubjects: [],
-      showAcademicHeader: false,
-      showProjectHeader: false,
-      showFinalBlock: false
-    };
+    const measureAndPaginate = async () => {
+      // 1. Wait for character-accurate system fonts to load completely
+      if (typeof (document as any).fonts?.ready !== 'undefined') {
+        await (document as any).fonts.ready;
+      }
+      
+      // Let React complete initial mount rendering of the hidden measurer container
+      await new Promise(r => setTimeout(r, 200));
 
-    const startNewPage = () => {
-      pagesList.push(currentPage);
-      currentPageIndex++;
-      // Subsequent pages budget = 297mm - 15mm (top) - 20mm (bottom/footer) - 15mm (logo) = 247 mm.
-      remainingHeight = 247; 
-      currentPage = {
-        academicSubjects: [],
-        projectSubjects: [],
-        showAcademicHeader: false,
-        showProjectHeader: false,
-        showFinalBlock: false
-      };
-    };
+      if (isCancelled) return;
 
-    // 1. Pack Academic Subjects
-    if (academicSubjects.length > 0) {
-      currentPage.showAcademicHeader = true;
-      remainingHeight -= 6;  // Section title (6mm)
-      remainingHeight -= 10; // Table standard header (thead) (10mm)
+      try {
+        // 2. Measure Logo Header height
+        const logoEl = document.getElementById('meas-logo-header');
+        const logoHeight = logoEl ? logoEl.getBoundingClientRect().height + 16 : 70; // includes mb-4 (16px)
 
-      academicSubjects.forEach((subj, sIdx) => {
-        const originalNo = sIdx + 1;
-        let goalIndex = 0;
-        let isContinued = false;
+        // 3. Measure Student Identity Grid height
+        const identityEl = document.getElementById('meas-student-identity');
+        const identityHeight = identityEl ? identityEl.getBoundingClientRect().height + 16 : 90; // includes mb-4
 
-        while (goalIndex < subj.goals.length) {
-          const currentGoal = subj.goals[goalIndex];
-          const firstGoalHeight = getGoalHeight(currentGoal.text);
-          // Minimum spacing to render subject header (6mm) + first remaining goal
-          const minRequired = 6 + firstGoalHeight;
+        // 4. Measure Section Title header height
+        const academicTitleEl = document.getElementById('meas-academic-title');
+        const academicTitleHeight = academicTitleEl ? academicTitleEl.getBoundingClientRect().height + 8 : 25; // includes mb-2 (8px)
 
-          if (remainingHeight < minRequired) {
-            startNewPage();
-            currentPage.showAcademicHeader = true;
-            remainingHeight -= 6;  // Section title
-            remainingHeight -= 10; // Table standard header
+        // 5. Measure standard Table Header (thead) height
+        const tableHeaderEl = document.getElementById('meas-table-header');
+        const tableHeaderHeight = tableHeaderEl ? tableHeaderEl.getBoundingClientRect().height : 45;
+
+        // 6. Measure Final Block (General Comments, legends, attendance, signatures) height
+        const finalBlockEl = document.getElementById('meas-final-block');
+        const finalBlockHeight = finalBlockEl ? finalBlockEl.getBoundingClientRect().height : 500;
+
+        // Helper getters for subject row heights and individual goal row heights
+        const acadSubjHeaderHeight = (idx: number) => {
+          const el = document.getElementById(`meas-subj-row-acad-${idx}`);
+          return el ? el.getBoundingClientRect().height : 30;
+        };
+
+        const acadGoalRowHeight = (sIdx: number, gIdx: number) => {
+          const el = document.getElementById(`meas-goal-row-acad-${sIdx}-${gIdx}`);
+          return el ? el.getBoundingClientRect().height : 40;
+        };
+
+        const projSubjHeaderHeight = (idx: number) => {
+          const el = document.getElementById(`meas-subj-row-proj-${idx}`);
+          return el ? el.getBoundingClientRect().height : 30;
+        };
+
+        const projGoalRowHeight = (sIdx: number, gIdx: number) => {
+          const el = document.getElementById(`meas-goal-row-proj-${sIdx}-${gIdx}`);
+          return el ? el.getBoundingClientRect().height : 40;
+        };
+
+        // Paginator Constants
+        const PAGE_HEIGHT = 1123; // A4 height at 96 DPI
+        const PADDING_TOP = 57;   // 15mm
+        const PADDING_BOTTOM = 76; // 20mm
+        const CONTENT_CAPACITY = PAGE_HEIGHT - PADDING_TOP - PADDING_BOTTOM; // 990px
+
+        const pagesList: PageData[] = [];
+        let currentPageIndex = 0;
+        
+        // Page 1 budget: logo and identity are present
+        let remainingHeight = CONTENT_CAPACITY - logoHeight - identityHeight; 
+
+        let currentPage: PageData = {
+          academicSubjects: [],
+          projectSubjects: [],
+          showAcademicHeader: false,
+          showProjectHeader: false,
+          showFinalBlock: false
+        };
+
+        const startNewPage = () => {
+          pagesList.push(currentPage);
+          currentPageIndex++;
+          // Page 2+ budget: only logo is present
+          remainingHeight = CONTENT_CAPACITY - logoHeight; 
+          currentPage = {
+            academicSubjects: [],
+            projectSubjects: [],
+            showAcademicHeader: false,
+            showProjectHeader: false,
+            showFinalBlock: false
+          };
+        };
+
+        // 1. Pack Academic Subjects
+        if (academicSubjects.length > 0) {
+          currentPage.showAcademicHeader = true;
+          remainingHeight -= academicTitleHeight;
+          
+          if (currentPage.academicSubjects.length === 0) {
+            remainingHeight -= tableHeaderHeight;
           }
 
-          // Deduct subject header
-          remainingHeight -= 6;
+          academicSubjects.forEach((subj, sIdx) => {
+            const originalNo = sIdx + 1;
+            let goalIndex = 0;
+            let isContinued = false;
 
-          // Pack goals that fit
-          const goalsForThisPage: typeof subj.goals = [];
-          while (goalIndex < subj.goals.length) {
-            const goal = subj.goals[goalIndex];
-            const gh = getGoalHeight(goal.text);
-            if (remainingHeight >= gh) {
-              goalsForThisPage.push(goal);
-              remainingHeight -= gh;
-              goalIndex++;
-            } else {
-              break;
+            while (goalIndex < subj.goals.length) {
+              const currentGoal = subj.goals[goalIndex];
+              const firstGoalHeight = acadGoalRowHeight(sIdx, goalIndex);
+              const isTableOpenOnPage = currentPage.academicSubjects.length > 0;
+              const tableHeaderCost = isTableOpenOnPage ? 0 : tableHeaderHeight;
+              
+              // Spacing cost required: Subject title row + Table thead header + first goal row
+              const minRequired = acadSubjHeaderHeight(sIdx) + tableHeaderCost + firstGoalHeight;
+
+              if (remainingHeight < minRequired) {
+                startNewPage();
+                currentPage.showAcademicHeader = true;
+                remainingHeight -= academicTitleHeight;
+              }
+
+              if (currentPage.academicSubjects.length === 0) {
+                remainingHeight -= tableHeaderHeight;
+              }
+
+              remainingHeight -= acadSubjHeaderHeight(sIdx);
+
+              // Greedy pack goals into the current page slice
+              const goalsForThisPage: typeof subj.goals = [];
+              while (goalIndex < subj.goals.length) {
+                const goal = subj.goals[goalIndex];
+                const gh = acadGoalRowHeight(sIdx, goalIndex);
+                if (remainingHeight >= gh) {
+                  goalsForThisPage.push(goal);
+                  remainingHeight -= gh;
+                  goalIndex++;
+                } else {
+                  break;
+                }
+              }
+
+              if (goalsForThisPage.length > 0) {
+                currentPage.academicSubjects.push({
+                  name: isContinued ? `${subj.name} (Continued)` : subj.name,
+                  originalNo,
+                  isContinued,
+                  goals: goalsForThisPage,
+                  isLastChunk: goalIndex >= subj.goals.length
+                });
+              }
+
+              if (goalIndex < subj.goals.length) {
+                isContinued = true;
+              }
             }
-          }
-
-          if (goalsForThisPage.length > 0) {
-            currentPage.academicSubjects.push({
-              name: isContinued ? `${subj.name} (Continued)` : subj.name,
-              originalNo,
-              isContinued,
-              goals: goalsForThisPage,
-              isLastChunk: goalIndex >= subj.goals.length
-            });
-          }
-
-          if (goalIndex < subj.goals.length) {
-            isContinued = true;
-          }
+          });
         }
-      });
-    }
 
-    // 2. Pack Project Subjects
-    if (projectSubjects.length > 0) {
-      const projSectionHeaderCost = 6 + 10; // Section 2 title (6) + thead (10)
-      const firstProjSubj = projectSubjects[0];
-      const firstGoalHeight = getGoalHeight(firstProjSubj.goals[0]?.text || '');
-      const minProjRequired = projSectionHeaderCost + 6 + firstGoalHeight;
+        // 2. Pack Project Subjects
+        if (projectSubjects.length > 0) {
+          const projSectionHeaderCost = academicTitleHeight + tableHeaderHeight;
+          const firstProjSubj = projectSubjects[0];
+          const firstGoalHeight = projGoalRowHeight(0, 0);
+          const minProjRequired = projSectionHeaderCost + projSubjHeaderHeight(0) + firstGoalHeight;
 
-      if (remainingHeight < minProjRequired) {
-        startNewPage();
-      }
-
-      if (currentPage.projectSubjects.length === 0) {
-        currentPage.showProjectHeader = true;
-        remainingHeight -= projSectionHeaderCost;
-      }
-
-      projectSubjects.forEach((subj, sIdx) => {
-        const originalNo = sIdx + 1;
-        let goalIndex = 0;
-        let isContinued = false;
-
-        while (goalIndex < subj.goals.length) {
-          const currentGoal = subj.goals[goalIndex];
-          const firstGoalHeight = getGoalHeight(currentGoal.text);
-          const minRequired = 6 + firstGoalHeight;
-
-          if (remainingHeight < minRequired) {
+          if (remainingHeight < minProjRequired) {
             startNewPage();
+          }
+
+          if (currentPage.projectSubjects.length === 0) {
             currentPage.showProjectHeader = true;
             remainingHeight -= projSectionHeaderCost;
           }
 
-          remainingHeight -= 6; // Subject header
+          projectSubjects.forEach((subj, sIdx) => {
+            const originalNo = sIdx + 1;
+            let goalIndex = 0;
+            let isContinued = false;
 
-          const goalsForThisPage: typeof subj.goals = [];
-          while (goalIndex < subj.goals.length) {
-            const goal = subj.goals[goalIndex];
-            const gh = getGoalHeight(goal.text);
-            if (remainingHeight >= gh) {
-              goalsForThisPage.push(goal);
-              remainingHeight -= gh;
-              goalIndex++;
-            } else {
-              break;
+            while (goalIndex < subj.goals.length) {
+              const currentGoal = subj.goals[goalIndex];
+              const firstGoalHeight = projGoalRowHeight(sIdx, goalIndex);
+              const isTableOpenOnPage = currentPage.projectSubjects.length > 0;
+              const tableHeaderCost = isTableOpenOnPage ? 0 : tableHeaderHeight;
+              const minRequired = projSubjHeaderHeight(sIdx) + tableHeaderCost + firstGoalHeight;
+
+              if (remainingHeight < minRequired) {
+                startNewPage();
+                currentPage.showProjectHeader = true;
+                remainingHeight -= projSectionHeaderCost;
+              }
+
+              if (currentPage.projectSubjects.length === 0) {
+                remainingHeight -= tableHeaderHeight;
+              }
+
+              remainingHeight -= projSubjHeaderHeight(sIdx);
+
+              const goalsForThisPage: typeof subj.goals = [];
+              while (goalIndex < subj.goals.length) {
+                const goal = subj.goals[goalIndex];
+                const gh = projGoalRowHeight(sIdx, goalIndex);
+                if (remainingHeight >= gh) {
+                  goalsForThisPage.push(goal);
+                  remainingHeight -= gh;
+                  goalIndex++;
+                } else {
+                  break;
+                }
+              }
+
+              if (goalsForThisPage.length > 0) {
+                currentPage.projectSubjects.push({
+                  name: isContinued ? `${subj.name} (Continued)` : subj.name,
+                  originalNo,
+                  isContinued,
+                  goals: goalsForThisPage,
+                  isLastChunk: goalIndex >= subj.goals.length
+                });
+              }
+
+              if (goalIndex < subj.goals.length) {
+                isContinued = true;
+              }
             }
-          }
-
-          if (goalsForThisPage.length > 0) {
-            currentPage.projectSubjects.push({
-              name: isContinued ? `${subj.name} (Continued)` : subj.name,
-              originalNo,
-              isContinued,
-              goals: goalsForThisPage,
-              isLastChunk: goalIndex >= subj.goals.length
-            });
-          }
-
-          if (goalIndex < subj.goals.length) {
-            isContinued = true;
-          }
+          });
         }
-      });
+
+        // 3. Pack Final Block (Comments, Note, Attendance, Signatures)
+        if (remainingHeight < finalBlockHeight) {
+          startNewPage();
+        }
+
+        currentPage.showFinalBlock = true;
+        remainingHeight -= finalBlockHeight;
+
+        pagesList.push(currentPage);
+
+        // 4. Safety Verification Check to guarantee NO content loss
+        const totalInputGoals = academicSubjects.reduce((acc, s) => acc + s.goals.length, 0) +
+                                projectSubjects.reduce((acc, s) => acc + s.goals.length, 0);
+
+        const totalPackedGoals = pagesList.reduce((acc, p) => {
+          const acadCount = p.academicSubjects.reduce((sum, s) => sum + s.goals.length, 0);
+          const projCount = p.projectSubjects.reduce((sum, s) => sum + s.goals.length, 0);
+          return acc + acadCount + projCount;
+        }, 0);
+
+        if (totalInputGoals !== totalPackedGoals) {
+          console.error(`[SAFETY CHECK FAILED] Total input goals (${totalInputGoals}) does not match packed goals (${totalPackedGoals}). Pagination aborted!`);
+          setPaginationError(true);
+        } else {
+          console.log(`[SAFETY CHECK PASSED] Successfully packed all ${totalInputGoals} goals across ${pagesList.length} pages using real pixel heights.`);
+          setPages(pagesList);
+          setPaginationError(false);
+          setIsMeasured(true);
+        }
+      } catch (err) {
+        console.error("Error during real-DOM height pagination:", err);
+        setPaginationError(true);
+      }
+    };
+
+    measureAndPaginate();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [academicSubjects.length, projectSubjects.length, effGeneralComment, studentName, effLogoUrl]);
+
+  React.useEffect(() => {
+    if (onReadyChange) {
+      onReadyChange(isMeasured && !paginationError);
     }
+  }, [isMeasured, paginationError, onReadyChange]);
 
-    // 3. Pack Final Block (General Comments, Note, Attendance, Signatures)
-    const commentsHeight = 10 + Math.max(45, Math.ceil(effGeneralComment.length / 85) * 4.5);
-    const attendanceHeight = effShowAttendanceRecap ? 18 : 0;
-    // Comments (calculated) + Note (15) + Attendance (18 or 0) + Signatures (50) + margins (10)
-    const finalBlockHeight = commentsHeight + 15 + attendanceHeight + 50 + 10;
-
-    if (remainingHeight < finalBlockHeight) {
-      startNewPage();
-    }
-
-    currentPage.showFinalBlock = true;
-    remainingHeight -= finalBlockHeight;
-
-    pagesList.push(currentPage);
-    return pagesList;
-  };
-
-  const pages = buildPages();
   const normalizedYear = effAcademicYear.replace(/\//g, '-');
 
   const renderPartitionedTable = (
@@ -555,8 +657,145 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     );
   };
 
+  const renderMeasurer = () => {
+    return (
+      <div
+        id="elem-pdf-measurer-container"
+        style={{
+          position: 'absolute',
+          left: '-9999px',
+          top: 0,
+          width: '210mm',
+          boxSizing: 'border-box',
+          padding: '15mm',
+          paddingBottom: '20mm',
+          background: '#fff',
+          fontFamily: 'sans-serif',
+          visibility: 'hidden',
+          pointerEvents: 'none'
+        }}
+        aria-hidden="true"
+      >
+        {/* 1. Logo Header */}
+        <div id="meas-logo-header" className="flex items-center justify-between border-b-2 border-slate-900 pb-2 mb-4">
+          {effLogoUrl ? (
+            <img src={effLogoUrl} alt="Logo" className="h-14 max-w-[150px] object-contain" />
+          ) : <div className="h-14" />}
+          <div className="text-right">
+            <h1 className="text-[13px] font-black text-slate-900 uppercase">STUDENT'S PROGRESS REPORT</h1>
+          </div>
+        </div>
+
+        {/* 2. Identity Grid */}
+        <div id="meas-student-identity" className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[10.5px] mb-4">
+          <div className="font-extrabold text-slate-900">Name: {studentName}</div>
+        </div>
+
+        {/* 3. Section Title */}
+        <div id="meas-academic-title" className="text-[10px] font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-0.5 mb-2">
+          SECTION 1: SUBJECTS AND LEARNING GOALS
+        </div>
+
+        {/* 4. Table Header */}
+        <table className="w-full text-left border-collapse border border-slate-900 text-[10px]">
+          <thead>
+            <tr className="bg-slate-100 text-slate-900 font-bold uppercase border-b border-slate-900 text-center">
+              <th id="meas-table-header" className="border-r border-slate-900 p-1.5 w-[7%]">NO.</th>
+              <th className="border-r border-slate-900 p-1.5 w-[68%] text-left">SUBJECTS AND LEARNING GOALS</th>
+              <th className="p-1.5 w-[25%]" colSpan={3}>ACHIEVEMENT</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* 5. Academic Subjects */}
+            {academicSubjects.map((subj, sIdx) => (
+              <React.Fragment key={`meas-acad-${sIdx}`}>
+                <tr id={`meas-subj-row-acad-${sIdx}`} className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase">
+                  <td className="p-1.5" colSpan={5}>{subj.name}</td>
+                </tr>
+                {subj.goals.map((goal, gIdx) => (
+                  <tr id={`meas-goal-row-acad-${sIdx}-${gIdx}`} key={goal.id} className="border-b border-slate-900">
+                    <td className="p-1.5">•</td>
+                    <td className="p-1.5 leading-relaxed">{goal.text}</td>
+                    <td className="p-1">Check</td>
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))}
+
+            {/* 6. Project Subjects */}
+            {projectSubjects.map((subj, sIdx) => (
+              <React.Fragment key={`meas-proj-${sIdx}`}>
+                <tr id={`meas-subj-row-proj-${sIdx}`} className="bg-slate-50 font-extrabold border-b border-slate-900 text-slate-900 uppercase">
+                  <td className="p-1.5" colSpan={5}>{subj.name}</td>
+                </tr>
+                {subj.goals.map((goal, gIdx) => (
+                  <tr id={`meas-goal-row-proj-${sIdx}-${gIdx}`} key={goal.id} className="border-b border-slate-900">
+                    <td className="p-1.5">•</td>
+                    <td className="p-1.5 leading-relaxed">{goal.text}</td>
+                    <td className="p-1">Check</td>
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+
+        {/* 7. Final Block */}
+        <div id="meas-final-block" className="space-y-4 pt-4">
+          <div className="space-y-1">
+            <h3 className="text-xs font-black uppercase text-slate-900">General Comments :</h3>
+            <div className="p-4 border border-slate-900 rounded-lg text-[11px] leading-relaxed whitespace-pre-wrap min-h-[60px]">
+              {effGeneralComment || "Belum ada komentar."}
+            </div>
+          </div>
+          <div className="text-[10px] space-y-1">
+            <p><strong>A (Achieved)</strong></p>
+          </div>
+          {effShowAttendanceRecap && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="border border-slate-300 p-2 text-center">Sakit</div>
+              <div className="border border-slate-300 p-2 text-center">Izin</div>
+              <div className="border border-slate-300 p-2 text-center">Tanpa Keterangan</div>
+            </div>
+          )}
+          <div className="pt-3 border-t border-slate-200">
+            <p className="text-xs">{effSigningLocation}, {effSigningDate}</p>
+            <div className="signature-grid mt-4">
+              <div className="text-center">Principal</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (paginationError) {
+    return (
+      <div className="bg-rose-50 border border-rose-200 rounded-3xl p-8 max-w-xl mx-auto text-center space-y-3 font-sans mt-12 select-none">
+        <div className="text-rose-600 font-black text-sm uppercase">PAGINATION MISMATCH ERROR</div>
+        <p className="text-xs text-rose-800 leading-relaxed">
+          Terdapat ketidakcocokan jumlah learning goals yang berhasil dipaketkan dengan jumlah goal input.
+          Proses generate dibatalkan untuk menghindari hilangnya informasi di PDF. Mohon periksa konsol pengembang Anda.
+        </p>
+      </div>
+    );
+  }
+
+  if (!isMeasured) {
+    return (
+      <div className="bg-slate-200 p-8 text-center text-slate-500 font-bold select-none w-full min-h-[400px] flex items-center justify-center">
+        {renderMeasurer()}
+        <div className="max-w-xl mx-auto p-12 bg-white rounded-3xl shadow-md space-y-4">
+          <div className="animate-spin inline-block w-8 h-8 border-4 border-slate-900 border-t-transparent rounded-full" />
+          <div className="text-xs uppercase tracking-wider text-slate-400">Measuring document elements...</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-slate-200 p-4 space-y-6 flex flex-col items-center select-none printable-container w-full">
+      {renderMeasurer()}
       {/* Dynamic @media print overrides */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
