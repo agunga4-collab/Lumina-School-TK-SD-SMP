@@ -689,7 +689,9 @@ export function evaluateStudentMidtermStatus(
     issues.push('General Comments belum berstatus Final.');
   }
 
-  const isReady = totalGoals > 0 && completedGoals === totalGoals && isGcFinal;
+  // Learning goals and remarks are no longer a barrier to publish.
+  // Every report card is allowed to be published even if incomplete.
+  const isReady = true;
   const status: MidtermReportStatus = isReady ? 'READY_TO_PUBLISH' : 'DRAFT';
 
   return {

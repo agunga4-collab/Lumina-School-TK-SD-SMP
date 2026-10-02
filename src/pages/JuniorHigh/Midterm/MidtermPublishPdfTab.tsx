@@ -471,18 +471,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     const published = publishedReportsMap[student.id];
     const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, false, disabledSubjects);
 
-    if (!evalStatus.isReady) {
-      toast.error(`Rapor belum lengkap: ${evalStatus.issues[0] || 'Periksa learning goals & comments.'}`);
-      return;
-    }
-
-    // Enforce General Comments must be APPROVED
-    const reviewStatus = sData?.generalCommentReviewStatus || 'DRAFT';
-    if (reviewStatus !== 'APPROVED') {
-      toast.error(`Rapor ${student.name} tidak dapat dipublish karena General Comments belum disetujui Kepala Sekolah (Status saat ini: ${reviewStatus.replace(/_/g, ' ')}).`);
-      return;
-    }
-
+    // Enforce no hard-blocks for completeness or comments approval
     if (published) {
       if (!window.confirm(`Rapor ${student.name} sudah pernah terbit (${published.fileName}). Apakah Anda ingin menerbitkan revisi baru (v${published.version + 1})?`)) {
         return;
@@ -516,8 +505,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       const published = safePublishedReportsMap[student.id];
       if (published) return false; // skip already published in bulk
       const evalStatus = evaluateStudentMidtermStatus(student, safeMasterGoalsMap, sData, false, disabledSubjects);
-      const reviewStatus = sData?.generalCommentReviewStatus || 'DRAFT';
-      return evalStatus.isReady && reviewStatus === 'APPROVED';
+      return evalStatus.isReady;
     });
 
     if (readyStudents.length === 0) {

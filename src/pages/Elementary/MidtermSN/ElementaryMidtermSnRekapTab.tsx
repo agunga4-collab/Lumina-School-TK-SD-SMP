@@ -314,6 +314,8 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
     const email = regStudent?.email || '';
     const studentName = regStudent?.name || student.studentName;
 
+    const existingTracking = deliveryTrackingMap[student.studentId];
+
     const resolvedAcc = studentAccountsMap[student.studentId] || await resolveStudentUserAccount(
       studentId,
       nisn,
@@ -322,7 +324,11 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
       studentName
     );
 
-    if (!resolvedAcc?.studentUid) {
+    // If real-time resolution failed but we have a delivery proof, fallback to existing student UIDs
+    const studentUid = resolvedAcc?.studentUid || existingTracking?.studentUid || '';
+    const studentAccountId = resolvedAcc?.studentAccountId || existingTracking?.studentAccountId || studentUid;
+
+    if (!studentUid) {
       toast.error(`Akun siswa belum terhubung untuk ${studentName} (studentId: ${studentId}). Silakan hubungkan akun siswa di menu User Management agar pengiriman dapat dilakukan.`);
       return;
     }
@@ -332,7 +338,6 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
       const docId = `ELEM_${student.studentId}_S${selectedSemester}_T${selectedTerm}`;
       const trackingRef = doc(db, 'elem_midterm_delivery_tracking', docId);
 
-      const existingTracking = deliveryTrackingMap[student.studentId];
       const existingStatus = String(existingTracking?.deliveryStatus || '').toLowerCase();
       const isResend = existingTracking && (existingStatus === 'sent' || existingStatus === 'viewed');
 
@@ -351,8 +356,8 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
       const payload = {
         id: docId,
         studentId: student.studentId,
-        studentUid: resolvedAcc.studentUid,
-        studentAccountId: resolvedAcc.studentAccountId,
+        studentUid: studentUid,
+        studentAccountId: studentAccountId,
         studentName: studentName,
         nisnSnapshot: nisn || pubReport.nisn || '',
         classId: selectedClass?.id || '',
@@ -500,7 +505,16 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
 
                   const tracking = deliveryTrackingMap[student.studentId];
                   const resolvedAcc = studentAccountsMap[student.studentId];
-                  const isAccountConnected = !!resolvedAcc?.studentUid;
+
+                  // Treat account as connected if we have real-time UIDs or historic proof of successful delivery
+                  const hasDeliveryProof = Boolean(
+                    tracking?.sentAt || 
+                    tracking?.firstViewedAt || 
+                    tracking?.lastViewedAt || 
+                    (tracking?.viewCount || 0) > 0 ||
+                    ['sent', 'viewed'].includes(String(tracking?.deliveryStatus || '').toLowerCase())
+                  );
+                  const isAccountConnected = !!resolvedAcc?.studentUid || hasDeliveryProof;
 
                   const deliveryStatus = (tracking?.deliveryStatus || 'not_sent').toLowerCase();
 
