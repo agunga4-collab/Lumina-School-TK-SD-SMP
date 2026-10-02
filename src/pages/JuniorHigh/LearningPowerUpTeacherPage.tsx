@@ -137,6 +137,38 @@ const CATEGORY_CONFIG = {
   }
 };
 
+/**
+ * Helper: Check if an assignment or progress record is verified.
+ * Returns true if status is VERIFIED/APPROVED/COMPLETED, or if verifiedAt/verifiedBy/verifiedByName/verifiedByEmail is present,
+ * or if audit history indicates verification.
+ */
+export const isLpuItemVerified = (item: any): boolean => {
+  if (!item) return false;
+  const statusStr = String(item.status || '').toUpperCase();
+  if (statusStr === 'VERIFIED' || statusStr === 'APPROVED' || statusStr === 'COMPLETED') {
+    return true;
+  }
+  if (item.verifiedAt !== null && item.verifiedAt !== undefined && item.verifiedAt !== '') {
+    return true;
+  }
+  if (item.verifiedBy !== null && item.verifiedBy !== undefined && item.verifiedBy !== '') {
+    return true;
+  }
+  if (item.verifiedByName !== null && item.verifiedByName !== undefined && item.verifiedByName !== '') {
+    return true;
+  }
+  if (item.verifiedByEmail !== null && item.verifiedByEmail !== undefined && item.verifiedByEmail !== '') {
+    return true;
+  }
+  if (Array.isArray(item.history) && item.history.some((h: any) => {
+    const act = String(h?.action || '').toUpperCase();
+    return act === 'VERIFY' || act === 'MANUAL_VERIFY' || act === 'APPROVED';
+  })) {
+    return true;
+  }
+  return false;
+};
+
 const formatLpuDateTime = (value: any, fallback: string = '-'): string => {
   if (value === null || value === undefined || value === '') return fallback;
   
@@ -1154,8 +1186,9 @@ function LearningPowerUpTeacherPageContent() {
         setSelectedWeek(loadedPackages[0].id);
       }
 
-      // 3. Load level-based assignments globally across active JH classes
+      // 3. Load level-based assignments globally across active JH classes and student roster
       const activeJHClassIdsList = classes.map(c => c.id).filter(Boolean);
+      const studentIdsList = enrichedStudents.map(s => s.id).filter(Boolean);
       const assignmentPromises: Promise<any>[] = [];
       
       if (activeJHClassIdsList.length > 0) {
@@ -1165,6 +1198,26 @@ function LearningPowerUpTeacherPageContent() {
             getDocs(query(
               collection(db, 'learning_power_up_assignments'),
               where('classId', 'in', chunk)
+            ))
+          );
+        }
+      }
+      if (selectedClassId !== 'ALL_CLASSES') {
+        assignmentPromises.push(
+          getDocs(query(
+            collection(db, 'learning_power_up_assignments'),
+            where('classId', '==', selectedClassId)
+          ))
+        );
+      }
+      // Query assignments by studentId in chunks to ensure no assignment for any roster student is missed
+      if (studentIdsList.length > 0) {
+        for (let i = 0; i < studentIdsList.length; i += 10) {
+          const chunk = studentIdsList.slice(i, i + 10);
+          assignmentPromises.push(
+            getDocs(query(
+              collection(db, 'learning_power_up_assignments'),
+              where('studentId', 'in', chunk)
             ))
           );
         }
@@ -1183,10 +1236,15 @@ function LearningPowerUpTeacherPageContent() {
           res.value.docs.forEach((doc: any) => {
             const d = { id: doc.id, ...doc.data() } as LearningPowerUpAssignment;
             const asgYear = d.academicYearId || (d as any).academicYear;
-            if (normalizeYear(asgYear) === normalizeYear(activeYear)) {
-              if (selectedClassId === 'ALL_CLASSES' || d.classId === selectedClassId) {
-                loadedAsgsMap.set(d.id, d);
+            const isStudentInScope = enrichedStudents.some(s => s.id === d.studentId);
+            const isClassInScope = selectedClassId === 'ALL_CLASSES' || d.classId === selectedClassId;
+            const isYearInScope = !asgYear || normalizeYear(asgYear) === normalizeYear(activeYear);
+
+            if ((isStudentInScope || isClassInScope) && isYearInScope) {
+              if (isLpuItemVerified(d)) {
+                d.status = 'VERIFIED';
               }
+              loadedAsgsMap.set(d.id, d);
             }
           });
         }
@@ -1197,10 +1255,11 @@ function LearningPowerUpTeacherPageContent() {
 
       // Map level-based assignments to virtual TaskProgress records
       const virtualProgresses: TaskProgress[] = loadedAsgs.map(asg => {
+        const isVer = isLpuItemVerified(asg);
         let status: TaskProgress['status'] = 'NOT_STARTED';
         if (asg.isCancelled) {
           status = 'CANCELLED' as any;
-        } else if (asg.status === 'VERIFIED') {
+        } else if (isVer) {
           status = 'VERIFIED';
         } else if (asg.status === 'SUBMITTED') {
           status = 'SUBMITTED';
@@ -1209,6 +1268,18 @@ function LearningPowerUpTeacherPageContent() {
         } else {
           status = 'NOT_STARTED';
         }
+
+        const effectiveVerifiedByName = 
+          asg.verifiedByName ||
+          (asg.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.performedByName)?.performedByName) ||
+          (asg.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(asg.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(asg.verifiedBy) ? asg.verifiedBy : null) ||
+          null;
+
+        const effectiveVerifiedAt = 
+          asg.verifiedAt ||
+          asg.updatedAt ||
+          (asg.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.timestamp)?.timestamp) ||
+          null;
 
         return {
           id: asg.id,
@@ -1220,31 +1291,57 @@ function LearningPowerUpTeacherPageContent() {
           field: asg.subjectKey,
           subjectKey: asg.subjectKey,
           status: status,
-          verifiedAt: asg.verifiedAt,
+          verifiedAt: effectiveVerifiedAt,
           verifiedBy: asg.verifiedBy,
           verifiedByEmail: asg.verifiedByEmail,
-          verifiedByName: asg.verifiedByName,
-          verificationMethod: asg.verificationMethod,
+          verifiedByName: effectiveVerifiedByName,
+          verificationMethod: asg.verificationMethod || (isVer ? 'INDIVIDUAL' : null),
           revisionNote: asg.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
           history: asg.history || []
         } as any;
       });
 
-      // Load legacy progress records if specific class selected
-      let legacyProgresses: TaskProgress[] = [];
+      // Load legacy progress records
+      const legacyPromises: Promise<any>[] = [];
       if (selectedClassId !== 'ALL_CLASSES') {
-        const qLegacyProgress = query(
-          collection(db, 'learning_power_up_progress'),
-          where('classId', '==', selectedClassId)
+        legacyPromises.push(
+          getDocs(query(
+            collection(db, 'learning_power_up_progress'),
+            where('classId', '==', selectedClassId)
+          ))
         );
-        const legacyProgressSnap = await getDocs(qLegacyProgress);
-        legacyProgresses = legacyProgressSnap.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }) as any)
-          .filter(p => {
-            const pYear = p.academicYearId || p.academicYear;
-            return normalizeYear(pYear) === normalizeYear(activeYear);
-          }) as TaskProgress[];
       }
+      if (studentIdsList.length > 0) {
+        for (let i = 0; i < studentIdsList.length; i += 10) {
+          const chunk = studentIdsList.slice(i, i + 10);
+          legacyPromises.push(
+            getDocs(query(
+              collection(db, 'learning_power_up_progress'),
+              where('studentId', 'in', chunk)
+            ))
+          );
+        }
+      }
+      const legacyResults = await Promise.allSettled(legacyPromises);
+      const legacyMap = new Map<string, TaskProgress>();
+      legacyResults.forEach(res => {
+        if (res.status === 'fulfilled') {
+          res.value.docs.forEach((doc: any) => {
+            const p = { id: doc.id, ...doc.data() } as any;
+            const pYear = p.academicYearId || p.academicYear;
+            const isStudentInScope = enrichedStudents.some(s => s.id === p.studentId);
+            const isClassInScope = selectedClassId === 'ALL_CLASSES' || p.classId === selectedClassId;
+            const isYearInScope = !pYear || normalizeYear(pYear) === normalizeYear(activeYear);
+            if ((isStudentInScope || isClassInScope) && isYearInScope) {
+              if (isLpuItemVerified(p)) {
+                p.status = 'VERIFIED';
+              }
+              legacyMap.set(p.id, p);
+            }
+          });
+        }
+      });
+      const legacyProgresses: TaskProgress[] = Array.from(legacyMap.values());
       
       setProgresses([...virtualProgresses, ...legacyProgresses]);
 
@@ -2929,25 +3026,62 @@ function LearningPowerUpTeacherPageContent() {
   // Helper: Find progress record
   const findProgress = (studentId: string, pkgId: string, field: string): TaskProgress | null => {
     const extractWeekStartDate = (id: string) => {
-      const match = id.match(/\d{4}-\d{2}-\d{2}/);
+      const match = id ? String(id).match(/\d{4}-\d{2}-\d{2}/) : null;
       return match ? match[0] : '';
     };
 
     const weekStartDate = extractWeekStartDate(pkgId);
 
-    const matchingProgs = progresses.filter(p => {
-      if (p.studentId !== studentId || p.field !== field) return false;
-      if (p.packageId === pkgId) return true;
-      const pWeek = extractWeekStartDate(p.packageId);
+    const matchingProgs: TaskProgress[] = progresses.filter(p => {
+      if (p.studentId !== studentId) return false;
+      const pField = p.field || (p as any).subjectKey;
+      if (pField !== field) return false;
+      if (p.packageId === pkgId || (p as any).taskPackageId === pkgId) return true;
+      const pWeek = extractWeekStartDate(p.packageId || (p as any).taskPackageId || '');
       if (weekStartDate && pWeek === weekStartDate) return true;
       return false;
     });
 
+    // Also look up in loadedAssignments
+    const matchingAsg = loadedAssignments.find(a => {
+      if (a.studentId !== studentId) return false;
+      const aField = a.subjectKey || (a as any).field;
+      if (aField !== field) return false;
+      const aWeek = extractWeekStartDate(a.weekStartDate || '');
+      if (weekStartDate && aWeek && aWeek === weekStartDate) return true;
+      if (a.taskBatchId === pkgId || `level_week_${a.weekStartDate}` === pkgId) return true;
+      if (!weekStartDate) return true;
+      return false;
+    });
+
+    if (matchingAsg) {
+      const isAsgVer = isLpuItemVerified(matchingAsg);
+      const asgProg: TaskProgress = {
+        id: matchingAsg.id,
+        packageId: `level_week_${matchingAsg.weekStartDate}`,
+        taskPackageId: `level_week_${matchingAsg.weekStartDate}`,
+        studentId: matchingAsg.studentId,
+        classId: matchingAsg.classId,
+        academicYearId: matchingAsg.academicYearId,
+        field: matchingAsg.subjectKey,
+        subjectKey: matchingAsg.subjectKey,
+        status: isAsgVer ? 'VERIFIED' : (matchingAsg.status as any || 'NOT_STARTED'),
+        verifiedAt: matchingAsg.verifiedAt,
+        verifiedBy: matchingAsg.verifiedBy,
+        verifiedByEmail: matchingAsg.verifiedByEmail,
+        verifiedByName: matchingAsg.verifiedByName,
+        verificationMethod: matchingAsg.verificationMethod || (isAsgVer ? 'INDIVIDUAL' : null),
+        revisionNote: matchingAsg.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
+        history: (matchingAsg.history || []) as any
+      } as any;
+      matchingProgs.push(asgProg);
+    }
+
     if (matchingProgs.length === 0) return null;
 
-    const getStatusPriorityVal = (status: string | undefined): number => {
-      if (!status) return 0;
-      const s = status.toUpperCase();
+    const getStatusPriorityVal = (p: TaskProgress): number => {
+      if (isLpuItemVerified(p)) return 4;
+      const s = String(p.status || '').toUpperCase();
       if (s === 'APPROVED' || s === 'VERIFIED' || s === 'COMPLETED') return 4;
       if (s === 'SUBMITTED') return 3;
       if (s === 'REVISION_REQUIRED' || s === 'REVISION_REQUESTED') return 2;
@@ -2955,8 +3089,12 @@ function LearningPowerUpTeacherPageContent() {
       return 0;
     };
 
-    matchingProgs.sort((a, b) => getStatusPriorityVal(b.status) - getStatusPriorityVal(a.status));
-    return matchingProgs[0];
+    matchingProgs.sort((a, b) => getStatusPriorityVal(b) - getStatusPriorityVal(a));
+    const best = matchingProgs[0];
+    if (isLpuItemVerified(best)) {
+      best.status = 'VERIFIED';
+    }
+    return best;
   };
 
   const findTargetBatchForStudent = (
@@ -3003,11 +3141,22 @@ function LearningPowerUpTeacherPageContent() {
     subjectKey: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi',
     weekStartDate: string
   ): LearningPowerUpAssignment | null => {
+    const extractWeekStartDate = (id: string) => {
+      const match = id ? String(id).match(/\d{4}-\d{2}-\d{2}/) : null;
+      return match ? match[0] : '';
+    };
+    const targetDate = extractWeekStartDate(weekStartDate) || weekStartDate;
+
     // 1. Try to find in loadedAssignments matching studentId, subjectKey, and weekStartDate directly (SSOT)
     const matchedFallback = loadedAssignments.find(a => 
       a.studentId === studentId && 
-      a.subjectKey === subjectKey && 
-      a.weekStartDate === weekStartDate
+      (a.subjectKey === subjectKey || (a as any).field === subjectKey) && 
+      (
+        !targetDate ||
+        !a.weekStartDate ||
+        a.weekStartDate === targetDate ||
+        extractWeekStartDate(a.weekStartDate) === targetDate
+      )
     );
     if (matchedFallback) return matchedFallback;
 
@@ -3021,30 +3170,41 @@ function LearningPowerUpTeacherPageContent() {
       const matchedByBatchProps = loadedAssignments.find(a => 
         a.taskBatchId === targetBatch.id && 
         a.studentId === studentId && 
-        a.subjectKey === subjectKey
+        (a.subjectKey === subjectKey || (a as any).field === subjectKey)
       );
       if (matchedByBatchProps) return matchedByBatchProps;
     }
+
+    // 3. Fallback: any loaded assignment for this student and subject
+    const anyForStudent = loadedAssignments.find(a =>
+      a.studentId === studentId && (a.subjectKey === subjectKey || (a as any).field === subjectKey)
+    );
+    if (anyForStudent) return anyForStudent;
 
     return null;
   };
 
   const getStudentFieldStatus = (studentId: string, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'): string => {
     if (!activePackage) return 'NOT_STARTED';
-    const isLevelBased = activePackage.id.startsWith('level_week_');
-    if (isLevelBased) {
-      const student = students.find(s => s.id === studentId);
-      const asg = resolveAssignmentForStudent(
-        studentId,
-        student?.classId || '',
-        field,
-        activePackage.weekStartDate
-      );
-      return asg?.status || 'NOT_STARTED';
-    } else {
-      const progress = findProgress(studentId, selectedWeek, field);
-      return progress?.status || 'NOT_STARTED';
-    }
+
+    const progress = findProgress(studentId, selectedWeek, field);
+    if (progress?.status === ('CANCELLED' as any)) return 'CANCELLED';
+    if (isLpuItemVerified(progress)) return 'VERIFIED';
+
+    const student = students.find(s => s.id === studentId);
+    const asg = resolveAssignmentForStudent(
+      studentId,
+      student?.classId || '',
+      field,
+      activePackage.weekStartDate
+    );
+
+    if (asg?.isCancelled) return 'CANCELLED';
+    if (isLpuItemVerified(asg)) return 'VERIFIED';
+
+    if (asg?.status) return asg.status;
+    if (progress?.status) return progress.status;
+    return 'NOT_STARTED';
   };
 
   const isFieldAllVerified = (field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi') => {
@@ -3669,7 +3829,7 @@ function LearningPowerUpTeacherPageContent() {
           } as any;
 
           // Check if task is already VERIFIED -> trigger cancellation dialog
-          if (asg.status === 'VERIFIED') {
+          if (asg.status === 'VERIFIED' || isLpuItemVerified(asg)) {
             const activeClass = classes.find(c => c.id === student.classId);
             const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
             if (!hasAccess) {
@@ -3812,7 +3972,7 @@ function LearningPowerUpTeacherPageContent() {
       const progress = findProgress(student.id, activePackage.id, field);
       
       // Check if task is already VERIFIED -> trigger cancellation dialog
-      if (progress && progress.status === 'VERIFIED') {
+      if (progress && (progress.status === 'VERIFIED' || isLpuItemVerified(progress))) {
         const activeClass = classes.find(c => c.id === selectedClassId);
         const hasAccess = canTeacherVerifySubject(currentUser, activeClass, field);
         if (!hasAccess) {
@@ -5111,20 +5271,24 @@ function LearningPowerUpTeacherPageContent() {
                           </td>
 
                           {activeFields.map(field => {
+                            const isLevelBased = selectedWeek.startsWith('level_week_');
+                            const asg = isLevelBased ? (
+                              resolveAssignmentForStudent(student.id, student.classId, field, activePackage?.weekStartDate || '') ||
+                              loadedAssignments.find(a => 
+                                a.studentId === student.id && 
+                                (a.subjectKey === field || (a as any).field === field) && 
+                                (!activePackage?.weekStartDate || !a.weekStartDate || a.weekStartDate === activePackage.weekStartDate || `level_week_${a.weekStartDate}` === selectedWeek)
+                              ) || null
+                            ) : null;
+
                             const progress = findProgress(student.id, selectedWeek, field);
-                            const status = progress?.status || 'NOT_STARTED';
+                            const status = getStudentFieldStatus(student.id, field);
 
                             if (status === 'VERIFIED') {
                               verifiedInWeekCount++;
                             }
 
                             // If selected week is level-based, look up the assignment levelSnapshot
-                            const isLevelBased = selectedWeek.startsWith('level_week_');
-                            const asg = isLevelBased ? loadedAssignments.find(a => 
-                              a.studentId === student.id && 
-                              `level_week_${a.weekStartDate}` === selectedWeek && 
-                              a.subjectKey === field
-                            ) : null;
                             const canonicalLitnumLevel = litnumRecordsByStudentId[student.id]?.[field];
                             let rawLvl = asg?.levelSnapshot || canonicalLitnumLevel;
                             let displayLevel = '';
@@ -5133,6 +5297,26 @@ function LearningPowerUpTeacherPageContent() {
                               const normN = normalizeNumerasiLevel(rawLvl);
                               displayLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : rawLvl;
                             }
+
+                            const effectiveVerifierName = 
+                              progress?.verifiedByName || 
+                              asg?.verifiedByName ||
+                              (asg?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.performedByName)?.performedByName) ||
+                              (progress?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && (h as any).actorName)?.actorName) ||
+                              progress?.verifiedByEmail || 
+                              asg?.verifiedByEmail ||
+                              (progress?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(progress.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(progress.verifiedBy) ? progress.verifiedBy : null) || 
+                              (asg?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(asg.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(asg.verifiedBy) ? asg.verifiedBy : null) || 
+                              'Guru Lumina';
+
+                            const effectiveVerifiedAt = 
+                              progress?.verifiedAt || 
+                              asg?.verifiedAt || 
+                              progress?.updatedAt || 
+                              asg?.updatedAt || 
+                              (asg?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.timestamp)?.timestamp) ||
+                              (progress?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.timestamp)?.timestamp) ||
+                              null;
 
                             return (
                               <td 
@@ -5196,19 +5380,14 @@ function LearningPowerUpTeacherPageContent() {
                                 </div>
 
                                 {status === 'VERIFIED' && (
-                                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[11px] p-2.5 rounded-xl shadow-lg z-30 w-48 text-center font-bold leading-normal">
+                                  <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[11px] p-2.5 rounded-xl shadow-lg z-30 w-52 text-center font-bold leading-normal">
                                     <p className="text-emerald-400">
-                                      Verified by: {
-                                        progress?.verifiedByEmail || 
-                                        progress?.verifiedByName || 
-                                        (progress?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(progress.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(progress.verifiedBy) ? progress.verifiedBy : null) || 
-                                        'Guru Lumina'
-                                      }
+                                      Verified by: {effectiveVerifierName}
                                     </p>
-                                    {progress?.verificationMethod === 'BULK' && (
+                                    {(progress?.verificationMethod === 'BULK' || asg?.verificationMethod === 'BULK') && (
                                       <p className="text-slate-300 text-[10px] font-medium">Bulk verification</p>
                                     )}
-                                    <p className="text-slate-400 text-[10px] mt-0.5">{formatVerificationTime(progress?.verifiedAt || progress?.updatedAt)}</p>
+                                    <p className="text-slate-400 text-[10px] mt-0.5">{formatVerificationTime(effectiveVerifiedAt)}</p>
                                   </div>
                                 )}
                               </td>
