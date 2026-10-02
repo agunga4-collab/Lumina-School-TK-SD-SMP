@@ -6004,6 +6004,113 @@ app.post("/api/junior-high/midterm/upload-pdf", async (req, res) => {
   }
 });
 
+// POST /api/elementary/midterm/upload-pdf
+// Uploads Elementary Midterm PDF to Shared Drive folder 17nW4LvLZ5t4SPHA50RIvRTsqebzv0s0R using backend Service Account
+app.post("/api/elementary/midterm/upload-pdf", async (req, res) => {
+  try {
+    const { pdfBase64, fileName, academicYear, semester, midtermTerm, className } = req.body;
+
+    if (!pdfBase64 || !fileName || !academicYear || !semester || !midtermTerm || !className) {
+      return res.status(400).json({
+        success: false,
+        error: "Data upload tidak lengkap: pdfBase64, fileName, academicYear, semester, midtermTerm, dan className wajib diisi."
+      });
+    }
+
+    const ROOT_FOLDER_ID = "17nW4LvLZ5t4SPHA50RIvRTsqebzv0s0R";
+
+    const ensureDriveFolder = async (folderNames: string[], parentId: string): Promise<string> => {
+      for (const name of folderNames) {
+        const escapedName = name.replace(/'/g, "\\'");
+        const q = `name = '${escapedName}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const listRes = await drive.files.list({
+          q,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+          corpora: 'allDrives',
+          fields: 'files(id, name)'
+        });
+        if (listRes.data.files && listRes.data.files.length > 0) {
+          return listRes.data.files[0].id;
+        }
+      }
+
+      const primaryName = folderNames[0];
+      const createRes = await drive.files.create({
+        requestBody: {
+          name: primaryName,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [parentId]
+        },
+        supportsAllDrives: true,
+        fields: 'id'
+      });
+
+      return createRes.data.id;
+    };
+
+    const cleanYear = academicYear.replace(/\//g, '-').trim();
+    const yearFolderId = await ensureDriveFolder([`Tahun Ajaran ${cleanYear}`, `Rapor Midterm Elementary ${cleanYear}`, `Rapor Midterm Elementary ${academicYear}`], ROOT_FOLDER_ID);
+    const semesterFolderId = await ensureDriveFolder([`Semester ${semester}`], yearFolderId);
+    const termFolderId = await ensureDriveFolder([`Midterm ${midtermTerm}`], semesterFolderId);
+    const classFolderId = await ensureDriveFolder([className.trim(), `${className.trim()} - Midterm ${midtermTerm}`], termFolderId);
+
+    const buffer = Buffer.from(pdfBase64, 'base64');
+    const mediaStream = Readable.from(buffer);
+
+    const uploadResponse = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [classFolderId],
+        mimeType: 'application/pdf'
+      },
+      media: {
+        mimeType: 'application/pdf',
+        body: mediaStream
+      },
+      supportsAllDrives: true,
+      fields: 'id, name'
+    });
+
+    const fileId = uploadResponse.data.id;
+    if (!fileId) {
+      throw new Error("Google Drive tidak mengembalikan ID file setelah upload.");
+    }
+
+    try {
+      await drive.permissions.create({
+        fileId: fileId,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone'
+        },
+        supportsAllDrives: true
+      });
+    } catch (permErr: any) {
+      console.warn(`[Elem-Midterm-Upload] Permission warning for file ${fileId}:`, permErr.message);
+    }
+
+    const fileUrl = `https://drive.google.com/file/d/${fileId}/view`;
+
+    console.log(`[Elem-Midterm-Upload] Successfully uploaded '${fileName}' to Shared Drive class folder '${className}' (${classFolderId}). File ID: ${fileId}`);
+
+    res.json({
+      success: true,
+      driveFileId: fileId,
+      driveFileUrl: fileUrl,
+      folderId: classFolderId,
+      fileName
+    });
+  } catch (error: any) {
+    console.error("[Elem-Midterm-Upload] Error uploading PDF to Shared Drive:", error);
+    const detailMsg = error.response?.data?.error?.message || error.message || String(error);
+    res.status(500).json({
+      success: false,
+      error: `Upload Google Shared Drive gagal: ${detailMsg}`
+    });
+  }
+});
+
 // ==========================================
 // Elementary Midterm AI Endpoints
 // ==========================================

@@ -6,6 +6,11 @@ import {
 import { toast } from 'sonner';
 import { publishElemSnMidtermReport } from '../../../services/elementarySnMidtermService';
 import { ElementaryMidtermSnPdfTemplate } from './ElementaryMidtermSnPdfTemplate';
+import {
+  generateElementaryMidtermPdfBlob,
+  blobToBase64,
+  normalizeElementaryMidtermFilename
+} from '../../../lib/elementaryMidtermReportPdf';
 import type { ElementarySnMidtermReportDoc, ElementarySnPublishedMidtermReportDoc } from '../../../types/elementaryMidtermSnReport';
 import type { Student, Class, User, ReportConfig } from '../../../types';
 
@@ -37,6 +42,7 @@ export const ElementaryMidtermSnPublishPdfTab: React.FC<ElementaryMidtermSnPubli
   showAttendanceRecap = true
 }) => {
   const [publishing, setPublishing] = React.useState<boolean>(false);
+  const [publishStatusText, setPublishStatusText] = React.useState<string>('');
 
   // Filter published versions for this specific student
   const studentPublishedList = publishedReports
@@ -52,10 +58,71 @@ export const ElementaryMidtermSnPublishPdfTab: React.FC<ElementaryMidtermSnPubli
     }
 
     setPublishing(true);
+    setPublishStatusText('Menyiapkan PDF…');
+    const toastId = `pub-elem-sn-${selectedStudent.id}`;
+    toast.loading('Menyiapkan PDF…', { id: toastId });
+
     try {
+      // 1. Locate PDF DOM elements
+      await new Promise(r => setTimeout(r, 400));
+      if (typeof document !== 'undefined' && (document as any).fonts && (document as any).fonts.ready) {
+        await (document as any).fonts.ready;
+      }
+
+      const container = document.getElementById('elem-sn-pdf-generator-container');
+      let pageElements = Array.from(container?.querySelectorAll('.pdf-page') || []) as HTMLElement[];
+      if (pageElements.length === 0) {
+        pageElements = Array.from(document.querySelectorAll('.pdf-page')) as HTMLElement[];
+      }
+
+      if (pageElements.length === 0) {
+        throw new Error('Elemen halaman PDF tidak ditemukan pada preview.');
+      }
+
+      // 2. Generate PDF Blob
+      setPublishStatusText('Menghasilkan file PDF…');
+      toast.loading('Menghasilkan file PDF…', { id: toastId });
+      const pdfBlob = await generateElementaryMidtermPdfBlob(pageElements);
+      const base64Data = await blobToBase64(pdfBlob);
+      const fileName = normalizeElementaryMidtermFilename(
+        selectedStudent.name || 'Siswa',
+        reportDoc.midtermPeriod || '1',
+        reportDoc.academicYear || '2025/2026'
+      );
+
+      // 3. Upload to Google Drive via Backend Endpoint
+      setPublishStatusText('Mengunggah PDF ke Shared Drive…');
+      toast.loading('Mengunggah PDF ke Shared Drive…', { id: toastId });
+
+      const uploadRes = await fetch('/api/elementary/midterm/upload-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pdfBase64: base64Data,
+          fileName,
+          academicYear: reportDoc.academicYear || '2025/2026',
+          semester: reportDoc.semester || '1',
+          midtermTerm: reportDoc.midtermPeriod || '1',
+          className: selectedClass.name || 'Kelas'
+        })
+      });
+
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) {
+        throw new Error(uploadData.error || 'Upload PDF ke Google Drive gagal.');
+      }
+
+      const { driveFileId, driveFileUrl, folderId } = uploadData;
+      if (!driveFileId || !driveFileUrl) {
+        throw new Error('URL atau File ID dari Google Drive tidak valid.');
+      }
+
+      // 4. Build snapshot categories matching Elementary structure
+      setPublishStatusText('Menyimpan metadata publikasi…');
+      toast.loading('Menyimpan metadata publikasi…', { id: toastId });
+
       const nextVersion = (latestPublished?.reportVersion || 0) + 1;
 
-      // Build categories matching Elementary snapshot structure
       const academicSubjs = (reportDoc.subjects || [])
         .filter((s) => s.category !== 'PROJECTS' && !s.subjectName.toLowerCase().includes('project'))
         .map((s) => ({
@@ -107,10 +174,6 @@ export const ElementaryMidtermSnPublishPdfTab: React.FC<ElementaryMidtermSnPubli
         publishedAt: Date.now()
       };
 
-      const dummyDriveUrl = `https://drive.google.com/file/d/ELEM_SN_MIDTERM_${selectedStudent.id}_v${nextVersion}/view`;
-      const dummyFileId = `ELEM_SN_FILE_${selectedStudent.id}_v${nextVersion}`;
-      const dummyFolderId = '1mjxXJKaKSCfn0RNpJWQTsI65DwnhiyqK';
-
       await publishElemSnMidtermReport(
         selectedStudent,
         selectedClass,
@@ -118,24 +181,25 @@ export const ElementaryMidtermSnPublishPdfTab: React.FC<ElementaryMidtermSnPubli
         reportDoc.semester,
         reportDoc.midtermPeriod,
         reportSnapshot,
-        dummyDriveUrl,
-        dummyFileId,
-        dummyFolderId,
+        driveFileUrl,
+        driveFileId,
+        folderId,
         nextVersion,
         currentUser
       );
 
       await onRefreshData();
-      toast.success(`Rapor SN Elementary untuk ${selectedStudent.name} v${nextVersion} berhasil dipublish!`);
+      toast.success(`Rapor SN Elementary untuk ${selectedStudent.name} v${nextVersion} berhasil terbit!`, { id: toastId });
     } catch (err: any) {
       console.error('[ElementaryMidtermSnPublishPdfTab] handlePublish error:', {
         studentId: selectedStudent?.id,
         classId: selectedClass?.id,
         academicYear: reportDoc?.academicYear
       }, err);
-      toast.error('Gagal merilis PDF Rapor SN: ' + (err.message || 'Error'));
+      toast.error('Gagal merilis PDF Rapor SN: ' + (err.message || 'Error'), { id: toastId });
     } finally {
       setPublishing(false);
+      setPublishStatusText('');
     }
   };
 
@@ -210,17 +274,19 @@ export const ElementaryMidtermSnPublishPdfTab: React.FC<ElementaryMidtermSnPubli
         <h3 className="text-xs font-black text-slate-900 uppercase tracking-wide">
           Preview PDF Rapor SN Elementary
         </h3>
-        <ElementaryMidtermSnPdfTemplate
-          reportDoc={reportDoc}
-          student={selectedStudent}
-          currentClass={selectedClass}
-          academicYear={reportDoc.academicYear}
-          semester={reportDoc.semester}
-          midtermTerm={reportDoc.midtermPeriod}
-          attendance={reportDoc.attendance}
-          reportConfig={reportConfig}
-          showAttendanceRecap={showAttendanceRecap}
-        />
+        <div id="elem-sn-pdf-generator-container">
+          <ElementaryMidtermSnPdfTemplate
+            reportDoc={reportDoc}
+            student={selectedStudent}
+            currentClass={selectedClass}
+            academicYear={reportDoc.academicYear}
+            semester={reportDoc.semester}
+            midtermTerm={reportDoc.midtermPeriod}
+            attendance={reportDoc.attendance}
+            reportConfig={reportConfig}
+            showAttendanceRecap={showAttendanceRecap}
+          />
+        </div>
       </div>
     </div>
   );

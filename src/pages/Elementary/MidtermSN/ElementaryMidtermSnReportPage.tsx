@@ -669,12 +669,17 @@ function ElementaryMidtermSnReportPageContent() {
             <ElementaryMidtermSnRekapTab
               snStudentsList={snStudentsList}
               publishedReports={publishedReports}
+              selectedClass={selectedClass}
+              selectedYear={selectedYear}
+              selectedSemester={selectedSemester}
+              selectedTerm={selectedMidtermPeriod}
+              currentUser={effectiveUser}
               onSelectStudentById={(sId) => {
                 setSelectedStudentId(sId);
                 setActiveTab('GOALS');
               }}
-              onRefreshData={loadStudentReportData}
-              loading={loadingReportData}
+              onRefreshData={loadClassSnData}
+              loading={loadingSnStudents || loadingReportData}
             />
           )}
         </div>
