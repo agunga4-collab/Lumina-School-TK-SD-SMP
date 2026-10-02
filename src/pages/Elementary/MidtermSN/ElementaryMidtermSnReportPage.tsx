@@ -672,7 +672,7 @@ function ElementaryMidtermSnReportPageContent() {
               selectedClass={selectedClass}
               selectedYear={selectedYear}
               selectedSemester={selectedSemester}
-              selectedTerm={selectedMidtermPeriod}
+              selectedTerm={selectedTerm}
               currentUser={effectiveUser}
               onSelectStudentById={(sId) => {
                 setSelectedStudentId(sId);
