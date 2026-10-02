@@ -660,10 +660,9 @@ export function evaluateStudentMidtermStatus(
       }
       const masterGoal = safeMasterGoals[subj];
       const goals = Array.isArray(masterGoal?.goals) ? masterGoal.goals : [];
-      if (!masterGoal || goals.length === 0) {
-        missingGoalsSubjects.push(subj);
-        issues.push(`Learning Goals untuk ${subj} belum diisi.`);
-      } else {
+      
+      // If a subject has no defined learning goals, we completely skip it from completeness checks
+      if (masterGoal && goals.length > 0) {
         for (const g of goals) {
           if (!g) continue;
           totalGoals++;
@@ -682,11 +681,15 @@ export function evaluateStudentMidtermStatus(
   const rawComment = studentDataDoc?.generalComment?.finalComment;
   const finalComment = typeof rawComment === 'string' ? rawComment.trim() : '';
   const hasFinalComment = Boolean(finalComment);
+  const isGcFinal = Boolean(studentDataDoc?.generalComment?.isFinal && finalComment);
+
   if (!hasFinalComment) {
-    issues.push('General Comments belum diisi atau belum difinalisasi.');
+    issues.push('General Comments belum diisi.');
+  } else if (!studentDataDoc?.generalComment?.isFinal) {
+    issues.push('General Comments belum berstatus Final.');
   }
 
-  const isReady = missingGoalsSubjects.length === 0 && totalGoals > 0 && completedGoals === totalGoals && hasFinalComment;
+  const isReady = totalGoals > 0 && completedGoals === totalGoals && isGcFinal;
   const status: MidtermReportStatus = isReady ? 'READY_TO_PUBLISH' : 'DRAFT';
 
   return {
@@ -695,7 +698,7 @@ export function evaluateStudentMidtermStatus(
     totalGoals,
     completedGoals,
     missingGoalsSubjects,
-    hasFinalComment,
+    hasFinalComment: isGcFinal,
     issues
   };
 }

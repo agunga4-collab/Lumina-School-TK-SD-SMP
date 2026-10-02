@@ -5,7 +5,7 @@ import {
   AlertCircle, AlertTriangle, User, History, ShieldAlert
 } from 'lucide-react';
 import { doc, setDoc, getDocs, collection, query, where } from 'firebase/firestore';
-import { db } from '../../../lib/firebase';
+import { db, getActiveStudents } from '../../../lib/firebase';
 import { toast } from 'sonner';
 import type { ElementarySnStudentDoc, ElementarySnPublishedMidtermReportDoc } from '../../../types/elementaryMidtermSnReport';
 import type { Class, User as UserType } from '../../../types';
@@ -23,55 +23,67 @@ interface ElementaryMidtermSnRekapTabProps {
   loading: boolean;
 }
 
-// Helper to resolve student Firebase Auth UID from studentId (Primary Key)
-async function resolveStudentUserAccount(studentId: string): Promise<{ studentUid: string; studentAccountId: string } | null> {
+// Helper to resolve student Firebase Auth UID from studentId with comprehensive, ordered fallbacks
+async function resolveStudentUserAccount(
+  studentId: string,
+  nisn?: string,
+  nis?: string,
+  email?: string,
+  studentName?: string
+): Promise<{ studentUid: string; studentAccountId: string } | null> {
   const cleanId = String(studentId || '').trim();
+  const cleanNisn = String(nisn || '').trim();
+  const cleanNis = String(nis || '').trim();
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanName = String(studentName || '').trim();
   if (!cleanId) return null;
 
   try {
-    // 1. Primary: search users collection by studentId / luminaId
+    // 1. Primary: UID / studentId / luminaId
+    // 1a. Users collection: studentId where role is STUDENT
     const qById = query(
       collection(db, 'users'),
       where('role', '==', 'STUDENT'),
       where('studentId', '==', cleanId)
     );
-    const snapById = await getDocs(qById);
+    let snapById = await getDocs(qById);
     if (!snapById.empty) {
       const uDoc = snapById.docs[0];
       const uid = uDoc.data().uid || uDoc.id;
       return { studentUid: uid, studentAccountId: uid };
     }
 
+    // 1b. Users collection: luminaId where role is STUDENT
     const qByLuminaId = query(
       collection(db, 'users'),
       where('role', '==', 'STUDENT'),
       where('luminaId', '==', cleanId)
     );
-    const snapByLumina = await getDocs(qByLuminaId);
+    let snapByLumina = await getDocs(qByLuminaId);
     if (!snapByLumina.empty) {
       const uDoc = snapByLumina.docs[0];
       const uid = uDoc.data().uid || uDoc.id;
       return { studentUid: uid, studentAccountId: uid };
     }
 
-    // 2. Search any user role by studentId
+    // 1c. Users collection: studentId with any user role
     const qAnyStudentId = query(
       collection(db, 'users'),
       where('studentId', '==', cleanId)
     );
-    const snapAnyStudentId = await getDocs(qAnyStudentId);
+    let snapAnyStudentId = await getDocs(qAnyStudentId);
     if (!snapAnyStudentId.empty) {
       const uDoc = snapAnyStudentId.docs[0];
       const uid = uDoc.data().uid || uDoc.id;
       return { studentUid: uid, studentAccountId: uid };
     }
 
-    // 3. Check students master collection
+    // 1d. Check students master collection by ID
     const qStudentDoc = query(
       collection(db, 'students'),
       where('id', '==', cleanId)
     );
-    const snapStudentDoc = await getDocs(qStudentDoc);
+    let snapStudentDoc = await getDocs(qStudentDoc);
     if (!snapStudentDoc.empty) {
       const sData = snapStudentDoc.docs[0].data();
       const sUid = sData.uid || sData.userId || sData.accountId;
@@ -79,9 +91,9 @@ async function resolveStudentUserAccount(studentId: string): Promise<{ studentUi
       if (sData.email) {
         const qUserEmail = query(
           collection(db, 'users'),
-          where('email', '==', sData.email)
+          where('email', '==', String(sData.email).trim().toLowerCase())
         );
-        const snapUserEmail = await getDocs(qUserEmail);
+        let snapUserEmail = await getDocs(qUserEmail);
         if (!snapUserEmail.empty) {
           const uDoc = snapUserEmail.docs[0];
           const uid = uDoc.data().uid || uDoc.id;
@@ -89,8 +101,77 @@ async function resolveStudentUserAccount(studentId: string): Promise<{ studentUi
         }
       }
     }
+
+    // 2. Fallback: Search users collection by NISN
+    if (cleanNisn && cleanNisn !== '-' && cleanNisn !== '(-)') {
+      const qByNisn = query(
+        collection(db, 'users'),
+        where('nisn', '==', cleanNisn)
+      );
+      let snapByNisn = await getDocs(qByNisn);
+      if (!snapByNisn.empty) {
+        const uDoc = snapByNisn.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+    }
+
+    // 3. Fallback: Search users collection by NIS
+    if (cleanNis && cleanNis !== '-' && cleanNis !== '(-)') {
+      const qByNis = query(
+        collection(db, 'users'),
+        where('nis', '==', cleanNis)
+      );
+      let snapByNis = await getDocs(qByNis);
+      if (!snapByNis.empty) {
+        const uDoc = snapByNis.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+    }
+
+    // 4. Fallback: Search users collection by Student Email
+    if (cleanEmail) {
+      const qByEmail = query(
+        collection(db, 'users'),
+        where('email', '==', cleanEmail)
+      );
+      let snapByEmail = await getDocs(qByEmail);
+      if (!snapByEmail.empty) {
+        const uDoc = snapByEmail.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+    }
+
+    // 5. Fallback: Search by student's name in users collection
+    if (cleanName) {
+      const qByDispName = query(
+        collection(db, 'users'),
+        where('role', '==', 'STUDENT'),
+        where('displayName', '==', cleanName)
+      );
+      let snapByDispName = await getDocs(qByDispName);
+      if (!snapByDispName.empty) {
+        const uDoc = snapByDispName.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+
+      const qByNameField = query(
+        collection(db, 'users'),
+        where('role', '==', 'STUDENT'),
+        where('name', '==', cleanName)
+      );
+      let snapByNameField = await getDocs(qByNameField);
+      if (!snapByNameField.empty) {
+        const uDoc = snapByNameField.docs[0];
+        const uid = uDoc.data().uid || uDoc.id;
+        return { studentUid: uid, studentAccountId: uid };
+      }
+    }
   } catch (err) {
-    console.warn('[resolveStudentUserAccount] Query by student ID failed:', err);
+    console.warn('[resolveStudentUserAccount] Query fallback chain failed:', err);
   }
 
   return null;
@@ -177,10 +258,26 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
 
       setDeliveryTrackingMap(map);
 
+      // Fetch regular students list of the same class to resolve accurate user accounts
+      const regStudents = await getActiveStudents(selectedClass.id, selectedYear);
+      const regStudentMap = new Map<string, any>();
+      (regStudents || []).forEach((s) => {
+        if (s && s.id) {
+          regStudentMap.set(s.id, s);
+        }
+      });
+
       // Resolve student user accounts for all SN students
       const accMap: Record<string, { studentUid: string; studentAccountId: string } | null> = {};
       for (const student of snStudentsList) {
-        const acc = await resolveStudentUserAccount(student.studentId);
+        const regStudent = regStudentMap.get(student.studentId);
+        const studentId = student.studentId;
+        const nisn = regStudent?.nisn || student.nisn || '';
+        const nis = regStudent?.nis || '';
+        const email = regStudent?.email || '';
+        const studentName = regStudent?.name || student.studentName;
+
+        const acc = await resolveStudentUserAccount(studentId, nisn, nis, email, studentName);
         accMap[student.studentId] = acc;
       }
       setStudentAccountsMap(accMap);
@@ -208,9 +305,25 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
       return;
     }
 
-    const resolvedAcc = studentAccountsMap[student.studentId] || await resolveStudentUserAccount(student.studentId);
+    // Retrieve regular student info to get accurate matching details
+    const regStudents = await getActiveStudents(selectedClass?.id || '', selectedYear);
+    const regStudent = (regStudents || []).find((s) => s.id === student.studentId);
+    const studentId = student.studentId;
+    const nisn = regStudent?.nisn || student.nisn || '';
+    const nis = regStudent?.nis || '';
+    const email = regStudent?.email || '';
+    const studentName = regStudent?.name || student.studentName;
+
+    const resolvedAcc = studentAccountsMap[student.studentId] || await resolveStudentUserAccount(
+      studentId,
+      nisn,
+      nis,
+      email,
+      studentName
+    );
+
     if (!resolvedAcc?.studentUid) {
-      toast.error(`Akun siswa belum terhubung untuk ${student.studentName} (studentId: ${student.studentId}). Pengiriman tidak dapat dilakukan.`);
+      toast.error(`Akun siswa belum terhubung untuk ${studentName} (studentId: ${studentId}). Silakan hubungkan akun siswa di menu User Management agar pengiriman dapat dilakukan.`);
       return;
     }
 
@@ -240,8 +353,8 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
         studentId: student.studentId,
         studentUid: resolvedAcc.studentUid,
         studentAccountId: resolvedAcc.studentAccountId,
-        studentName: student.studentName,
-        nisnSnapshot: student.nisn || pubReport.nisn || '',
+        studentName: studentName,
+        nisnSnapshot: nisn || pubReport.nisn || '',
         classId: selectedClass?.id || '',
         className: selectedClass?.name || '',
         unit: 'ELEMENTARY',
@@ -267,7 +380,7 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
       };
 
       await setDoc(trackingRef, payload, { merge: true });
-      toast.success(`Rapor Midterm SN untuk ${student.studentName} berhasil ${isResend ? 'dikirim ulang' : 'dikirim'}!`);
+      toast.success(`Rapor Midterm SN untuk ${studentName} berhasil ${isResend ? 'dikirim ulang' : 'dikirim'}!`);
       await fetchDeliveryTracking();
     } catch (err: any) {
       console.error('[ElementaryMidtermSnRekapTab] handleSendReport error:', err);
@@ -381,7 +494,7 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
                   </td>
                 </tr>
               ) : (
-                snStudentsList.map((student, idx) => {
+                  snStudentsList.map((student, idx) => {
                   const pubReport = publishedMap[student.studentId];
                   const isPublished = !!pubReport && !!pubReport.driveFileUrl;
 
@@ -394,28 +507,36 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
                   // Determine display badge for delivery status
                   let deliveryBadge = (
                     <span className="px-2.5 py-1 bg-slate-100 text-slate-500 rounded-lg text-[10.5px] font-bold">
-                      Siap Dikirim
+                      Belum Terbit
                     </span>
                   );
 
-                  if (deliveryStatus === 'sent') {
-                    deliveryBadge = (
-                      <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10.5px] font-black inline-flex items-center gap-1">
-                        <Send size={12} /> Terkirim
-                      </span>
-                    );
-                  } else if (deliveryStatus === 'viewed') {
-                    deliveryBadge = (
-                      <span className="px-2.5 py-1 bg-sky-100 text-sky-800 rounded-lg text-[10.5px] font-black inline-flex items-center gap-1">
-                        <Eye size={12} /> Dilihat ({tracking?.viewCount || tracking?.openCount || 1}x)
-                      </span>
-                    );
-                  } else if (deliveryStatus === 'withdrawn') {
-                    deliveryBadge = (
-                      <span className="px-2.5 py-1 bg-rose-100 text-rose-800 rounded-lg text-[10.5px] font-black inline-flex items-center gap-1">
-                        <XSquare size={12} /> Ditarik
-                      </span>
-                    );
+                  if (isPublished) {
+                    if (deliveryStatus === 'sent') {
+                      deliveryBadge = (
+                        <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10.5px] font-black inline-flex items-center gap-1">
+                          <Send size={12} /> Terkirim
+                        </span>
+                      );
+                    } else if (deliveryStatus === 'viewed') {
+                      deliveryBadge = (
+                        <span className="px-2.5 py-1 bg-sky-100 text-sky-800 rounded-lg text-[10.5px] font-black inline-flex items-center gap-1">
+                          <Eye size={12} /> Dilihat ({tracking?.viewCount || tracking?.openCount || 1}x)
+                        </span>
+                      );
+                    } else if (deliveryStatus === 'withdrawn') {
+                      deliveryBadge = (
+                        <span className="px-2.5 py-1 bg-rose-100 text-rose-800 rounded-lg text-[10.5px] font-black inline-flex items-center gap-1">
+                          <XSquare size={12} /> Ditarik
+                        </span>
+                      );
+                    } else {
+                      deliveryBadge = (
+                        <span className="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-[10.5px] font-bold">
+                          Siap Dikirim
+                        </span>
+                      );
+                    }
                   }
 
                   const canSend = isPublished && isAccountConnected;
@@ -457,7 +578,7 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
                             Terhubung
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 bg-rose-50 text-rose-700 rounded-md text-[10px] font-bold" title={`Belum terhubung ke akun siswa (studentId: ${student.studentId})`}>
+                          <span className="px-2 py-0.5 bg-rose-50 text-rose-700 rounded-md text-[10px] font-bold" title={`Belum terhubung ke akun siswa (studentId: ${student.studentId}). Pastikan NISN/NIS/Email siswa terisi dengan benar di master siswa.`}>
                             Belum Terhubung
                           </span>
                         )}
@@ -487,29 +608,37 @@ export const ElementaryMidtermSnRekapTab: React.FC<ElementaryMidtermSnRekapTabPr
                       <td className="p-3.5 text-right">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
                           {/* Send / Resend button */}
-                          <button
-                            onClick={() => handleSendReport(student)}
-                            disabled={!canSend || isActionLoading}
-                            title={
-                              !isPublished
-                                ? 'Rapor belum terbit (published)'
-                                : !isAccountConnected
-                                ? `Akun siswa belum terhubung (ID: ${student.studentId})`
-                                : deliveryStatus === 'sent' || deliveryStatus === 'viewed'
-                                ? 'Kirim Ulang Rapor'
-                                : 'Kirim Rapor ke Portal Siswa'
-                            }
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
-                              deliveryStatus === 'sent' || deliveryStatus === 'viewed'
-                                ? 'bg-amber-100 text-amber-900 hover:bg-amber-200'
-                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                            }`}
-                          >
-                            <Send size={13} />
-                            <span>
-                              {deliveryStatus === 'sent' || deliveryStatus === 'viewed' ? 'Kirim Ulang' : 'Kirim'}
-                            </span>
-                          </button>
+                          <div className="flex flex-col items-end">
+                            <button
+                              onClick={() => handleSendReport(student)}
+                              disabled={!canSend || isActionLoading}
+                              title={
+                                !isPublished
+                                  ? 'Rapor belum terbit (published). Silakan publish rapor terlebih dahulu di tab Publish.'
+                                  : !isAccountConnected
+                                  ? `Akun siswa belum terhubung (ID: ${student.studentId}). Hubungkan akun siswa dengan data NISN/NIS/Email yang cocok di menu User Management.`
+                                  : deliveryStatus === 'sent' || deliveryStatus === 'viewed'
+                                  ? 'Kirim Ulang Rapor'
+                                  : 'Kirim Rapor ke Portal Siswa'
+                              }
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
+                                deliveryStatus === 'sent' || deliveryStatus === 'viewed'
+                                  ? 'bg-amber-100 text-amber-900 hover:bg-amber-200'
+                                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              }`}
+                            >
+                              <Send size={13} />
+                              <span>
+                                {deliveryStatus === 'sent' || deliveryStatus === 'viewed' ? 'Kirim Ulang' : 'Kirim'}
+                              </span>
+                            </button>
+                            {!isPublished && (
+                              <span className="text-[9px] text-slate-400 mt-1 font-semibold">Belum Terbit</span>
+                            )}
+                            {isPublished && !isAccountConnected && (
+                              <span className="text-[9px] text-rose-500 mt-1 font-black">Akun Belum Terhubung</span>
+                            )}
+                          </div>
 
                           {/* Withdraw (Tarik) button */}
                           {(deliveryStatus === 'sent' || deliveryStatus === 'viewed') && (

@@ -765,7 +765,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                                 ? 'Terbitkan revisi baru (v+1)'
                                 : evalStatus.isReady
                                 ? 'Publish rapor ke Google Drive & Orang Tua'
-                                : 'Belum dapat dipublish karena data belum lengkap'
+                                : `Belum dapat dipublish: ${evalStatus.issues.join(' | ') || 'data belum lengkap'}`
                             }
                           >
                             <Upload size={13} className={isPublishing ? 'animate-spin' : ''} />

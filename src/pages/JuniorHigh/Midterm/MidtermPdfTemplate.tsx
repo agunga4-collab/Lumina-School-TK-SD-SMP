@@ -219,7 +219,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
           text: g?.text || '-',
           remark: g?.remark || '-'
         })) : []
-      }));
+      })).filter(s => s.goals.length > 0);
     }
 
     const config = Array.isArray(JH_MIDTERM_CATEGORIES) ? JH_MIDTERM_CATEGORIES.find(c => c && c.id === catId) : undefined;
@@ -241,7 +241,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
         name: safeSubjName,
         goals
       };
-    });
+    }).filter(s => s.goals.length > 0);
   };
 
   const spiritualSubjects = React.useMemo(() => getCategoryData('SPIRITUAL_HEALTH', 'SPIRITUAL HEALTH'), [snapshot, masterGoalsMap, studentDataDoc, disabledSubjects]);
