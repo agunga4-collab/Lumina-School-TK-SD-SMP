@@ -601,9 +601,13 @@ function MidtermSnReportPageContent() {
 
             {activeTab === 'REKAP' && (
               <MidtermSnRekapTab
+                currentUser={effectiveUser}
                 selectedClass={selectedClass}
                 snStudents={snStudents}
                 publishedReports={publishedReports}
+                academicYear={selectedYear}
+                semester={selectedSemester}
+                midtermTerm={selectedTerm}
                 onRefreshData={loadSnStudents}
                 loading={loadingStudents}
               />
