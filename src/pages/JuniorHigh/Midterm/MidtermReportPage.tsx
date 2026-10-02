@@ -546,6 +546,7 @@ function MidtermReportPageContent() {
 
   // Guarded homeroom teacher profile synchronization
   React.useEffect(() => {
+    let isCancelled = false;
     const currentSelectedClass = classesList.find(c => c.id === selectedClassId);
     if (currentSelectedClass) {
       let resolvedName: string | null = null;
@@ -555,25 +556,62 @@ function MidtermReportPageContent() {
         resolvedName = currentSelectedClass.homeroomTeacherName;
       }
 
-      const nextProfile = {
-        displayName: resolvedName || 'Homeroom Teacher',
-        niy: '',
-        signatureUrl: currentSelectedClass.teacherSignatureUrl || null
+      const fetchNiy = async () => {
+        let niyVal = '';
+        if (currentSelectedClass.homeroomTeacherId) {
+          try {
+            const teacherDoc = await getDoc(doc(db, 'users', currentSelectedClass.homeroomTeacherId));
+            if (teacherDoc.exists()) {
+              const teacherData = teacherDoc.data();
+              niyVal = teacherData?.niy || teacherData?.NIY || '';
+            }
+          } catch (teacherErr) {
+            console.warn("Failed to fetch teacher profile for NIY by ID:", teacherErr);
+          }
+        }
+
+        if (!niyVal && currentSelectedClass.homeroomTeacherName) {
+          try {
+            const usersRef = collection(db, 'users');
+            const qUsers = query(usersRef, where('displayName', '==', currentSelectedClass.homeroomTeacherName));
+            const querySnap = await getDocs(qUsers);
+            if (!querySnap.empty) {
+              const docData = querySnap.docs[0].data();
+              niyVal = docData?.niy || docData?.NIY || '';
+            }
+          } catch (qErr) {
+            console.warn("Failed to query teacher profile by name:", qErr);
+          }
+        }
+
+        if (isCancelled) return;
+
+        const nextProfile = {
+          displayName: resolvedName || 'Homeroom Teacher',
+          niy: niyVal || '',
+          signatureUrl: currentSelectedClass.teacherSignatureUrl || null
+        };
+
+        setHomeroomTeacherProfile(prev => {
+          if (
+            prev?.displayName === nextProfile.displayName &&
+            prev?.niy === nextProfile.niy &&
+            prev?.signatureUrl === nextProfile.signatureUrl
+          ) {
+            return prev;
+          }
+          return nextProfile;
+        });
       };
 
-      setHomeroomTeacherProfile(prev => {
-        if (
-          prev?.displayName === nextProfile.displayName &&
-          prev?.niy === nextProfile.niy &&
-          prev?.signatureUrl === nextProfile.signatureUrl
-        ) {
-          return prev;
-        }
-        return nextProfile;
-      });
+      fetchNiy();
     } else {
       setHomeroomTeacherProfile(prev => (prev === null ? prev : null));
     }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [selectedClassId, classesList]);
 
   // Manual or in-tab refresh function

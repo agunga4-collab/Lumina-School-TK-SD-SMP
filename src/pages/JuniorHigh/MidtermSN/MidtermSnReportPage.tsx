@@ -9,7 +9,9 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
-import { getClasses, getReportConfig, getStudentById } from '../../../lib/firebase';
+import { db, getClasses, getReportConfig, getStudentById } from '../../../lib/firebase';
+import { doc, getDoc, getDocs, collection, query, where } from 'firebase/firestore';
+import { useJHReportAttendance } from '../../../hooks/useJHReportAttendance';
 import {
   fetchSnStudentsForClass,
   fetchSnMidtermReport,
@@ -112,6 +114,9 @@ function MidtermSnReportPageContent() {
   const [publishedReports, setPublishedReports] = React.useState<SnPublishedMidtermReportDoc[]>([]);
   const [reportConfig, setReportConfig] = React.useState<ReportConfig | null>(null);
 
+  const [signingDateRaw, setSigningDateRaw] = React.useState<string>('');
+  const [cutoffDateRaw, setCutoffDateRaw] = React.useState<string>('');
+
   const [loadingMaster, setLoadingMaster] = React.useState<boolean>(true);
   const [loadingStudents, setLoadingStudents] = React.useState<boolean>(false);
   const [loadingReport, setLoadingReport] = React.useState<boolean>(false);
@@ -163,6 +168,130 @@ function MidtermSnReportPageContent() {
       setSelectedClass(null);
     }
   }, [selectedClassId, allClasses]);
+
+  const [homeroomTeacherProfile, setHomeroomTeacherProfile] = React.useState<{ displayName: string; niy?: string; signatureUrl?: string | null } | null>(null);
+
+  // Guarded homeroom teacher profile synchronization for SN
+  React.useEffect(() => {
+    let isCancelled = false;
+    const currentSelectedClass = allClasses.find(c => c.id === selectedClassId);
+    if (currentSelectedClass) {
+      let resolvedName: string | null = null;
+      const isEmail = (val?: string | null) => !!val && val.includes('@');
+
+      if (currentSelectedClass.homeroomTeacherName && !isEmail(currentSelectedClass.homeroomTeacherName)) {
+        resolvedName = currentSelectedClass.homeroomTeacherName;
+      }
+
+      const fetchNiy = async () => {
+        let niyVal = '';
+        if (currentSelectedClass.homeroomTeacherId) {
+          try {
+            const teacherDoc = await getDoc(doc(db, 'users', currentSelectedClass.homeroomTeacherId));
+            if (teacherDoc.exists()) {
+              const teacherData = teacherDoc.data();
+              niyVal = teacherData?.niy || teacherData?.NIY || '';
+            }
+          } catch (teacherErr) {
+            console.warn("Failed to fetch teacher profile for NIY by ID:", teacherErr);
+          }
+        }
+
+        if (!niyVal && currentSelectedClass.homeroomTeacherName) {
+          try {
+            const usersRef = collection(db, 'users');
+            const qUsers = query(usersRef, where('displayName', '==', currentSelectedClass.homeroomTeacherName));
+            const querySnap = await getDocs(qUsers);
+            if (!querySnap.empty) {
+              const docData = querySnap.docs[0].data();
+              niyVal = docData?.niy || docData?.NIY || '';
+            }
+          } catch (qErr) {
+            console.warn("Failed to query teacher profile by name:", qErr);
+          }
+        }
+
+        if (isCancelled) return;
+
+        const nextProfile = {
+          displayName: resolvedName || 'Homeroom Teacher',
+          niy: niyVal || '',
+          signatureUrl: currentSelectedClass.teacherSignatureUrl || null
+        };
+
+        setHomeroomTeacherProfile(prev => {
+          if (
+            prev?.displayName === nextProfile.displayName &&
+            prev?.niy === nextProfile.niy &&
+            prev?.signatureUrl === nextProfile.signatureUrl
+          ) {
+            return prev;
+          }
+          return nextProfile;
+        });
+      };
+
+      fetchNiy();
+    } else {
+      setHomeroomTeacherProfile(prev => (prev === null ? prev : null));
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedClassId, allClasses]);
+
+  const configDocId = `JUNIOR_HIGH_${selectedYear.replace(/\//g, '_')}_${selectedSemester}_${selectedTerm}`;
+
+  const formatToCustomDate = (dateStr: string): string => {
+    if (!dateStr) return '';
+    const [year, month, day] = dateStr.split('-');
+    const months = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+    const mIndex = parseInt(month, 10) - 1;
+    const dNum = parseInt(day, 10);
+    return `${dNum} ${months[mIndex]} ${year}`;
+  };
+
+  React.useEffect(() => {
+    let isCancelled = false;
+    const loadPeriodConfig = async () => {
+      try {
+        const docRef = doc(db, 'jh_midterm_period_configs', configDocId);
+        const docSnap = await getDoc(docRef);
+        if (isCancelled) return;
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setSigningDateRaw(data.signingDateRaw || '');
+          setCutoffDateRaw(data.cutoffDateRaw || '');
+        } else {
+          setSigningDateRaw('');
+          setCutoffDateRaw('');
+        }
+      } catch (e) {
+        console.error("Error loading JH SN period config:", e);
+      }
+    };
+    loadPeriodConfig();
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedYear, selectedSemester, selectedTerm]);
+
+  const activeStudentIds = React.useMemo(() => (snStudents || []).map(s => s.studentId).filter(Boolean), [snStudents]);
+  const now = new Date();
+  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  const { studentAttendanceMap } = useJHReportAttendance({
+    selectedClassId,
+    selectedClassName: selectedClass?.name,
+    selectedYear,
+    selectedSemester,
+    selectedMonth: currentMonthStr,
+    studentIds: activeStudentIds
+  });
 
   // Sync Search Params to URL
   React.useEffect(() => {
@@ -594,6 +723,9 @@ function MidtermSnReportPageContent() {
                 reportDoc={snReportDoc}
                 publishedReports={publishedReports}
                 reportConfig={reportConfig}
+                homeroomTeacherProfile={homeroomTeacherProfile}
+                studentAttendanceMap={studentAttendanceMap}
+                attendanceCutoffDate={cutoffDateRaw ? formatToCustomDate(cutoffDateRaw) : undefined}
                 onRefreshData={loadStudentReport}
                 loading={loadingReport}
               />

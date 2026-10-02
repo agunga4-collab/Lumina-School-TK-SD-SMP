@@ -17,6 +17,9 @@ interface MidtermSnPublishPdfTabProps {
   reportDoc: SnMidtermReportDoc;
   publishedReports: SnPublishedMidtermReportDoc[];
   reportConfig: ReportConfig | null;
+  homeroomTeacherProfile?: { displayName: string; niy?: string; signatureUrl?: string | null } | null;
+  studentAttendanceMap?: Record<string, { sickLeave?: number | null; excusedLeave?: number | null; absent?: number | null }>;
+  attendanceCutoffDate?: string;
   onRefreshData: () => Promise<void>;
   loading: boolean;
 }
@@ -28,6 +31,9 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
   reportDoc,
   publishedReports,
   reportConfig,
+  homeroomTeacherProfile,
+  studentAttendanceMap,
+  attendanceCutoffDate,
   onRefreshData,
   loading
 }) => {
@@ -121,8 +127,17 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
         generalComment: reportDoc.generalComment?.finalComment || '',
         signatory: {
           principalName: reportConfig?.principalName || 'Dra. Hj. Unit Principal',
-          homeroomTeacherName: selectedClass.homeroomTeacherName || 'Homeroom Teacher'
+          principalNiy: reportConfig?.principalNIY || '',
+          homeroomTeacherName: homeroomTeacherProfile?.displayName || selectedClass.homeroomTeacherName || 'Homeroom Teacher',
+          homeroomTeacherNiy: homeroomTeacherProfile?.niy || '',
+          homeroomTeacherSignatureUrl: selectedClass?.teacherSignatureUrl || null
         },
+        attendance: {
+          sakit: studentAttendanceMap?.[selectedStudent.id]?.sickLeave ?? 0,
+          izin: studentAttendanceMap?.[selectedStudent.id]?.excusedLeave ?? 0,
+          tanpaKeterangan: studentAttendanceMap?.[selectedStudent.id]?.absent ?? 0
+        },
+        attendanceCutoffDate: attendanceCutoffDate || '',
         publishedAt: Date.now()
       };
 
@@ -217,7 +232,13 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
           semester={reportDoc.semester}
           midtermTerm={reportDoc.midtermPeriod}
           reportConfig={reportConfig}
-          homeroomTeacherName={selectedClass.homeroomTeacherName}
+          homeroomTeacherProfile={homeroomTeacherProfile || undefined}
+          attendance={{
+            sakit: studentAttendanceMap?.[selectedStudent.id]?.sickLeave ?? 0,
+            izin: studentAttendanceMap?.[selectedStudent.id]?.excusedLeave ?? 0,
+            tanpaKeterangan: studentAttendanceMap?.[selectedStudent.id]?.absent ?? 0
+          }}
+          attendanceCutoffDate={attendanceCutoffDate}
         />
       </div>
     </div>

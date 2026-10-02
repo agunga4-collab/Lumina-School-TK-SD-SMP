@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
 import type { 
   MidtermReportSnapshot,
@@ -171,9 +171,71 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     return 'Homeroom Teacher';
   })();
 
-  const effHomeroomNiy = snapshot 
+  const [resolvedTeacherNiy, setResolvedTeacherNiy] = React.useState<string>('');
+
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    // 1. Snapshot check
+    if (snapshot?.signatory?.homeroomTeacherNiy) {
+      setResolvedTeacherNiy(snapshot.signatory.homeroomTeacherNiy);
+      return;
+    }
+
+    // 2. Profile prop check
+    if (homeroomTeacherProfile?.niy) {
+      setResolvedTeacherNiy(homeroomTeacherProfile.niy);
+      return;
+    }
+
+    // 3. Fallback database fetch
+    const teacherId = dbClass?.homeroomTeacherId || currentClass?.homeroomTeacherId;
+    const teacherName = dbClass?.homeroomTeacherName || currentClass?.homeroomTeacherName || homeroomTeacherProfile?.displayName;
+
+    const fetchNiy = async () => {
+      let niyVal = '';
+      if (teacherId) {
+        try {
+          const teacherDoc = await getDoc(doc(db, 'users', teacherId));
+          if (teacherDoc.exists()) {
+            const teacherData = teacherDoc.data();
+            niyVal = teacherData?.niy || teacherData?.NIY || '';
+          }
+        } catch (err) {
+          console.warn("Failed to fetch teacher profile for NIY inside PDF Template:", err);
+        }
+      }
+
+      if (!niyVal && teacherName) {
+        try {
+          const usersRef = collection(db, 'users');
+          const qUsers = query(usersRef, where('displayName', '==', teacherName));
+          const querySnap = await getDocs(qUsers);
+          if (!querySnap.empty) {
+            const docData = querySnap.docs[0].data();
+            niyVal = docData?.niy || docData?.NIY || '';
+          }
+        } catch (qErr) {
+          console.warn("Failed to query teacher profile inside PDF Template:", qErr);
+        }
+      }
+
+      if (isCancelled) return;
+      if (niyVal) {
+        setResolvedTeacherNiy(niyVal);
+      }
+    };
+
+    fetchNiy();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [snapshot, homeroomTeacherProfile, dbClass, currentClass]);
+
+  const effHomeroomNiy = resolvedTeacherNiy || (snapshot 
     ? (snapshot.signatory?.homeroomTeacherNiy || '') 
-    : (homeroomTeacherProfile?.niy || '');
+    : (homeroomTeacherProfile?.niy || ''));
   const effHomeroomSignatureUrl = snapshot 
     ? (snapshot.signatory?.homeroomTeacherSignatureUrl || null) 
     : (dbClass?.teacherSignatureUrl || currentClass?.teacherSignatureUrl || null);
