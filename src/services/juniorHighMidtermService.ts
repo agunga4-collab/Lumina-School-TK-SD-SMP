@@ -618,7 +618,8 @@ export function evaluateStudentMidtermStatus(
   student: Student | null | undefined,
   masterGoalsMap: Record<string, MidtermMasterGoalDoc> | null | undefined,
   studentDataDoc: MidtermStudentDataDoc | undefined | null,
-  isPublishedAlready: boolean
+  isPublishedAlready: boolean,
+  disabledSubjects: string[] = []
 ): {
   status: MidtermReportStatus;
   isReady: boolean;
@@ -654,6 +655,9 @@ export function evaluateStudentMidtermStatus(
     const subjects = Array.isArray(cat?.subjects) ? cat.subjects : [];
     for (const subj of subjects) {
       if (!subj) continue;
+      if (Array.isArray(disabledSubjects) && disabledSubjects.includes(subj)) {
+        continue; // Skip disabled/hidden subjects
+      }
       const masterGoal = safeMasterGoals[subj];
       const goals = Array.isArray(masterGoal?.goals) ? masterGoal.goals : [];
       if (!masterGoal || goals.length === 0) {

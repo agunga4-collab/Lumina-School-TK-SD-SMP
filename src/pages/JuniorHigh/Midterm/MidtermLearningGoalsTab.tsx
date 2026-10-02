@@ -38,6 +38,9 @@ interface MidtermLearningGoalsTabProps {
   studentDataMap: Record<string, MidtermStudentDataDoc>;
   onRefreshData: () => Promise<void>;
   loading: boolean;
+  disabledSubjects?: string[];
+  onToggleSubjectDisabled?: (subject: string, disabled: boolean) => Promise<void>;
+  canToggleSubject?: boolean;
 }
 
 export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = ({
@@ -51,7 +54,10 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
   masterGoalsMap,
   studentDataMap,
   onRefreshData,
-  loading
+  loading,
+  disabledSubjects = [],
+  onToggleSubjectDisabled,
+  canToggleSubject = false
 }) => {
   const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
   const safeMasterGoalsMap = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap : {};
@@ -945,6 +951,7 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
           const isCurrent = subj === selectedSubject;
           const master = safeMasterGoalsMap[subj];
           const count = Array.isArray(master?.goals) ? master.goals.length : 0;
+          const isSubjDisabled = disabledSubjects.includes(subj);
           return (
             <button
               key={subj}
@@ -952,10 +959,12 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
                 isCurrent
                   ? 'bg-emerald-600 text-white shadow-sm'
+                  : isSubjDisabled
+                  ? 'bg-slate-100 text-slate-400 hover:bg-slate-200 border border-slate-200 line-through opacity-70'
                   : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-200'
               }`}
             >
-              <span>{subj}</span>
+              <span>{subj}{isSubjDisabled && ' (Disembunyikan)'}</span>
               <span
                 className={`px-1.5 py-0.5 rounded-md text-[10px] font-black ${
                   isCurrent ? 'bg-emerald-700 text-white' : count > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
@@ -1004,6 +1013,37 @@ export const MidtermLearningGoalsTab: React.FC<MidtermLearningGoalsTabProps> = (
             </button>
           )}
         </div>
+
+        {/* Subject Status & Disable/Hide Toggle */}
+        {selectedSubject && (
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-slate-50 border border-slate-100 p-4 rounded-2xl justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Status di Rapor:</span>
+              {disabledSubjects.includes(selectedSubject) ? (
+                <span className="px-2.5 py-1 bg-rose-100 text-rose-800 rounded-lg text-[10.5px] font-black uppercase inline-flex items-center gap-1.5">
+                  <X size={12} /> Disembunyikan
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-[10.5px] font-black uppercase inline-flex items-center gap-1.5">
+                  <Check size={12} /> Tampil di Rapor (Aktif)
+                </span>
+              )}
+            </div>
+            
+            {canToggleSubject && (
+              <button
+                onClick={() => onToggleSubjectDisabled?.(selectedSubject, !disabledSubjects.includes(selectedSubject))}
+                className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer border ${
+                  disabledSubjects.includes(selectedSubject)
+                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                    : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                }`}
+              >
+                {disabledSubjects.includes(selectedSubject) ? 'Aktifkan Kembali' : 'Nonaktifkan / Sembunyikan'}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Learning Goals List */}
         {goals.length === 0 ? (

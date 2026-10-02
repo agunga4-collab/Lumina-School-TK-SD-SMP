@@ -52,6 +52,7 @@ interface MidtermPublishPdfTabProps {
   attendanceCutoffDate?: string;
   signingDateRaw?: string;
   cutoffDateRaw?: string;
+  disabledSubjects?: string[];
 }
 
 export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
@@ -74,6 +75,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   attendanceCutoffDate,
   signingDateRaw,
   cutoffDateRaw,
+  disabledSubjects = [],
 }) => {
   const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
   const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
@@ -234,7 +236,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       const sData = safeStudentDataMap[student.id];
       const published = safePublishedReportsMap[student.id];
       const isPublished = Boolean(published);
-      const evalStatus = evaluateStudentMidtermStatus(student, safeMasterGoalsMap, sData, isPublished);
+      const evalStatus = evaluateStudentMidtermStatus(student, safeMasterGoalsMap, sData, isPublished, disabledSubjects);
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -249,7 +251,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       if (filterStatus === 'DRAFT') return !isPublished && !evalStatus.isReady;
       return true;
     });
-  }, [safeStudents, safeStudentDataMap, safePublishedReportsMap, safeMasterGoalsMap, filterStatus, searchQuery]);
+  }, [safeStudents, safeStudentDataMap, safePublishedReportsMap, safeMasterGoalsMap, filterStatus, searchQuery, disabledSubjects]);
 
   // Build snapshot object from live data
   const buildLiveSnapshot = (student: Student): MidtermReportSnapshot => {
@@ -260,22 +262,31 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     const att = cutoffAttendanceMap[student.id] || safeStudentAttendanceMap[student.id] || { sickLeave: 0, excusedLeave: 0, absent: 0 };
     const categoriesList = Array.isArray(JH_MIDTERM_CATEGORIES) ? JH_MIDTERM_CATEGORIES : [];
 
-    const categories = categoriesList.map(cat => ({
-      name: cat.name,
-      subjects: (Array.isArray(cat?.subjects) ? cat.subjects : []).map(subjName => {
-        const master = safeMasterGoalsMap[subjName];
-        const rawGoals = Array.isArray(master?.goals) ? master.goals : [];
-        const goals = rawGoals.map(g => ({
-          id: g.id,
-          text: g.text,
-          remark: sData?.remarks?.[g.id] || (subjName === 'Spiritual Health' ? (sData?.spiritualHealthRemark || '') : '') || '-'
-        }));
+    const categories = categoriesList
+      .map(cat => {
+        const activeSubjectsInCat = (Array.isArray(cat?.subjects) ? cat.subjects : [])
+          .filter(subjName => !disabledSubjects.includes(subjName));
+
+        const subjects = activeSubjectsInCat.map(subjName => {
+          const master = safeMasterGoalsMap[subjName];
+          const rawGoals = Array.isArray(master?.goals) ? master.goals : [];
+          const goals = rawGoals.map(g => ({
+            id: g.id,
+            text: g.text,
+            remark: sData?.remarks?.[g.id] || (subjName === 'Spiritual Health' ? (sData?.spiritualHealthRemark || '') : '') || '-'
+          }));
+          return {
+            name: subjName,
+            goals
+          };
+        });
+
         return {
-          name: subjName,
-          goals
+          name: cat.name,
+          subjects
         };
       })
-    }));
+      .filter(cat => cat.subjects.length > 0);
 
     return {
       student: {
@@ -458,7 +469,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
     const sData = studentDataMap[student.id];
     const published = publishedReportsMap[student.id];
-    const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, false);
+    const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, false, disabledSubjects);
 
     if (!evalStatus.isReady) {
       toast.error(`Rapor belum lengkap: ${evalStatus.issues[0] || 'Periksa learning goals & comments.'}`);
@@ -504,7 +515,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
       const sData = safeStudentDataMap[student.id];
       const published = safePublishedReportsMap[student.id];
       if (published) return false; // skip already published in bulk
-      const evalStatus = evaluateStudentMidtermStatus(student, safeMasterGoalsMap, sData, false);
+      const evalStatus = evaluateStudentMidtermStatus(student, safeMasterGoalsMap, sData, false, disabledSubjects);
       const reviewStatus = sData?.generalCommentReviewStatus || 'DRAFT';
       return evalStatus.isReady && reviewStatus === 'APPROVED';
     });
@@ -641,7 +652,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                   const sData = studentDataMap[student.id];
                   const published = publishedReportsMap[student.id];
                   const isPublished = Boolean(published);
-                  const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, isPublished);
+                  const evalStatus = evaluateStudentMidtermStatus(student, masterGoalsMap, sData, isPublished, disabledSubjects);
                   const isPublishing = publishingStudentId === student.id;
 
                   const gc = sData?.generalComment;
@@ -829,6 +840,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                 reportSigningDate={reportSigningDate}
                 attendanceCutoffDate={attendanceCutoffDate}
                 onReadyChange={handlePreviewReadyChange}
+                disabledSubjects={disabledSubjects}
               />
             </div>
 
@@ -887,6 +899,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
             reportSigningLocation={reportSigningLocation}
             reportSigningDate={reportSigningDate}
             attendanceCutoffDate={attendanceCutoffDate}
+            disabledSubjects={disabledSubjects}
           />
         </div>
       )}

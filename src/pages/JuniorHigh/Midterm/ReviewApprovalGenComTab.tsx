@@ -20,6 +20,7 @@ interface ReviewApprovalGenComTabProps {
   studentDataMap: Record<string, MidtermStudentDataDoc>;
   onRefreshData: () => Promise<void>;
   loading: boolean;
+  disabledSubjects?: string[];
 }
 
 export function ReviewApprovalGenComTab({
@@ -31,7 +32,8 @@ export function ReviewApprovalGenComTab({
   midtermTerm,
   studentDataMap,
   onRefreshData,
-  loading
+  loading,
+  disabledSubjects = []
 }: ReviewApprovalGenComTabProps) {
   // Local Filters
   const [statusFilter, setStatusFilter] = React.useState<string>('ALL');

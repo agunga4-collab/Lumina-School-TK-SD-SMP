@@ -33,6 +33,7 @@ interface MidtermRekapTabProps {
   onRefreshData: () => Promise<void>;
   masterGoalsMap?: Record<string, MidtermMasterGoalDoc>;
   studentDataMap?: Record<string, MidtermStudentDataDoc>;
+  disabledSubjects?: string[];
 }
 
 // Helper to resolve student Firebase Auth UID from master student/profile using studentId as primary key
@@ -108,7 +109,8 @@ export const MidtermRekapTab: React.FC<MidtermRekapTabProps> = ({
   loading,
   onRefreshData,
   masterGoalsMap = {},
-  studentDataMap = {}
+  studentDataMap = {},
+  disabledSubjects = []
 }) => {
   const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
   const safePublishedReports = Array.isArray(publishedReports) ? publishedReports.filter(Boolean) : [];

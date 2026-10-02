@@ -168,6 +168,13 @@ function MidtermReportPageContent() {
     return p.get('classId') || '';
   });
 
+  // Classes List (Moved up to prevent TDZ ReferenceError)
+  const [classesList, setClassesList] = React.useState<Class[]>([]);
+  const [loadingClasses, setLoadingClasses] = React.useState<boolean>(true);
+
+  const safeClassesList = Array.isArray(classesList) ? classesList.filter(Boolean) : [];
+  const selectedClass = safeClassesList.find(c => c.id === selectedClassId) || null;
+
   // Direct handlers that immediately update state and sync URL via replaceState without causing render loops
   const handleTabSelect = React.useCallback((tab: 'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP') => {
     setActiveTab(prev => {
@@ -361,10 +368,6 @@ function MidtermReportPageContent() {
     }
   };
 
-  // Classes List
-  const [classesList, setClassesList] = React.useState<Class[]>([]);
-  const [loadingClasses, setLoadingClasses] = React.useState<boolean>(true);
-
   // Class Students & Report Config
   const [students, setStudents] = React.useState<Student[]>([]);
   const [reportConfig, setReportConfig] = React.useState<ReportConfig | null>(null);
@@ -375,6 +378,78 @@ function MidtermReportPageContent() {
   const [studentDataMap, setStudentDataMap] = React.useState<Record<string, MidtermStudentDataDoc>>({});
   const [publishedReports, setPublishedReports] = React.useState<PublishedMidtermReport[]>([]);
   const [loadingData, setLoadingData] = React.useState<boolean>(true);
+
+  // Disabled subjects per class/academicYear/semester/period configuration
+  const [disabledSubjects, setDisabledSubjects] = React.useState<string[]>([]);
+
+  React.useEffect(() => {
+    if (!selectedClassId) {
+      setDisabledSubjects([]);
+      return;
+    }
+    const fetchDisabledSubjects = async () => {
+      try {
+        const docRef = doc(db, 'jh_midterm_disabled_subjects', `${selectedClassId}_${selectedYear.replace(/\//g, '-')}_sem${selectedSemester}_term${selectedTerm}`);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setDisabledSubjects(docSnap.data().disabledSubjects || []);
+        } else {
+          setDisabledSubjects([]);
+        }
+      } catch (e) {
+        console.error('Error fetching disabled subjects:', e);
+      }
+    };
+    fetchDisabledSubjects();
+  }, [selectedClassId, selectedYear, selectedSemester, selectedTerm]);
+
+  const canToggleSubject = React.useMemo(() => {
+    if (!effectiveUser || !selectedClass) return false;
+    const role = (effectiveUser.role || (effectiveUser as any).roleId || '').toUpperCase();
+    if (['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'ADMIN'].includes(role)) return true;
+    
+    // Homeroom teacher of this class
+    const uid = effectiveUser.uid;
+    if (selectedClass.homeroomTeacherId === uid) return true;
+    if (Array.isArray(selectedClass.homeroomTeacherIds) && selectedClass.homeroomTeacherIds.includes(uid)) return true;
+    if (Array.isArray((selectedClass as any).waliKelasIds) && (selectedClass as any).waliKelasIds.includes(uid)) return true;
+    if (selectedClass.teacherAssignments && Array.isArray(selectedClass.teacherAssignments)) {
+      return selectedClass.teacherAssignments.some(
+        a => a.userId === uid && a.role === 'HOMEROOM_TEACHER'
+      );
+    }
+    return false;
+  }, [effectiveUser, selectedClass]);
+
+  const handleToggleSubjectDisabled = async (subject: string, disabled: boolean) => {
+    if (!selectedClassId) return;
+    try {
+      const docRef = doc(db, 'jh_midterm_disabled_subjects', `${selectedClassId}_${selectedYear.replace(/\//g, '-')}_sem${selectedSemester}_term${selectedTerm}`);
+      let updated: string[];
+      if (disabled) {
+        updated = [...disabledSubjects.filter(s => s !== subject), subject];
+      } else {
+        updated = disabledSubjects.filter(s => s !== subject);
+      }
+      await setDoc(docRef, {
+        classId: selectedClassId,
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        midtermTerm: selectedTerm,
+        disabledSubjects: updated,
+        updatedAt: Date.now(),
+        updatedBy: effectiveUser?.uid || 'system'
+      }, { merge: true });
+      setDisabledSubjects(updated);
+      toast.success(disabled ? `Mata pelajaran ${subject} dinonaktifkan.` : `Mata pelajaran ${subject} diaktifkan kembali.`);
+      
+      if (publishedReports.length > 0) {
+        toast.warning('Pengaturan mata pelajaran diubah. Silakan publikasikan ulang rapor agar sesuai dengan tampilan terbaru.');
+      }
+    } catch (e: any) {
+      toast.error('Gagal memperbarui status mata pelajaran: ' + e.message);
+    }
+  };
 
   // Load Junior High Classes
   React.useEffect(() => {
@@ -453,9 +528,6 @@ function MidtermReportPageContent() {
       isCancelled = true;
     };
   }, [selectedYear]);
-
-  const safeClassesList = Array.isArray(classesList) ? classesList.filter(Boolean) : [];
-  const selectedClass = safeClassesList.find(c => c.id === selectedClassId) || null;
 
   // Read-only attendance resolution
   const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
@@ -872,6 +944,9 @@ function MidtermReportPageContent() {
               studentDataMap={safeStudentDataMap}
               onRefreshData={handleRefreshData}
               loading={loadingData}
+              disabledSubjects={disabledSubjects}
+              onToggleSubjectDisabled={handleToggleSubjectDisabled}
+              canToggleSubject={canToggleSubject}
             />
           )}
 
@@ -900,6 +975,7 @@ function MidtermReportPageContent() {
               studentDataMap={safeStudentDataMap}
               onRefreshData={handleRefreshData}
               loading={loadingData}
+              disabledSubjects={disabledSubjects}
             />
           )}
 
@@ -924,6 +1000,7 @@ function MidtermReportPageContent() {
               attendanceCutoffDate={cutoffDateFormatted}
               signingDateRaw={signingDateRaw}
               cutoffDateRaw={cutoffDateRaw}
+              disabledSubjects={disabledSubjects}
             />
           )}
 
@@ -942,6 +1019,7 @@ function MidtermReportPageContent() {
               onRefreshData={handleRefreshData}
               masterGoalsMap={safeMasterGoalsMap}
               studentDataMap={safeStudentDataMap}
+              disabledSubjects={disabledSubjects}
             />
           )}
         </div>

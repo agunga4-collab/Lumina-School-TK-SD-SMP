@@ -36,6 +36,7 @@ interface MidtermPdfTemplateProps {
 
   // React onReadyState callback to disable/enable buttons in parent
   onReadyChange?: (ready: boolean) => void;
+  disabledSubjects?: string[];
 }
 
 interface PageConfig {
@@ -63,6 +64,7 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
   reportSigningDate,
   attendanceCutoffDate,
   onReadyChange,
+  disabledSubjects = [],
 }) => {
   // Derive student identity
   const studentName = snapshot ? (snapshot.student?.name || '-') : (student?.name || '-');
@@ -224,7 +226,9 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     if (!config) return [];
 
     const subjectsList = Array.isArray(config.subjects) ? config.subjects : [];
-    return subjectsList.map(subjName => {
+    const activeSubjects = subjectsList.filter(subjName => !disabledSubjects.includes(subjName));
+
+    return activeSubjects.map(subjName => {
       const safeSubjName = typeof subjName === 'string' ? subjName : 'Subject';
       const master = masterGoalsMap && typeof masterGoalsMap === 'object' ? masterGoalsMap[safeSubjName] : undefined;
       const rawGoals = master && Array.isArray(master?.goals) ? master.goals : [];
@@ -240,10 +244,10 @@ export const MidtermPdfTemplate: React.FC<MidtermPdfTemplateProps> = ({
     });
   };
 
-  const spiritualSubjects = React.useMemo(() => getCategoryData('SPIRITUAL_HEALTH', 'SPIRITUAL HEALTH'), [snapshot, masterGoalsMap, studentDataDoc]);
-  const learningJourneySubjects = React.useMemo(() => getCategoryData('LEARNING_JOURNEY', 'LEARNING JOURNEY'), [snapshot, masterGoalsMap, studentDataDoc]);
-  const weeklyLessonSubjects = React.useMemo(() => getCategoryData('WEEKLY_LESSONS', 'WEEKLY LESSONS'), [snapshot, masterGoalsMap, studentDataDoc]);
-  const unitActivitySubjects = React.useMemo(() => getCategoryData('UNIT_ACTIVITY', 'UNIT ACTIVITY'), [snapshot, masterGoalsMap, studentDataDoc]);
+  const spiritualSubjects = React.useMemo(() => getCategoryData('SPIRITUAL_HEALTH', 'SPIRITUAL HEALTH'), [snapshot, masterGoalsMap, studentDataDoc, disabledSubjects]);
+  const learningJourneySubjects = React.useMemo(() => getCategoryData('LEARNING_JOURNEY', 'LEARNING JOURNEY'), [snapshot, masterGoalsMap, studentDataDoc, disabledSubjects]);
+  const weeklyLessonSubjects = React.useMemo(() => getCategoryData('WEEKLY_LESSONS', 'WEEKLY LESSONS'), [snapshot, masterGoalsMap, studentDataDoc, disabledSubjects]);
+  const unitActivitySubjects = React.useMemo(() => getCategoryData('UNIT_ACTIVITY', 'UNIT ACTIVITY'), [snapshot, masterGoalsMap, studentDataDoc, disabledSubjects]);
 
   const categoriesKey = React.useMemo(() => {
     return JSON.stringify([spiritualSubjects, learningJourneySubjects, weeklyLessonSubjects, unitActivitySubjects]);

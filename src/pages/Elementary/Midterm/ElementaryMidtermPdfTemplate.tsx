@@ -301,16 +301,19 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
   // ----------------------------------------------------
   const getGoalHeight = (text: string) => {
     if (!text) return 8;
-    if (text.length > 170) return 14;
-    if (text.length > 85) return 11;
+    const len = text.length;
+    // Tight estimations conforming to standard row height (text row ≈ 4.5mm + padding/margins ≈ 2mm)
+    if (len > 180) return 18;
+    if (len > 120) return 14;
+    if (len > 60) return 11;
     return 8;
   };
 
   const buildPages = (): PageData[] => {
     const pagesList: PageData[] = [];
     let currentPageIndex = 0;
-    // Page 1 budget: 255mm total capacity. Logo header (15) + Student Identity Grid (22) = 37mm starting cost.
-    let remainingHeight = 255 - 37; 
+    // Page 1 budget = 297mm - 15mm (top) - 20mm (bottom/footer) - 15mm (logo) - 22mm (identity) = 225 mm.
+    let remainingHeight = 225; 
 
     let currentPage: PageData = {
       academicSubjects: [],
@@ -323,8 +326,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     const startNewPage = () => {
       pagesList.push(currentPage);
       currentPageIndex++;
-      // Subsequent pages budget: 255mm capacity. Only Logo header (15) = 15mm starting cost.
-      remainingHeight = 255 - 15; 
+      // Subsequent pages budget = 297mm - 15mm (top) - 20mm (bottom/footer) - 15mm (logo) = 247 mm.
+      remainingHeight = 247; 
       currentPage = {
         academicSubjects: [],
         projectSubjects: [],
@@ -337,8 +340,8 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     // 1. Pack Academic Subjects
     if (academicSubjects.length > 0) {
       currentPage.showAcademicHeader = true;
-      remainingHeight -= 8;  // Section title
-      remainingHeight -= 12; // Table standard header (thead)
+      remainingHeight -= 6;  // Section title (6mm)
+      remainingHeight -= 10; // Table standard header (thead) (10mm)
 
       academicSubjects.forEach((subj, sIdx) => {
         const originalNo = sIdx + 1;
@@ -348,18 +351,18 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         while (goalIndex < subj.goals.length) {
           const currentGoal = subj.goals[goalIndex];
           const firstGoalHeight = getGoalHeight(currentGoal.text);
-          // Minimum spacing to render subject header (8mm) + first remaining goal
-          const minRequired = 8 + firstGoalHeight;
+          // Minimum spacing to render subject header (6mm) + first remaining goal
+          const minRequired = 6 + firstGoalHeight;
 
           if (remainingHeight < minRequired) {
             startNewPage();
             currentPage.showAcademicHeader = true;
-            remainingHeight -= 8;  // Section title
-            remainingHeight -= 12; // Table standard header
+            remainingHeight -= 6;  // Section title
+            remainingHeight -= 10; // Table standard header
           }
 
           // Deduct subject header
-          remainingHeight -= 8;
+          remainingHeight -= 6;
 
           // Pack goals that fit
           const goalsForThisPage: typeof subj.goals = [];
@@ -394,10 +397,10 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
 
     // 2. Pack Project Subjects
     if (projectSubjects.length > 0) {
-      const projSectionHeaderCost = 8 + 12; // Section 2 title (8) + thead (12)
+      const projSectionHeaderCost = 6 + 10; // Section 2 title (6) + thead (10)
       const firstProjSubj = projectSubjects[0];
       const firstGoalHeight = getGoalHeight(firstProjSubj.goals[0]?.text || '');
-      const minProjRequired = projSectionHeaderCost + 8 + firstGoalHeight;
+      const minProjRequired = projSectionHeaderCost + 6 + firstGoalHeight;
 
       if (remainingHeight < minProjRequired) {
         startNewPage();
@@ -416,7 +419,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
         while (goalIndex < subj.goals.length) {
           const currentGoal = subj.goals[goalIndex];
           const firstGoalHeight = getGoalHeight(currentGoal.text);
-          const minRequired = 8 + firstGoalHeight;
+          const minRequired = 6 + firstGoalHeight;
 
           if (remainingHeight < minRequired) {
             startNewPage();
@@ -424,7 +427,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
             remainingHeight -= projSectionHeaderCost;
           }
 
-          remainingHeight -= 8; // Subject header
+          remainingHeight -= 6; // Subject header
 
           const goalsForThisPage: typeof subj.goals = [];
           while (goalIndex < subj.goals.length) {
@@ -457,7 +460,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
     }
 
     // 3. Pack Final Block (General Comments, Note, Attendance, Signatures)
-    const commentsHeight = 12 + Math.max(50, Math.ceil(effGeneralComment.length / 85) * 5.5);
+    const commentsHeight = 10 + Math.max(45, Math.ceil(effGeneralComment.length / 85) * 4.5);
     const attendanceHeight = effShowAttendanceRecap ? 18 : 0;
     // Comments (calculated) + Note (15) + Attendance (18 or 0) + Signatures (50) + margins (10)
     const finalBlockHeight = commentsHeight + 15 + attendanceHeight + 50 + 10;
@@ -588,6 +591,7 @@ export const ElementaryMidtermPdfTemplate: React.FC<ElementaryMidtermPdfTemplate
             background: #fff !important;
             box-sizing: border-box !important;
             position: relative !important;
+            overflow: visible !important;
           }
 
           .pdf-page:last-child {
