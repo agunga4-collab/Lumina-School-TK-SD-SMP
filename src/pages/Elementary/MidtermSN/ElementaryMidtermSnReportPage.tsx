@@ -331,11 +331,29 @@ function ElementaryMidtermSnReportPageContent() {
         setLoadingReportData(false);
       }
     }
-  }, [selectedStudentId, selectedClassId, selectedYear, selectedSemester, selectedTerm, selectedStudentObject, selectedClass, effectiveUser]);
+  }, [
+    selectedStudentId,
+    selectedClassId,
+    selectedYear,
+    selectedSemester,
+    selectedTerm,
+    selectedStudentObject?.id,
+    selectedStudentObject?.name,
+    selectedClass?.id,
+    selectedClass?.name,
+    effectiveUser?.uid,
+    effectiveUser?.displayName
+  ]);
 
   React.useEffect(() => {
     loadStudentReportData();
   }, [loadStudentReportData]);
+
+  // Consolidated function to refresh class SN data (students and reports)
+  const loadClassSnData = React.useCallback(async () => {
+    await loadSnStudents();
+    await loadStudentReportData();
+  }, [loadSnStudents, loadStudentReportData]);
 
   // URL Sync
   React.useEffect(() => {
