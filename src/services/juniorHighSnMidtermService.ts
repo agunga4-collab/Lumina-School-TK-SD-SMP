@@ -204,9 +204,12 @@ export function getDefaultSnSubjects(): SnSubject[] {
     'Science (IPA)',
     'Social Studies and Civics (IPS & PKn)',
     'Islamic Studies',
+    'Quran Recitation',
+    'Household & Urban Gardening',
+    'Kewirausahaan',
     'Art & Performing Arts',
     'Physical Education (PJOK)',
-    'Digital Literacy & Skills'
+    'Digital Literacy'
   ];
 
   return defaultNames.map((name, index) => ({
@@ -215,6 +218,53 @@ export function getDefaultSnSubjects(): SnSubject[] {
     order: index + 1,
     learningGoals: []
   }));
+}
+
+/**
+ * Ensures that all default SN subjects exist in the report document,
+ * replacing legacy "Digital Literacy & Skills" with "Digital Literacy"
+ * and inserting missing default subjects (Quran Recitation, Household & Urban Gardening, Kewirausahaan, Digital Literacy).
+ */
+export function ensureDefaultSnSubjects(existingSubjects?: SnSubject[] | null): SnSubject[] {
+  const defaults = getDefaultSnSubjects();
+  if (!existingSubjects || !Array.isArray(existingSubjects) || existingSubjects.length === 0) {
+    return defaults;
+  }
+
+  // 1. Rename any legacy "Digital Literacy & Skills" to "Digital Literacy"
+  const updatedSubjects: SnSubject[] = existingSubjects.map((s) => {
+    if (s.subjectName === 'Digital Literacy & Skills') {
+      return { ...s, subjectName: 'Digital Literacy' };
+    }
+    return s;
+  });
+
+  // 2. Default subject names to guarantee
+  const requiredDefaults = [
+    'Quran Recitation',
+    'Household & Urban Gardening',
+    'Kewirausahaan',
+    'Digital Literacy'
+  ];
+
+  requiredDefaults.forEach((defName) => {
+    const exists = updatedSubjects.some(
+      (s) =>
+        s.subjectName.toLowerCase().trim() === defName.toLowerCase().trim() ||
+        (defName === 'Digital Literacy' && s.subjectName.toLowerCase().trim().startsWith('digital literacy'))
+    );
+
+    if (!exists) {
+      updatedSubjects.push({
+        subjectId: `subj_${Date.now()}_${defName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
+        subjectName: defName,
+        order: updatedSubjects.length + 1,
+        learningGoals: []
+      });
+    }
+  });
+
+  return updatedSubjects;
 }
 
 /**
@@ -266,7 +316,7 @@ export async function fetchSnMidtermReport(
         academicYear: aYear,
         semester: sem,
         midtermPeriod: period,
-        subjects: Array.isArray(data.subjects) ? data.subjects : getDefaultSnSubjects(),
+        subjects: ensureDefaultSnSubjects(Array.isArray(data.subjects) ? data.subjects : null),
         generalComment: data.generalComment || {
           finalComment: '',
           status: 'DRAFT',

@@ -4,7 +4,7 @@ import {
   Clock, ShieldCheck, Loader2, Download
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { publishSnMidtermReport } from '../../../services/juniorHighSnMidtermService';
+import { publishSnMidtermReport, ensureDefaultSnSubjects } from '../../../services/juniorHighSnMidtermService';
 import { MidtermSnPdfTemplate } from './MidtermSnPdfTemplate';
 import type { SnMidtermReportDoc, SnPublishedMidtermReportDoc } from '../../../types/midtermSnReport';
 import type { Student, Class, User, ReportConfig } from '../../../types';
@@ -59,7 +59,7 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
         academicYear: reportDoc.academicYear || '',
         semester: reportDoc.semester || '1',
         midtermPeriod: reportDoc.midtermPeriod || '1',
-        subjects: Array.isArray(reportDoc.subjects) ? reportDoc.subjects : [],
+        subjects: ensureDefaultSnSubjects(Array.isArray(reportDoc.subjects) ? reportDoc.subjects : null),
         generalComment: reportDoc.generalComment?.finalComment || '',
         signatory: {
           principalName: reportConfig?.principalName || 'Dra. Hj. Unit Principal',

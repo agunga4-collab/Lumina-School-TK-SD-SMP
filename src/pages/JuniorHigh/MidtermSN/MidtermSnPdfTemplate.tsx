@@ -213,27 +213,27 @@ export const MidtermSnPdfTemplate: React.FC<MidtermSnPdfTemplateProps> = ({
 
   // Helper to categorize SN subjects into the standard 4 categories
   const getCategoryData = (catId: string, fallbackName: string) => {
+    let rawSubjects: any[] = [];
+
     if (snapshot) {
-      const categories = Array.isArray(snapshot.categories) ? snapshot.categories : [];
-      const found = categories.find(
-        (c: any) => c && typeof c.name === 'string' && c.name.toUpperCase() === fallbackName.toUpperCase()
-      );
-      const rawSubjects = found && Array.isArray(found.subjects) ? found.subjects : [];
-      return rawSubjects.map((s: any) => ({
-        name: s && typeof s.name === 'string' ? s.name : '',
-        goals: s && Array.isArray(s.goals) ? s.goals.map((g: any) => ({
-          id: g?.id || '',
-          text: g?.text || '',
-          remark: g?.remark || '-'
-        })) : []
-      }));
+      if (Array.isArray(snapshot.subjects) && snapshot.subjects.length > 0) {
+        rawSubjects = snapshot.subjects;
+      } else if (snapshot.reportSnapshot && Array.isArray(snapshot.reportSnapshot.subjects) && snapshot.reportSnapshot.subjects.length > 0) {
+        rawSubjects = snapshot.reportSnapshot.subjects;
+      } else if (Array.isArray(snapshot.categories) && snapshot.categories.length > 0) {
+        const found = snapshot.categories.find(
+          (c: any) => c && typeof c.name === 'string' && c.name.toUpperCase() === fallbackName.toUpperCase()
+        );
+        rawSubjects = found && Array.isArray(found.subjects) ? found.subjects : [];
+      }
+    } else {
+      rawSubjects = reportDoc?.subjects || [];
     }
 
-    const rawSubjects = reportDoc?.subjects || [];
     if (!Array.isArray(rawSubjects) || rawSubjects.length === 0) return [];
 
     const isMatch = (name: string, targetCatId: string) => {
-      const n = (name || '').toLowerCase();
+      const n = (name || '').toLowerCase().trim();
       if (targetCatId === 'SPIRITUAL_HEALTH') {
         return n.includes('spiritual');
       }
@@ -272,16 +272,26 @@ export const MidtermSnPdfTemplate: React.FC<MidtermSnPdfTemplateProps> = ({
       return false;
     };
 
-    const matchedSubjects = rawSubjects.filter((subj) => isMatch(subj.subjectName, catId));
+    const matchedSubjects = rawSubjects.filter((subj) => {
+      const sName = subj?.subjectName || subj?.name || '';
+      return isMatch(sName, catId);
+    });
 
-    return matchedSubjects.map((subj) => ({
-      name: subj.subjectName,
-      goals: (subj.learningGoals || []).map((g) => ({
-        id: g.goalId,
-        text: g.text,
-        remark: g.remark || '-'
-      }))
-    }));
+    return matchedSubjects
+      .map((subj) => {
+        const rawName = subj?.subjectName || subj?.name || '';
+        const displayName = rawName === 'Digital Literacy & Skills' ? 'Digital Literacy' : rawName;
+        const rawGoals = subj?.learningGoals || subj?.goals || [];
+        return {
+          name: displayName,
+          goals: rawGoals.map((g: any) => ({
+            id: g?.goalId || g?.id || '',
+            text: g?.text || '',
+            remark: g?.remark || '-'
+          }))
+        };
+      })
+      .filter((subj) => subj.goals && subj.goals.length > 0);
   };
 
   const spiritualSubjects = React.useMemo(

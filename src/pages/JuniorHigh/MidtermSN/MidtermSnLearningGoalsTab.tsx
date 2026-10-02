@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { MIDTERM_REMARKS_CONFIG } from '../../../services/juniorHighMidtermService';
-import { saveSnMidtermReport } from '../../../services/juniorHighSnMidtermService';
+import { saveSnMidtermReport, ensureDefaultSnSubjects } from '../../../services/juniorHighSnMidtermService';
 import type { SnMidtermReportDoc, SnSubject, SnLearningGoal } from '../../../types/midtermSnReport';
 import type { Student, Class, User } from '../../../types';
 
@@ -27,7 +27,9 @@ export const MidtermSnLearningGoalsTab: React.FC<MidtermSnLearningGoalsTabProps>
   onRefreshData,
   loading
 }) => {
-  const [subjects, setSubjects] = React.useState<SnSubject[]>(reportDoc.subjects || []);
+  const [subjects, setSubjects] = React.useState<SnSubject[]>(
+    ensureDefaultSnSubjects(reportDoc.subjects)
+  );
   const [saveStatus, setSaveStatus] = React.useState<'SAVED' | 'DIRTY' | 'SAVING' | 'ERROR'>('SAVED');
 
   // New Subject State
@@ -49,7 +51,7 @@ export const MidtermSnLearningGoalsTab: React.FC<MidtermSnLearningGoalsTabProps>
   // Sync state when reportDoc changes
   React.useEffect(() => {
     if (reportDoc && reportDoc.subjects) {
-      setSubjects(reportDoc.subjects);
+      setSubjects(ensureDefaultSnSubjects(reportDoc.subjects));
       setSaveStatus('SAVED');
     }
   }, [reportDoc?.id, reportDoc?.updatedAt]);
@@ -312,6 +314,35 @@ export const MidtermSnLearningGoalsTab: React.FC<MidtermSnLearningGoalsTabProps>
             const isEditingSubj = editingSubjectId === subject.subjectId;
             const isAddingGoal = addingGoalSubjectId === subject.subjectId;
 
+            const getCategoryBadgeLabel = (name: string) => {
+              const n = (name || '').toLowerCase().trim();
+              if (n.includes('spiritual')) return { label: 'Spiritual Health', color: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
+              if (
+                n.includes('islamic') ||
+                n.includes('quran') ||
+                n.includes('household') ||
+                n.includes('gardening') ||
+                n.includes('wirausaha') ||
+                n.includes('kewirausahaan') ||
+                n.includes('life skill') ||
+                n.includes('bina diri') ||
+                n.includes('weekly')
+              ) return { label: 'Weekly Lessons', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' };
+              if (
+                n.includes('performing') ||
+                n.includes('makerspace') ||
+                n.includes('physical') ||
+                n.includes('pjok') ||
+                n.includes('digital') ||
+                n.includes('ict') ||
+                n.includes('art') ||
+                n.includes('activity')
+              ) return { label: 'Unit Activity', color: 'bg-purple-100 text-purple-800 border-purple-200' };
+              return { label: 'Learning Journey', color: 'bg-blue-100 text-blue-800 border-blue-200' };
+            };
+
+            const catBadge = getCategoryBadgeLabel(subject.subjectName);
+
             return (
               <div
                 key={subject.subjectId}
@@ -346,10 +377,13 @@ export const MidtermSnLearningGoalsTab: React.FC<MidtermSnLearningGoalsTabProps>
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-xs font-black text-slate-900 uppercase tracking-wide">
                           {subject.subjectName}
                         </h3>
+                        <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md border ${catBadge.color}`}>
+                          {catBadge.label}
+                        </span>
                         <span className="text-[10px] font-bold text-slate-400">
                           ({(subject.learningGoals || []).length} Goals)
                         </span>
