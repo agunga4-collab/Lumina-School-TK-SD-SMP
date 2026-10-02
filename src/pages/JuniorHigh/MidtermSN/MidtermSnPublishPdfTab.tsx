@@ -6,6 +6,7 @@ import {
 import { toast } from 'sonner';
 import { publishSnMidtermReport, ensureDefaultSnSubjects } from '../../../services/juniorHighSnMidtermService';
 import { MidtermSnPdfTemplate } from './MidtermSnPdfTemplate';
+import { generateMidtermPdfBlob, blobToBase64, normalizeMidtermFilename } from '../../../lib/juniorHighMidtermReportPdf';
 import type { SnMidtermReportDoc, SnPublishedMidtermReportDoc } from '../../../types/midtermSnReport';
 import type { Student, Class, User, ReportConfig } from '../../../types';
 
@@ -46,7 +47,64 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
     }
 
     setPublishing(true);
+    const toastId = toast.loading(`Menerbitkan rapor untuk ${selectedStudent.name || 'Siswa'}...`);
+
     try {
+      // 1. Find the rendered A4 page elements inside the template
+      let pageElements: HTMLElement[] = [];
+      for (let wait = 0; wait < 20; wait++) {
+        pageElements = Array.from(document.querySelectorAll('[id^="jh-midterm-generator-page"]')) as HTMLElement[];
+        if (pageElements.length > 0) break;
+        await new Promise(r => setTimeout(r, 150));
+      }
+
+      if (pageElements.length === 0) {
+        throw new Error('Element render layout PDF tidak ditemukan. Silakan tunggu hingga pratinjau PDF termuat sepenuhnya.');
+      }
+
+      // 2. Generate PDF blob using jsPDF & html2canvas
+      toast.loading(`Menghasilkan file PDF ${selectedStudent.name || 'Siswa'}...`, { id: toastId });
+      const pdfBlob = await generateMidtermPdfBlob(pageElements);
+      const fileName = normalizeMidtermFilename(
+        selectedClass.name,
+        selectedStudent.name || 'Siswa',
+        reportDoc.midtermPeriod,
+        reportDoc.academicYear
+      );
+      const pdfBase64 = await blobToBase64(pdfBlob);
+
+      // 3. Upload to Google Shared Drive via Backend Service Account
+      toast.loading(`Mengunggah PDF ${selectedStudent.name || 'Siswa'} ke Google Shared Drive...`, { id: toastId });
+      const uploadRes = await fetch('/api/junior-high/midterm/upload-pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          pdfBase64,
+          fileName,
+          academicYear: reportDoc.academicYear,
+          semester: reportDoc.semester,
+          midtermTerm: reportDoc.midtermPeriod,
+          className: selectedClass.name
+        })
+      });
+
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok || !uploadData.success) {
+        const errorDetail = uploadData?.error || `Upload Google Drive gagal dengan status ${uploadRes.status}`;
+        throw new Error(errorDetail);
+      }
+
+      const driveFileId = uploadData.driveFileId;
+      const driveFileUrl = uploadData.driveFileUrl;
+      const driveFolderId = uploadData.folderId;
+
+      if (!driveFileId || !driveFileUrl) {
+        throw new Error('Respons Drive tidak lengkap.');
+      }
+
+      // 4. Compute next version and build snapshot
       const nextVersion = (latestPublished?.reportVersion || 0) + 1;
 
       const reportSnapshot = {
@@ -68,10 +126,8 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
         publishedAt: Date.now()
       };
 
-      const dummyDriveUrl = `https://drive.google.com/file/d/SN_MIDTERM_${selectedStudent.id}_v${nextVersion}/view`;
-      const dummyFileId = `SN_FILE_${selectedStudent.id}_v${nextVersion}`;
-      const dummyFolderId = '1mjxXJKaKSCfn0RNpJWQTsI65DwnhiyqK';
-
+      // 5. Save metadata to database only on successful upload
+      toast.loading(`Menyimpan metadata publikasi ke database...`, { id: toastId });
       await publishSnMidtermReport(
         selectedStudent,
         selectedClass,
@@ -79,22 +135,18 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
         reportDoc.semester,
         reportDoc.midtermPeriod,
         reportSnapshot,
-        dummyDriveUrl,
-        dummyFileId,
-        dummyFolderId,
+        driveFileUrl,
+        driveFileId,
+        driveFolderId,
         nextVersion,
         currentUser
       );
 
       await onRefreshData();
-      toast.success(`Rapor SN untuk ${selectedStudent.name} v${nextVersion} berhasil dipublish!`);
+      toast.success(`Rapor SN untuk ${selectedStudent.name} (v${nextVersion}) berhasil diterbitkan ke Shared Drive!`, { id: toastId });
     } catch (err: any) {
-      console.error("[MidtermSnPublishPdfTab] handlePublish error:", {
-        studentId: selectedStudent?.id,
-        classId: selectedClass?.id,
-        academicYear: reportDoc?.academicYear
-      }, err);
-      toast.error('Gagal merilis PDF Rapor SN: ' + (err.message || 'Error'));
+      console.error("[MidtermSnPublishPdfTab] handlePublish error:", err);
+      toast.error('Gagal menerbitkan PDF Rapor SN: ' + (err.message || 'Error'), { id: toastId });
     } finally {
       setPublishing(false);
     }
