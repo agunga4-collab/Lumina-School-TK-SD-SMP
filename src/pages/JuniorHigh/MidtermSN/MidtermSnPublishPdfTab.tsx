@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import { publishSnMidtermReport, ensureDefaultSnSubjects } from '../../../services/juniorHighSnMidtermService';
 import { MidtermSnPdfTemplate } from './MidtermSnPdfTemplate';
 import { generateMidtermPdfBlob, blobToBase64, normalizeMidtermFilename } from '../../../lib/juniorHighMidtermReportPdf';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../../lib/firebase';
 import type { SnMidtermReportDoc, SnPublishedMidtermReportDoc } from '../../../types/midtermSnReport';
 import type { Student, Class, User, ReportConfig } from '../../../types';
 
@@ -18,11 +20,25 @@ interface MidtermSnPublishPdfTabProps {
   publishedReports: SnPublishedMidtermReportDoc[];
   reportConfig: ReportConfig | null;
   homeroomTeacherProfile?: { displayName: string; niy?: string; signatureUrl?: string | null } | null;
-  studentAttendanceMap?: Record<string, { sickLeave?: number | null; excusedLeave?: number | null; absent?: number | null }>;
-  attendanceCutoffDate?: string;
+  cutoffDateRaw?: string;
+  signingDateRaw?: string;
+  reportSigningLocation?: string;
+  reportSigningDate?: string;
   onRefreshData: () => Promise<void>;
   loading: boolean;
 }
+
+const formatToCustomDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-');
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+  const mIndex = parseInt(month, 10) - 1;
+  const dNum = parseInt(day, 10);
+  return `${dNum} ${months[mIndex]} ${year}`;
+};
 
 export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
   currentUser,
@@ -32,12 +48,86 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
   publishedReports,
   reportConfig,
   homeroomTeacherProfile,
-  studentAttendanceMap,
-  attendanceCutoffDate,
+  cutoffDateRaw,
+  signingDateRaw,
+  reportSigningLocation = 'Depok',
+  reportSigningDate,
   onRefreshData,
   loading
 }) => {
   const [publishing, setPublishing] = React.useState<boolean>(false);
+
+  const [cutoffAttendanceMap, setCutoffAttendanceMap] = React.useState<Record<string, { sickLeave: number | null; excusedLeave: number | null; absent: number | null }>>({});
+  const [loadingAttendance, setLoadingAttendance] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (!selectedClass || !selectedStudent?.id || !reportDoc?.academicYear || !reportDoc?.semester) {
+      setCutoffAttendanceMap({});
+      return;
+    }
+
+    let isCancelled = false;
+
+    const fetchCutoffAttendance = async () => {
+      setLoadingAttendance(true);
+      try {
+        const classIdentifiers = [selectedClass.id];
+        if (selectedClass.name && selectedClass.name !== selectedClass.id) {
+          classIdentifiers.push(selectedClass.name);
+        }
+
+        const attQuery = query(
+          collection(db, 'attendance_records'),
+          where('classId', 'in', classIdentifiers),
+          where('academicYear', '==', reportDoc.academicYear)
+        );
+
+        const snap = await getDocs(attQuery);
+        const docs = snap.docs.map(d => d.data());
+
+        if (isCancelled) return;
+
+        const map: Record<string, { sickLeave: number | null; excusedLeave: number | null; absent: number | null }> = {};
+
+        // Initialize for this selected student
+        map[selectedStudent.id] = { sickLeave: 0, excusedLeave: 0, absent: 0 };
+
+        docs.forEach(record => {
+          const recStudentId = record.studentId || '';
+          const recSemester = String(record.semester || '');
+          const recordDate = record.date || ''; // YYYY-MM-DD
+          const recStatus = record.status || '';
+
+          if (
+            recStudentId === selectedStudent.id &&
+            recSemester === String(reportDoc.semester) &&
+            (!cutoffDateRaw || recordDate <= cutoffDateRaw) &&
+            ['HADIR', 'SAKIT', 'IZIN', 'ALPA', 'LATE'].includes(recStatus)
+          ) {
+            if (recStatus === 'SAKIT') {
+              map[selectedStudent.id].sickLeave = (map[selectedStudent.id].sickLeave || 0) + 1;
+            } else if (recStatus === 'IZIN') {
+              map[selectedStudent.id].excusedLeave = (map[selectedStudent.id].excusedLeave || 0) + 1;
+            } else if (recStatus === 'ALPA') {
+              map[selectedStudent.id].absent = (map[selectedStudent.id].absent || 0) + 1;
+            }
+          }
+        });
+
+        setCutoffAttendanceMap(map);
+      } catch (err) {
+        if (!isCancelled) console.error("Error fetching SN cutoff attendance:", err);
+      } finally {
+        if (!isCancelled) setLoadingAttendance(false);
+      }
+    };
+
+    fetchCutoffAttendance();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedClass?.id, reportDoc?.academicYear, reportDoc?.semester, cutoffDateRaw, selectedStudent?.id]);
 
   // Filter published versions for this specific student
   const studentPublishedList = publishedReports
@@ -133,11 +223,13 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
           homeroomTeacherSignatureUrl: selectedClass?.teacherSignatureUrl || null
         },
         attendance: {
-          sakit: studentAttendanceMap?.[selectedStudent.id]?.sickLeave ?? 0,
-          izin: studentAttendanceMap?.[selectedStudent.id]?.excusedLeave ?? 0,
-          tanpaKeterangan: studentAttendanceMap?.[selectedStudent.id]?.absent ?? 0
+          sakit: cutoffAttendanceMap[selectedStudent.id]?.sickLeave ?? 0,
+          izin: cutoffAttendanceMap[selectedStudent.id]?.excusedLeave ?? 0,
+          tanpaKeterangan: cutoffAttendanceMap[selectedStudent.id]?.absent ?? 0
         },
-        attendanceCutoffDate: attendanceCutoffDate || '',
+        attendanceCutoffDate: cutoffDateRaw ? formatToCustomDate(cutoffDateRaw) : '',
+        reportSigningLocation: reportSigningLocation || 'Depok',
+        reportSigningDate: reportSigningDate || '',
         publishedAt: Date.now()
       };
 
@@ -234,11 +326,13 @@ export const MidtermSnPublishPdfTab: React.FC<MidtermSnPublishPdfTabProps> = ({
           reportConfig={reportConfig}
           homeroomTeacherProfile={homeroomTeacherProfile || undefined}
           attendance={{
-            sakit: studentAttendanceMap?.[selectedStudent.id]?.sickLeave ?? 0,
-            izin: studentAttendanceMap?.[selectedStudent.id]?.excusedLeave ?? 0,
-            tanpaKeterangan: studentAttendanceMap?.[selectedStudent.id]?.absent ?? 0
+            sakit: cutoffAttendanceMap[selectedStudent.id]?.sickLeave ?? 0,
+            izin: cutoffAttendanceMap[selectedStudent.id]?.excusedLeave ?? 0,
+            tanpaKeterangan: cutoffAttendanceMap[selectedStudent.id]?.absent ?? 0
           }}
-          attendanceCutoffDate={attendanceCutoffDate}
+          attendanceCutoffDate={cutoffDateRaw ? formatToCustomDate(cutoffDateRaw) : ''}
+          reportSigningLocation={reportSigningLocation}
+          reportSigningDate={reportSigningDate}
         />
       </div>
     </div>

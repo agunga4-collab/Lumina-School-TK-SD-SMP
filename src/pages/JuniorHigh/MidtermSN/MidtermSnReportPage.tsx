@@ -11,7 +11,6 @@ import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { db, getClasses, getReportConfig, getStudentById } from '../../../lib/firebase';
 import { doc, getDoc, getDocs, collection, query, where } from 'firebase/firestore';
-import { useJHReportAttendance } from '../../../hooks/useJHReportAttendance';
 import {
   fetchSnStudentsForClass,
   fetchSnMidtermReport,
@@ -279,19 +278,6 @@ function MidtermSnReportPageContent() {
       isCancelled = true;
     };
   }, [selectedYear, selectedSemester, selectedTerm]);
-
-  const activeStudentIds = React.useMemo(() => (snStudents || []).map(s => s.studentId).filter(Boolean), [snStudents]);
-  const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-  const { studentAttendanceMap } = useJHReportAttendance({
-    selectedClassId,
-    selectedClassName: selectedClass?.name,
-    selectedYear,
-    selectedSemester,
-    selectedMonth: currentMonthStr,
-    studentIds: activeStudentIds
-  });
 
   // Sync Search Params to URL
   React.useEffect(() => {
@@ -724,8 +710,10 @@ function MidtermSnReportPageContent() {
                 publishedReports={publishedReports}
                 reportConfig={reportConfig}
                 homeroomTeacherProfile={homeroomTeacherProfile}
-                studentAttendanceMap={studentAttendanceMap}
-                attendanceCutoffDate={cutoffDateRaw ? formatToCustomDate(cutoffDateRaw) : undefined}
+                cutoffDateRaw={cutoffDateRaw}
+                signingDateRaw={signingDateRaw}
+                reportSigningLocation="Depok"
+                reportSigningDate={signingDateRaw ? formatToCustomDate(signingDateRaw) : undefined}
                 onRefreshData={loadStudentReport}
                 loading={loadingReport}
               />
