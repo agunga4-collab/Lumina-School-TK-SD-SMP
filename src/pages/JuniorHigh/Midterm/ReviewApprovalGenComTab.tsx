@@ -57,10 +57,7 @@ export function ReviewApprovalGenComTab({
 
   // Helper roles
   const userRoleStr = currentUser.role || '';
-  const isApprover = 
-    currentUser.unitId === 'JUNIOR_HIGH' ||
-    currentUser.unitId === 'ALL' ||
-    ['SUPER_ADMIN', 'PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR'].includes(userRoleStr);
+  const isApprover = ['SUPER_ADMIN', 'PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR'].includes(userRoleStr);
 
   // Filter students based on state & search query
   const filteredStudents = React.useMemo(() => {
@@ -496,17 +493,36 @@ export function ReviewApprovalGenComTab({
                 </h4>
                 <div className="relative border-l border-slate-200 pl-4 space-y-4">
                   {activeStudentData.reviewHistory.map((h, hIdx) => {
-                    const actColor = h.action === 'APPROVED' ? 'text-emerald-600' : h.action === 'REVISION_REQUESTED' ? 'text-rose-600' : 'text-slate-600';
+                    const actColor = h.action === 'APPROVED' ? 'text-emerald-600'
+                      : h.action === 'REVISION_REQUESTED' ? 'text-rose-600'
+                      : h.action === 'UNSUBMITTED' ? 'text-amber-600'
+                      : h.action === 'CATEGORY_REMOVED' ? 'text-slate-500'
+                      : 'text-blue-600';
+
+                    const actionLabel = 
+                      h.action === 'UNSUBMITTED' ? 'BATALKAN SUBMIT (KEMBALI DRAFT)' :
+                      h.action === 'CATEGORY_REMOVED' ? 'KATEGORI/TAG DIHAPUS' :
+                      h.action === 'RESUBMITTED_FOR_REVIEW' ? 'SUBMIT ULANG UNTUK REVIEW' :
+                      h.action === 'SUBMITTED_FOR_REVIEW' ? 'DIAJUKAN UNTUK REVIEW' :
+                      h.action === 'REVISION_REQUESTED' ? 'PERMINTAAN REVISI' :
+                      h.action === 'APPROVED' ? 'DISETUJUI' :
+                      h.action.replace(/_/g, ' ');
+
                     return (
                       <div key={hIdx} className="relative space-y-1">
                         <span className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-slate-200 border-2 border-white ring-4 ring-slate-100" />
                         <div className="flex items-center justify-between">
-                          <p className={`text-xs font-bold uppercase tracking-tight ${actColor}`}>{h.action.replace(/_/g, ' ')}</p>
+                          <p className={`text-xs font-bold uppercase tracking-tight ${actColor}`}>{actionLabel}</p>
                           <span className="text-[10px] text-slate-400 font-bold">{new Date(h.timestamp).toLocaleString('id-ID')}</span>
                         </div>
                         <p className="text-[11px] text-slate-500 font-semibold">
                           Aktor: {h.actorName} ({h.actorRole})
                         </p>
+                        {h.details && (
+                          <p className="text-[11px] text-slate-600 font-medium italic">
+                            {h.details}
+                          </p>
+                        )}
                         {h.feedback && (
                           <div className="bg-rose-50 border border-rose-100 rounded-xl p-2.5 text-[11px] text-rose-700 font-medium">
                             Feedback: {h.feedback}

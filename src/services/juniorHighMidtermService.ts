@@ -149,30 +149,26 @@ export function canUserEditMidtermGoals(
 
 /**
  * Permission: Edit General Comments
+ * Guru hanya dapat mengubah GenCom siswa pada kelas assignment-nya.
  */
 export function canUserEditMidtermGeneralComments(
   user: User | null | undefined, 
   classData: Class | null | undefined
 ): boolean {
-  if (!user) return false;
+  if (!user || !classData) return false;
   const role = user.role;
-  const unitId = user.unitId;
 
-  // New permission: allow if unitId is JUNIOR_HIGH/ALL or if role is SUPER_ADMIN/PRINCIPAL/HEAD_UNIT/HEAD_JUNIOR
-  if (
-    unitId === 'JUNIOR_HIGH' ||
-    unitId === 'ALL' ||
-    ['SUPER_ADMIN', 'PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR'].includes(role)
-  ) {
+  // School leaders and Super Admin have global access
+  if (['SUPER_ADMIN', 'PRINCIPAL', 'HEAD_UNIT', 'HEAD_JUNIOR'].includes(role)) {
     return true;
   }
 
-  // Homeroom Teacher can edit ONLY for their homeroom class
-  if (isHomeroomTeacherOfClass(user, classData)) {
+  // Guru Kelas / Teacher can edit ONLY for their assigned class
+  if (isHomeroomTeacherOfClass(user, classData) || isTeacherAssignedToClass(user, classData)) {
     return true;
   }
 
-  // Secretary JH, Subject Teacher, BK Mentor, MTSS PJ: read-only
+  // Secretary JH, unassigned Teacher, BK Mentor, MTSS PJ: read-only
   return false;
 }
 
@@ -1115,6 +1111,8 @@ export async function getMidtermClassCommentsConfig(
 
 /**
  * Submit General Comments for review
+ * Supports initial submission as well as resubmission after revision or unsubmit.
+ * Logs audit in reviewHistory.
  */
 export async function submitMidtermGeneralCommentForReview(
   studentId: string,
@@ -1135,7 +1133,12 @@ export async function submitMidtermGeneralCommentForReview(
   
   const history = Array.isArray(existing?.reviewHistory) ? [...existing.reviewHistory] : [];
   const previousStatus = existing?.generalCommentReviewStatus || 'DRAFT';
-  const action = previousStatus === 'REVISION_REQUESTED' ? 'RESUBMITTED_FOR_REVIEW' : 'SUBMITTED_FOR_REVIEW';
+  const hasSubmittedBefore = history.some(h => 
+    h.action === 'SUBMITTED_FOR_REVIEW' || 
+    h.action === 'RESUBMITTED_FOR_REVIEW' || 
+    h.action === 'UNSUBMITTED'
+  );
+  const action = (previousStatus === 'REVISION_REQUESTED' || hasSubmittedBefore) ? 'RESUBMITTED_FOR_REVIEW' : 'SUBMITTED_FOR_REVIEW';
 
   const entry: MidtermReviewHistoryEntry = {
     action,
@@ -1143,6 +1146,7 @@ export async function submitMidtermGeneralCommentForReview(
     actorName: userName,
     actorRole: userRole,
     timestamp: Date.now(),
+    details: action === 'RESUBMITTED_FOR_REVIEW' ? 'Mengajukan ulang komentar untuk review' : 'Mengajukan komentar untuk review',
     commentSnapshot
   };
   history.push(entry);
@@ -1160,6 +1164,184 @@ export async function submitMidtermGeneralCommentForReview(
     updatedAt: Date.now(),
     updatedBy: userUid
   }, { merge: true });
+}
+
+/**
+ * Unsubmit General Comments for review (Reverts to DRAFT, logs audit)
+ * Allowed when status is SUBMITTED_FOR_REVIEW.
+ * Prohibited if already APPROVED.
+ */
+export async function unsubmitMidtermGeneralComment(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  userUid: string,
+  userName: string,
+  userRole: string
+): Promise<void> {
+  const docId = getStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+  const ref = doc(db, 'jh_midterm_student_data', docId);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error('Data komentar siswa tidak ditemukan.');
+  }
+  const existing = snap.data() as MidtermStudentDataDoc;
+
+  if (existing.generalCommentReviewStatus === 'APPROVED') {
+    throw new Error('Komentar yang sudah disetujui (APPROVED) tidak dapat dibatalkan submit-nya.');
+  }
+
+  if (existing.generalCommentReviewStatus !== 'SUBMITTED_FOR_REVIEW') {
+    throw new Error('Hanya komentar yang berstatus SUBMITTED_FOR_REVIEW yang dapat dibatalkan.');
+  }
+
+  const history = Array.isArray(existing.reviewHistory) ? [...existing.reviewHistory] : [];
+  const entry: MidtermReviewHistoryEntry = {
+    action: 'UNSUBMITTED',
+    actorId: userUid,
+    actorName: userName,
+    actorRole: userRole,
+    timestamp: Date.now(),
+    details: 'Membatalkan pengajuan review untuk diedit kembali',
+    commentSnapshot: existing.generalComment?.finalComment || ''
+  };
+  history.push(entry);
+
+  await setDoc(ref, {
+    generalCommentReviewStatus: 'DRAFT',
+    submittedForReviewAt: null,
+    submittedForReviewBy: null,
+    submittedForReviewByName: null,
+    reviewHistory: history,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  }, { merge: true });
+}
+
+/**
+ * Removes a selected category/tag recommendation from student's General Comment
+ * Allowed only while status is DRAFT (or after unsubmit).
+ * Prohibited if already APPROVED or SUBMITTED_FOR_REVIEW.
+ * Logs audit in reviewHistory.
+ */
+export async function removeMidtermStudentCategoryTag(
+  studentId: string,
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  category: 'STRENGTH' | 'ACHIEVEMENT' | 'NEED',
+  tagToRemove: string,
+  userUid: string,
+  userName: string,
+  userRole: string
+): Promise<void> {
+  const docId = getStudentDataDocId(studentId, classId, academicYear, semester, midtermTerm);
+  const ref = doc(db, 'jh_midterm_student_data', docId);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    throw new Error('Data komentar siswa tidak ditemukan.');
+  }
+  const existing = snap.data() as MidtermStudentDataDoc;
+
+  if (existing.generalCommentReviewStatus === 'APPROVED') {
+    throw new Error('Komentar sudah disetujui (APPROVED). Kategori tidak dapat dihapus.');
+  }
+  if (existing.generalCommentReviewStatus === 'SUBMITTED_FOR_REVIEW') {
+    throw new Error('Komentar sedang dalam review. Batalkan submit terlebih dahulu sebelum menghapus kategori.');
+  }
+
+  const currentGC = existing.generalComment || {
+    strengths: [],
+    achievements: [],
+    needsImprovement: []
+  };
+
+  const updatedStrengths = category === 'STRENGTH'
+    ? (Array.isArray(currentGC.strengths) ? currentGC.strengths.filter(t => t !== tagToRemove) : [])
+    : (Array.isArray(currentGC.strengths) ? currentGC.strengths : []);
+
+  const updatedAchievements = category === 'ACHIEVEMENT'
+    ? (Array.isArray(currentGC.achievements) ? currentGC.achievements.filter(t => t !== tagToRemove) : [])
+    : (Array.isArray(currentGC.achievements) ? currentGC.achievements : []);
+
+  const updatedNeeds = category === 'NEED'
+    ? (Array.isArray(currentGC.needsImprovement) ? currentGC.needsImprovement.filter(t => t !== tagToRemove) : [])
+    : (Array.isArray(currentGC.needsImprovement) ? currentGC.needsImprovement : []);
+
+  const catLabel = category === 'STRENGTH' ? 'Strength' : category === 'ACHIEVEMENT' ? 'Achievement' : 'Needs Improvement';
+
+  const history = Array.isArray(existing.reviewHistory) ? [...existing.reviewHistory] : [];
+  const entry: MidtermReviewHistoryEntry = {
+    action: 'CATEGORY_REMOVED',
+    actorId: userUid,
+    actorName: userName,
+    actorRole: userRole,
+    timestamp: Date.now(),
+    details: `Menghapus kategori ${catLabel}: "${tagToRemove}"`,
+    commentSnapshot: currentGC.finalComment || ''
+  };
+  history.push(entry);
+
+  await setDoc(ref, {
+    generalComment: {
+      ...currentGC,
+      strengths: updatedStrengths,
+      achievements: updatedAchievements,
+      needsImprovement: updatedNeeds,
+      updatedAt: Date.now(),
+      updatedBy: userUid
+    },
+    reviewHistory: history,
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  }, { merge: true });
+}
+
+/**
+ * Deletes custom category item from class custom bank
+ */
+export async function deleteMidtermClassCustomTag(
+  classId: string,
+  academicYear: string,
+  semester: string,
+  midtermTerm: string,
+  category: 'STRENGTH' | 'ACHIEVEMENT' | 'NEED',
+  tagToDelete: string,
+  userUid: string
+): Promise<void> {
+  const normYear = normalizeAcademicYear(academicYear);
+  const docId = `${classId}_${normYear}_${semester}_${midtermTerm}`;
+  const ref = doc(db, 'jh_midterm_class_comments_config', docId);
+
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const data = snap.data() as MidtermClassCommentsConfig;
+  const updatePayload: any = {
+    updatedAt: Date.now(),
+    updatedBy: userUid
+  };
+
+  if (category === 'STRENGTH') {
+    updatePayload.customStrengths = Array.isArray(data.customStrengths)
+      ? data.customStrengths.filter(t => t !== tagToDelete)
+      : [];
+  } else if (category === 'ACHIEVEMENT') {
+    updatePayload.customAchievements = Array.isArray(data.customAchievements)
+      ? data.customAchievements.filter(t => t !== tagToDelete)
+      : [];
+  } else {
+    updatePayload.customNeedsImprovement = Array.isArray(data.customNeedsImprovement)
+      ? data.customNeedsImprovement.filter(t => t !== tagToDelete)
+      : [];
+  }
+
+  await setDoc(ref, updatePayload, { merge: true });
 }
 
 /**

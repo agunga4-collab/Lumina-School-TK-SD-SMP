@@ -86,13 +86,14 @@ export interface MidtermGeneralCommentData {
 export type MidtermGenComReviewStatus = 'DRAFT' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'APPROVED';
 
 export interface MidtermReviewHistoryEntry {
-  action: 'DRAFT_SAVED' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'RESUBMITTED_FOR_REVIEW' | 'APPROVED';
+  action: 'DRAFT_SAVED' | 'SUBMITTED_FOR_REVIEW' | 'REVISION_REQUESTED' | 'RESUBMITTED_FOR_REVIEW' | 'APPROVED' | 'UNSUBMITTED' | 'CATEGORY_REMOVED';
   actorId: string;
   actorName: string;
   actorRole: string;
   timestamp: number;
   feedback?: string;
   commentSnapshot?: string;
+  details?: string;
 }
 
 export interface MidtermStudentDataDoc {

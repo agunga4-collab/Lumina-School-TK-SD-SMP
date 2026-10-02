@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { 
   Sparkles, Save, CheckCircle2, AlertCircle, Wand2, 
-  User as UserIcon, Plus, X, Lock, RefreshCw, Check, Clock
+  User as UserIcon, Plus, X, Lock, RefreshCw, Check, Clock,
+  RotateCcw, History, Trash2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { 
@@ -14,7 +15,10 @@ import {
   refineMidtermGeneralCommentAI,
   getMidtermClassCommentsConfig,
   saveMidtermClassCommentsConfig,
-  submitMidtermGeneralCommentForReview
+  submitMidtermGeneralCommentForReview,
+  unsubmitMidtermGeneralComment,
+  removeMidtermStudentCategoryTag,
+  deleteMidtermClassCustomTag
 } from '../../../services/juniorHighMidtermService';
 import type { 
   MidtermStudentDataDoc, 
@@ -78,9 +82,11 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
   const [generatingAI, setGeneratingAI] = React.useState<boolean>(false);
   const [polishingAI, setPolishingAI] = React.useState<boolean>(false);
   const [saving, setSaving] = React.useState<boolean>(false);
+  const [submittingForReview, setSubmittingForReview] = React.useState<boolean>(false);
+  const [unsubmitting, setUnsubmitting] = React.useState<boolean>(false);
+  const [removingTag, setRemovingTag] = React.useState<string | null>(null);
 
   const canEdit = canUserEditMidtermGeneralComments(currentUser, selectedClass);
-  const [submittingForReview, setSubmittingForReview] = React.useState<boolean>(false);
 
   // Reset form states on mount and whenever context changes
   const classId = selectedClass?.id;
@@ -269,12 +275,137 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
     setIsFinal(Boolean(gc?.isFinal));
   }, [selectedStudent?.id, studentDataKey]);
 
-  // Helper to toggle bank items
-  const toggleItem = (list: string[], setList: (v: string[]) => void, item: string) => {
+  // Helper to remove selected tag recommendation and record audit log
+  const handleRemoveSelectedTag = async (
+    category: 'STRENGTH' | 'ACHIEVEMENT' | 'NEED', 
+    item: string
+  ) => {
+    if (!selectedStudent || !selectedClass) return;
+    if (currentReviewStatus === 'APPROVED') {
+      toast.error('Komentar yang sudah disetujui (APPROVED) tidak dapat diubah atau dihapus kategorinya.');
+      return;
+    }
+    if (currentReviewStatus === 'SUBMITTED_FOR_REVIEW') {
+      toast.error('Komentar sedang dalam review. Batalkan submit terlebih dahulu untuk menghapus kategori.');
+      return;
+    }
+
+    // Immediate local state update
+    if (category === 'STRENGTH') {
+      setSelectedStrengths(prev => prev.filter(t => t !== item));
+    } else if (category === 'ACHIEVEMENT') {
+      setSelectedAchievements(prev => prev.filter(t => t !== item));
+    } else {
+      setSelectedNeedsImprovement(prev => prev.filter(t => t !== item));
+    }
+
+    setRemovingTag(`${category}_${item}`);
+    try {
+      await removeMidtermStudentCategoryTag(
+        selectedStudent.id,
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        category,
+        item,
+        currentUser.uid,
+        currentUser.displayName || currentUser.name || 'Guru',
+        currentUser.role || 'Homeroom Teacher'
+      );
+      await onRefreshData();
+      toast.success(`Kategori "${item}" berhasil dihapus.`);
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal menghapus kategori: ' + (err.message || 'Error'));
+    } finally {
+      setRemovingTag(null);
+    }
+  };
+
+  // Helper to toggle bank items (adds if absent, removes with audit if present)
+  const toggleItem = (
+    category: 'STRENGTH' | 'ACHIEVEMENT' | 'NEED',
+    list: string[], 
+    setList: (v: string[]) => void, 
+    item: string
+  ) => {
+    if (isEditorLocked) return;
     if (list.includes(item)) {
-      setList(list.filter(i => i !== item));
+      handleRemoveSelectedTag(category, item);
     } else {
       setList([...list, item]);
+    }
+  };
+
+  // Helper to delete custom item from class bank
+  const handleDeleteCustomBankItem = async (
+    category: 'STRENGTH' | 'ACHIEVEMENT' | 'NEED',
+    item: string
+  ) => {
+    if (!selectedClass) return;
+    const confirmDelete = window.confirm(`Hapus custom rekomendasi "${item}" dari daftar kelas ini?`);
+    if (!confirmDelete) return;
+
+    try {
+      await deleteMidtermClassCustomTag(
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        category,
+        item,
+        currentUser.uid
+      );
+
+      if (category === 'STRENGTH') {
+        setCustomStrengths(prev => prev.filter(t => t !== item));
+      } else if (category === 'ACHIEVEMENT') {
+        setCustomAchievements(prev => prev.filter(t => t !== item));
+      } else {
+        setCustomNeedsImprovement(prev => prev.filter(t => t !== item));
+      }
+
+      toast.success('Custom item berhasil dihapus dari daftar kelas.');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal menghapus custom item: ' + (err.message || 'Error'));
+    }
+  };
+
+  // Helper to unsubmit general comment back to DRAFT
+  const handleUnsubmit = async () => {
+    if (!selectedStudent || !selectedClass) return;
+    if (currentReviewStatus !== 'SUBMITTED_FOR_REVIEW') {
+      toast.error('Komentar tidak dalam status diajukan.');
+      return;
+    }
+
+    const confirmUnsubmit = window.confirm(
+      'Apakah Anda yakin ingin membatalkan pengajuan review? Status akan kembali menjadi DRAFT dan komentar dapat diedit kembali.'
+    );
+    if (!confirmUnsubmit) return;
+
+    setUnsubmitting(true);
+    try {
+      await unsubmitMidtermGeneralComment(
+        selectedStudent.id,
+        selectedClass.id,
+        academicYear,
+        semester,
+        midtermTerm,
+        currentUser.uid,
+        currentUser.displayName || currentUser.name || 'Guru',
+        currentUser.role || 'Homeroom Teacher'
+      );
+
+      await onRefreshData();
+      toast.success('Pengajuan review berhasil dibatalkan. Status komentar kembali menjadi DRAFT.');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Gagal membatalkan submit: ' + (err.message || 'Error'));
+    } finally {
+      setUnsubmitting(false);
     }
   };
 
@@ -448,7 +579,7 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
         <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-900 font-medium">
           <Lock size={16} className="text-amber-600 shrink-0" />
           <span>
-            Hanya <strong>Wali Kelas</strong> dari kelas ini atau <strong>Kepala Sekolah / Super Admin</strong> yang dapat mengedit dan memfinalisasi General Comments. Anda dalam mode lihat (Read-Only).
+            Hanya <strong>Guru Kelas yang ditugaskan</strong> pada kelas ini atau <strong>Kepala Sekolah / Super Admin</strong> yang dapat mengedit dan memfinalisasi General Comments. Anda dalam mode lihat (Read-Only).
           </span>
         </div>
       )}
@@ -586,14 +717,28 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
 
           {/* Conditional Review/Status Banners */}
           {currentReviewStatus === 'SUBMITTED_FOR_REVIEW' && (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col gap-1 text-xs text-amber-900 font-medium leading-normal">
-              <div className="flex items-center gap-2 font-bold">
-                <Clock size={16} className="text-amber-600 shrink-0" />
-                <span>Menunggu Review Kepala Sekolah</span>
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 font-medium leading-normal">
+              <div>
+                <div className="flex items-center gap-2 font-bold text-amber-900">
+                  <Clock size={16} className="text-amber-600 shrink-0" />
+                  <span>Menunggu Review Kepala Sekolah</span>
+                </div>
+                <p className="text-[11px] text-amber-700/80 mt-1">
+                  Komentar diajukan pada {studentData?.submittedForReviewAt ? new Date(studentData.submittedForReviewAt).toLocaleString('id-ID') : '-'} oleh {studentData?.submittedForReviewByName || 'Guru'}. Seluruh editor terkunci selama proses review.
+                </p>
               </div>
-              <p className="text-[10px] text-slate-500 mt-1">
-                Komentar diajukan pada {studentData?.submittedForReviewAt ? new Date(studentData.submittedForReviewAt).toLocaleString('id-ID') : '-'} oleh {studentData?.submittedForReviewByName || 'Guru'}. Seluruh editor terkunci selama proses review.
-              </p>
+
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={handleUnsubmit}
+                  disabled={unsubmitting}
+                  className="shrink-0 px-3.5 py-2 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  <RotateCcw size={13} className={unsubmitting ? 'animate-spin' : ''} />
+                  {unsubmitting ? 'Membatalkan...' : 'Batalkan Submit / Edit Kembali'}
+                </button>
+              )}
             </div>
           )}
 
@@ -730,27 +875,72 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                 </div>
               ) : (
                 <>
+                  {/* Selected Strengths Chips with Delete Buttons */}
+                  {selectedStrengths.length > 0 && (
+                    <div className="p-2.5 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-1.5 mb-2">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 flex items-center justify-between">
+                        <span>Rekomendasi Terpilih ({selectedStrengths.length}):</span>
+                        {canEdit && !isEditorLocked && currentReviewStatus !== 'APPROVED' && (
+                          <span className="text-[10px] text-emerald-600 font-normal">Klik × untuk menghapus kategori</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedStrengths.map((item) => (
+                          <span
+                            key={item}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-semibold shadow-xs"
+                          >
+                            <span>{item}</span>
+                            {canEdit && !isEditorLocked && currentReviewStatus !== 'APPROVED' && (
+                              <button
+                                type="button"
+                                title="Hapus rekomendasi ini"
+                                disabled={removingTag === `STRENGTH_${item}`}
+                                onClick={() => handleRemoveSelectedTag('STRENGTH', item)}
+                                className="p-0.5 hover:bg-emerald-700 rounded-full transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <X size={12} className={removingTag === `STRENGTH_${item}` ? 'animate-spin' : ''} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap gap-1.5">
                     {combinedStrengths.map((item) => {
                       const isChecked = selectedStrengths.includes(item);
+                      const isCustom = customStrengths.includes(item);
                       return (
-                        <button
-                          key={item}
-                          type="button"
-                          disabled={!canEdit}
-                          onClick={() => toggleItem(selectedStrengths, setSelectedStrengths, item)}
-                          className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
-                            isChecked
-                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          {isChecked ? '✓ ' : '+ '} {item}
-                        </button>
+                        <div key={item} className="inline-flex items-center rounded-lg border overflow-hidden">
+                          <button
+                            type="button"
+                            disabled={!canEdit || isEditorLocked}
+                            onClick={() => toggleItem('STRENGTH', selectedStrengths, setSelectedStrengths, item)}
+                            className={`text-[11px] font-medium px-2.5 py-1.5 transition-all text-left flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed ${
+                              isChecked
+                                ? 'bg-emerald-600 text-white border-emerald-600'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {isChecked ? '✓ ' : '+ '} {item}
+                          </button>
+                          {isCustom && canEdit && !isEditorLocked && (
+                            <button
+                              type="button"
+                              title="Hapus custom item dari daftar kelas"
+                              onClick={() => handleDeleteCustomBankItem('STRENGTH', item)}
+                              className="px-1.5 py-1.5 bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 border-l border-slate-200 transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
-                  {canEdit && (
+                  {canEdit && !isEditorLocked && (
                     <div className="flex items-center gap-2 pt-1">
                       <input
                         type="text"
@@ -836,27 +1026,72 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                 </div>
               ) : (
                 <>
+                  {/* Selected Achievements Chips with Delete Buttons */}
+                  {selectedAchievements.length > 0 && (
+                    <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-xl space-y-1.5 mb-2">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-blue-800 flex items-center justify-between">
+                        <span>Rekomendasi Terpilih ({selectedAchievements.length}):</span>
+                        {canEdit && !isEditorLocked && currentReviewStatus !== 'APPROVED' && (
+                          <span className="text-[10px] text-blue-600 font-normal">Klik × untuk menghapus kategori</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedAchievements.map((item) => (
+                          <span
+                            key={item}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-600 text-white rounded-lg text-[11px] font-semibold shadow-xs"
+                          >
+                            <span>{item}</span>
+                            {canEdit && !isEditorLocked && currentReviewStatus !== 'APPROVED' && (
+                              <button
+                                type="button"
+                                title="Hapus rekomendasi ini"
+                                disabled={removingTag === `ACHIEVEMENT_${item}`}
+                                onClick={() => handleRemoveSelectedTag('ACHIEVEMENT', item)}
+                                className="p-0.5 hover:bg-blue-700 rounded-full transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <X size={12} className={removingTag === `ACHIEVEMENT_${item}` ? 'animate-spin' : ''} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap gap-1.5">
                     {combinedAchievements.map((item) => {
                       const isChecked = selectedAchievements.includes(item);
+                      const isCustom = customAchievements.includes(item);
                       return (
-                        <button
-                          key={item}
-                          type="button"
-                          disabled={!canEdit}
-                          onClick={() => toggleItem(selectedAchievements, setSelectedAchievements, item)}
-                          className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
-                            isChecked
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          {isChecked ? '✓ ' : '+ '} {item}
-                        </button>
+                        <div key={item} className="inline-flex items-center rounded-lg border overflow-hidden">
+                          <button
+                            type="button"
+                            disabled={!canEdit || isEditorLocked}
+                            onClick={() => toggleItem('ACHIEVEMENT', selectedAchievements, setSelectedAchievements, item)}
+                            className={`text-[11px] font-medium px-2.5 py-1.5 transition-all text-left flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed ${
+                              isChecked
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {isChecked ? '✓ ' : '+ '} {item}
+                          </button>
+                          {isCustom && canEdit && !isEditorLocked && (
+                            <button
+                              type="button"
+                              title="Hapus custom item dari daftar kelas"
+                              onClick={() => handleDeleteCustomBankItem('ACHIEVEMENT', item)}
+                              className="px-1.5 py-1.5 bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 border-l border-slate-200 transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
-                  {canEdit && (
+                  {canEdit && !isEditorLocked && (
                     <div className="flex items-center gap-2 pt-1">
                       <input
                         type="text"
@@ -942,27 +1177,72 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                 </div>
               ) : (
                 <>
+                  {/* Selected Needs Improvement Chips with Delete Buttons */}
+                  {selectedNeedsImprovement.length > 0 && (
+                    <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5 mb-2">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800 flex items-center justify-between">
+                        <span>Rekomendasi Terpilih ({selectedNeedsImprovement.length}):</span>
+                        {canEdit && !isEditorLocked && currentReviewStatus !== 'APPROVED' && (
+                          <span className="text-[10px] text-amber-600 font-normal">Klik × untuk menghapus kategori</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedNeedsImprovement.map((item) => (
+                          <span
+                            key={item}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-600 text-white rounded-lg text-[11px] font-semibold shadow-xs"
+                          >
+                            <span>{item}</span>
+                            {canEdit && !isEditorLocked && currentReviewStatus !== 'APPROVED' && (
+                              <button
+                                type="button"
+                                title="Hapus rekomendasi ini"
+                                disabled={removingTag === `NEED_${item}`}
+                                onClick={() => handleRemoveSelectedTag('NEED', item)}
+                                className="p-0.5 hover:bg-amber-700 rounded-full transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <X size={12} className={removingTag === `NEED_${item}` ? 'animate-spin' : ''} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap gap-1.5">
                     {combinedNeedsImprovement.map((item) => {
                       const isChecked = selectedNeedsImprovement.includes(item);
+                      const isCustom = customNeedsImprovement.includes(item);
                       return (
-                        <button
-                          key={item}
-                          type="button"
-                          disabled={!canEdit}
-                          onClick={() => toggleItem(selectedNeedsImprovement, setSelectedNeedsImprovement, item)}
-                          className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition-all text-left ${
-                            isChecked
-                              ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          {isChecked ? '✓ ' : '+ '} {item}
-                        </button>
+                        <div key={item} className="inline-flex items-center rounded-lg border overflow-hidden">
+                          <button
+                            type="button"
+                            disabled={!canEdit || isEditorLocked}
+                            onClick={() => toggleItem('NEED', selectedNeedsImprovement, setSelectedNeedsImprovement, item)}
+                            className={`text-[11px] font-medium px-2.5 py-1.5 transition-all text-left flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed ${
+                              isChecked
+                                ? 'bg-amber-600 text-white border-amber-600'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            {isChecked ? '✓ ' : '+ '} {item}
+                          </button>
+                          {isCustom && canEdit && !isEditorLocked && (
+                            <button
+                              type="button"
+                              title="Hapus custom item dari daftar kelas"
+                              onClick={() => handleDeleteCustomBankItem('NEED', item)}
+                              className="px-1.5 py-1.5 bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 border-l border-slate-200 transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
-                  {canEdit && (
+                  {canEdit && !isEditorLocked && (
                     <div className="flex items-center gap-2 pt-1">
                       <input
                         type="text"
@@ -1084,6 +1364,65 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
             />
           </div>
 
+          {/* Riwayat Audit & Review */}
+          {Array.isArray(studentData?.reviewHistory) && studentData.reviewHistory.length > 0 && (
+            <div className="border-t border-slate-100 pt-4 space-y-2.5">
+              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <History size={14} className="text-slate-500" />
+                Riwayat Perubahan & Audit Status ({studentData.reviewHistory.length})
+              </h4>
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 max-h-48 overflow-y-auto space-y-2">
+                {studentData.reviewHistory.map((h, hIdx) => {
+                  const isApproved = h.action === 'APPROVED';
+                  const isRevReq = h.action === 'REVISION_REQUESTED';
+                  const isUnsubmitted = h.action === 'UNSUBMITTED';
+                  const isTagRemoved = h.action === 'CATEGORY_REMOVED';
+
+                  const badgeColor = isApproved ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                    : isRevReq ? 'bg-rose-100 text-rose-800 border-rose-200'
+                    : isUnsubmitted ? 'bg-amber-100 text-amber-800 border-amber-200'
+                    : isTagRemoved ? 'bg-slate-200 text-slate-700 border-slate-300'
+                    : 'bg-blue-100 text-blue-800 border-blue-200';
+
+                  const actionText = 
+                    h.action === 'UNSUBMITTED' ? 'BATALKAN SUBMIT (KEMBALI DRAFT)' :
+                    h.action === 'CATEGORY_REMOVED' ? 'KATEGORI/TAG DIHAPUS' :
+                    h.action === 'RESUBMITTED_FOR_REVIEW' ? 'SUBMIT ULANG UNTUK REVIEW' :
+                    h.action === 'SUBMITTED_FOR_REVIEW' ? 'DIAJUKAN UNTUK REVIEW' :
+                    h.action === 'REVISION_REQUESTED' ? 'PERMINTAAN REVISI' :
+                    h.action === 'APPROVED' ? 'DISETUJUI' :
+                    h.action.replace(/_/g, ' ');
+
+                  return (
+                    <div key={hIdx} className="text-[11px] bg-white p-2.5 rounded-lg border border-slate-200 flex flex-col gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${badgeColor}`}>
+                          {actionText}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-semibold">
+                          {new Date(h.timestamp).toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                      <div className="text-slate-600 font-medium">
+                        Aktor: <strong className="text-slate-800">{h.actorName}</strong> ({h.actorRole})
+                      </div>
+                      {h.details && (
+                        <p className="text-[11px] text-slate-700 font-medium italic bg-slate-50 p-1.5 rounded">
+                          {h.details}
+                        </p>
+                      )}
+                      {h.feedback && (
+                        <div className="bg-rose-50 text-rose-700 p-1.5 rounded border border-rose-200 font-semibold text-[11px]">
+                          Feedback Kepala Sekolah: {h.feedback}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Action Footer: State-based workflow buttons */}
           {canEdit && (
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
@@ -1117,14 +1456,21 @@ export const MidtermGeneralCommentsTab: React.FC<MidtermGeneralCommentsTabProps>
                 )}
 
                 {currentReviewStatus === 'SUBMITTED_FOR_REVIEW' && (
-                  <button
-                    type="button"
-                    disabled
-                    className="px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all"
-                  >
-                    <Clock size={13} />
-                    Menunggu Review Kepala Sekolah
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock size={13} />
+                      Menunggu Review
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleUnsubmit}
+                      disabled={unsubmitting}
+                      className="px-4 py-2 bg-amber-600 text-white hover:bg-amber-700 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                    >
+                      <RotateCcw size={13} className={unsubmitting ? 'animate-spin' : ''} />
+                      {unsubmitting ? 'Membatalkan...' : 'Batalkan Submit / Edit Kembali'}
+                    </button>
+                  </div>
                 )}
 
                 {currentReviewStatus === 'REVISION_REQUESTED' && (
