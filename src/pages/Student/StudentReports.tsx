@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { 
   FileText, Download, Eye, 
   Calendar, Award, ChevronLeft,
-  Loader2, ExternalLink, Send
+  Loader2, ExternalLink, Send, X
 } from 'lucide-react';
 import { useOutletContext, Link } from 'react-router-dom';
 import { 
@@ -1007,6 +1007,13 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
   const [driveFileId, setDriveFileId] = React.useState<string>('');
   const [loading, setLoading] = React.useState<boolean>(true);
   const [showWarning, setShowWarning] = React.useState<boolean>(false);
+  const [isWarningDismissed, setIsWarningDismissed] = React.useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('dismissed_pdf_viewer_warning') === 'true';
+    } catch (_) {
+      return false;
+    }
+  });
   const hasTrackedRef = React.useRef(false);
 
   const driveFileUrl = report.driveFileUrl || report.pdfUrl || report.activePdfUrl || '';
@@ -1161,15 +1168,26 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
             <div className="w-full h-full relative flex flex-col">
               
               {/* Optional browser block helper banner */}
-              {showWarning && (
-                <div className="mb-3 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3 text-xs text-amber-900 shadow-sm">
-                  <span className="text-base mt-0.5">⚠️</span>
-                  <div className="space-y-1">
-                    <p className="font-black leading-tight">Apakah dokumen tidak muncul?</p>
-                    <p className="font-semibold text-slate-500 text-[11px] leading-relaxed">
-                      Beberapa peramban (terutama Safari pada iPhone/iPad/Mac) memblokir sematan Google Drive demi privasi ("Prevent Cross-Site Tracking"). Jika layar di bawah kosong atau meminta login, silakan klik tombol <strong>"Buka di Tab Baru"</strong> di atas/bawah.
-                    </p>
+              {showWarning && !isWarningDismissed && (
+                <div className="mb-3 px-4 py-2 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-3 text-xs text-amber-900 shadow-sm relative">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm shrink-0">⚠️</span>
+                    <span className="font-semibold text-slate-800 truncate">
+                      Dokumen tidak muncul? Silakan buka lewat tombol <strong>"Buka di Tab Baru"</strong>.
+                    </span>
                   </div>
+                  <button
+                    onClick={() => {
+                      setIsWarningDismissed(true);
+                      try {
+                        sessionStorage.setItem('dismissed_pdf_viewer_warning', 'true');
+                      } catch (_) {}
+                    }}
+                    className="p-1 hover:bg-amber-100 rounded-lg text-amber-800 transition-colors cursor-pointer shrink-0"
+                    title="Tutup"
+                  >
+                    <X size={14} />
+                  </button>
                 </div>
               )}
 
