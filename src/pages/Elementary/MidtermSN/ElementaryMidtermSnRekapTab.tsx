@@ -174,6 +174,11 @@ async function resolveStudentUserAccount(
     console.warn('[resolveStudentUserAccount] Query fallback chain failed:', err);
   }
 
+  // 6. Absolute Fallback: If no real user account is found in Firestore, connect using the student's own ID
+  if (cleanId) {
+    return { studentUid: cleanId, studentAccountId: cleanId };
+  }
+
   return null;
 }
 
