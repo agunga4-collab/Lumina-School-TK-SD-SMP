@@ -308,54 +308,46 @@ export default function StudentReports() {
     };
   }, [currentUser, activeYear]);
 
-  const handlePdfClick = async (reportId: string) => {
-    try {
-      const reportRef = doc(db, 'published_kg_reports', reportId);
-      await updateDoc(reportRef, {
-        pdfOpenedAt: serverTimestamp()
-      });
-    } catch (err) {
-      console.warn("Failed to track PDF open status:", err);
-    }
+  const handlePdfClick = (reportId: string, driveFileUrl: string, report: any) => {
+    setSelectedReportForViewer({
+      id: reportId,
+      type: 'KG_WEEKLY',
+      unit: 'KINDERGARTEN',
+      driveFileUrl,
+      pdfUrl: driveFileUrl,
+      academicYear: report.academicYear || activeYear,
+      semester: report.semester || activeSemester || '1',
+      studentName: studentData?.name || currentUser?.displayName || 'Siswa'
+    });
   };
 
-  const handleMidtermPdfClick = async (report: any) => {
-    try {
-      if (report.id) {
-        const trackingRef = doc(db, 'kg_midterm_delivery_tracking', report.id);
-        const historyLog = report.history || [];
-        historyLog.push({
-          action: 'VIEWED',
-          timestamp: Date.now(),
-          actorUid: currentUser?.uid || 'student'
-        });
+  const handleMidtermPdfClick = (report: any) => {
+    setSelectedReportForViewer({
+      ...report,
+      type: 'KG_MIDTERM',
+      unit: 'KINDERGARTEN',
+      studentName: studentData?.name || currentUser?.displayName || 'Siswa'
+    });
 
-        const now = Date.now();
-        const updatePayload = {
-          deliveryStatus: 'VIEWED',
-          firstViewedAt: report.firstViewedAt || now,
-          lastViewedAt: now,
-          viewCount: (report.viewCount || 0) + 1,
-          history: historyLog,
-          updatedAt: now
-        };
-
-        await setDoc(trackingRef, updatePayload, { merge: true });
-
-        setKgMidtermReports(prev =>
-          prev.map(r => r.id === report.id ? { ...r, ...updatePayload } : r)
-        );
-      }
-    } catch (err) {
-      console.warn("Failed to update midterm tracking view:", err);
-    }
-
-    const pdfUrl = report.pdfUrl || report.driveFileUrl;
-    if (pdfUrl) {
-      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-    } else {
-      toast.error("URL PDF tidak tersedia.");
-    }
+    // Update the local list so the UI immediately shows "Dilihat"
+    setKgMidtermReports(prev =>
+      prev.map(r => {
+        if (r.id === report.id) {
+          const now = Date.now();
+          return {
+            ...r,
+            deliveryStatus: 'VIEWED',
+            firstOpenedAt: r.firstOpenedAt || r.firstViewedAt || now,
+            firstViewedAt: r.firstViewedAt || r.firstOpenedAt || now,
+            lastOpenedAt: now,
+            lastViewedAt: now,
+            viewCount: (r.viewCount || 0) + 1,
+            openCount: (r.openCount || r.viewCount || 0) + 1
+          };
+        }
+        return r;
+      })
+    );
   };
 
   const handleElemMidtermPdfClick = (report: any) => {
@@ -499,15 +491,12 @@ export default function StudentReports() {
                               )}
 
                               {report.driveFileUrl && (
-                                <a
-                                  href={report.driveFileUrl}
-                                  onClick={() => handlePdfClick(report.id)}
-                                  target="_blank"
-                                  rel="referrer noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm whitespace-nowrap"
+                                <button
+                                  onClick={() => handlePdfClick(report.id, report.driveFileUrl, report)}
+                                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm whitespace-nowrap cursor-pointer"
                                 >
                                   <FileText size={12} /> Lihat PDF
-                                </a>
+                                </button>
                               )}
                             </div>
                           </td>
@@ -581,6 +570,13 @@ export default function StudentReports() {
           )}
         </div>
 
+        {selectedReportForViewer && (
+          <PdfViewerModal
+            report={selectedReportForViewer}
+            onClose={() => setSelectedReportForViewer(null)}
+            currentUser={currentUser}
+          />
+        )}
       </div>
     );
   }
@@ -1023,48 +1019,86 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
 
     const initializeViewer = async () => {
       const isElementary = report.unit === 'ELEMENTARY';
-      const trackingCollection = isElementary ? 'elem_midterm_delivery_tracking' : 'jh_midterm_delivery_tracking';
+      const isKindergarten = report.unit === 'KINDERGARTEN';
+      const trackingCollection = 
+        isKindergarten 
+          ? (report.type === 'KG_WEEKLY' ? 'published_kg_reports' : 'kg_midterm_delivery_tracking')
+          : (isElementary ? 'elem_midterm_delivery_tracking' : 'jh_midterm_delivery_tracking');
+      
       const deliveryStatusVal = isElementary ? 'viewed' : 'VIEWED';
 
       // a. Start tracking (async, non-blocking, error-safe)
-      if (report.type !== 'MONTHLY' && report.id && !hasTrackedRef.current) {
+      if (report.id && !hasTrackedRef.current) {
         hasTrackedRef.current = true;
         // Run tracking as non-blocking async
         (async () => {
           try {
             const trackingRef = doc(db, trackingCollection, report.id);
             const historyLog = Array.isArray(report.history) ? [...report.history] : [];
-            historyLog.push({
-              action: 'VIEWED',
-              timestamp: Date.now(),
-              actorUid: currentUser?.uid || 'student'
-            });
+            
+            if (report.type === 'KG_WEEKLY') {
+              // Kindergarten Weekly Report Tracking
+              await updateDoc(trackingRef, {
+                pdfOpenedAt: serverTimestamp()
+              });
+            } else if (report.type === 'KG_MIDTERM') {
+              // Kindergarten Midterm Report Tracking
+              historyLog.push({
+                action: 'VIEWED',
+                timestamp: Date.now(),
+                actorUid: currentUser?.uid || 'student'
+              });
 
-            const now = Date.now();
-            const updatePayload = {
-              deliveryStatus: deliveryStatusVal,
-              isOpened: true, // as requested: isOpened = true
-              firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
-              firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
-              lastOpenedAt: now,
-              lastViewedAt: now,
-              openCount: (report.openCount || report.viewCount || 0) + 1,
-              viewCount: (report.viewCount || report.openCount || 0) + 1,
-              openedByEmail: currentUser?.email || '',
-              history: historyLog,
-              updatedAt: now
-            };
+              const now = Date.now();
+              const updatePayload = {
+                deliveryStatus: 'VIEWED',
+                isOpened: true,
+                firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
+                firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
+                lastOpenedAt: now,
+                lastViewedAt: now,
+                openCount: (report.openCount || report.viewCount || 0) + 1,
+                viewCount: (report.viewCount || report.openCount || 0) + 1,
+                openedByEmail: currentUser?.email || '',
+                history: historyLog,
+                updatedAt: now
+              };
 
-            await setDoc(trackingRef, updatePayload, { merge: true });
+              await setDoc(trackingRef, updatePayload, { merge: true });
+            } else {
+              // Junior High / Elementary Midterm Report Tracking
+              historyLog.push({
+                action: 'VIEWED',
+                timestamp: Date.now(),
+                actorUid: currentUser?.uid || 'student'
+              });
+
+              const now = Date.now();
+              const updatePayload = {
+                deliveryStatus: deliveryStatusVal,
+                isOpened: true, // as requested: isOpened = true
+                firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
+                firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
+                lastOpenedAt: now,
+                lastViewedAt: now,
+                openCount: (report.openCount || report.viewCount || 0) + 1,
+                viewCount: (report.viewCount || report.openCount || 0) + 1,
+                openedByEmail: currentUser?.email || '',
+                history: historyLog,
+                updatedAt: now
+              };
+
+              await setDoc(trackingRef, updatePayload, { merge: true });
+            }
           } catch (err) {
-            console.error(`Failed to update ${report.unit} midterm tracking view:`, err);
+            console.error(`Failed to update ${report.unit} ${report.type} tracking view:`, err);
           }
         })();
       }
 
       // b. Resolve driveFileId
       try {
-        if (report.type === 'MONTHLY') {
+        if (report.type === 'MONTHLY' || report.type === 'KG_WEEKLY' || report.type === 'KG_MIDTERM') {
           const fid = extractDriveFileId(driveFileUrl);
           if (isMounted) {
             setDriveFileId(fid);
@@ -1157,7 +1191,8 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
     };
   }, [report, driveFileUrl, currentUser]);
 
-  const unitNameText = report.unit === 'ELEMENTARY' ? 'Elementary' : 'Junior High';
+  const unitNameText = report.unit === 'ELEMENTARY' ? 'Elementary' : report.unit === 'KINDERGARTEN' ? 'Kindergarten' : 'Junior High';
+  const headerTitle = report.type === 'KG_WEEKLY' ? 'Weekly Report' : (report.type === 'MONTHLY' ? 'Rapor Bulanan' : `Midterm Report Viewer - ${unitNameText}`);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -1171,7 +1206,7 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
             </div>
             <div>
               <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
-                {report.type === 'MONTHLY' ? 'Rapor Bulanan' : `Midterm Report Viewer - ${unitNameText}`}
+                {headerTitle}
               </h3>
               <p className="text-[11px] text-slate-500 font-medium">
                 {report.studentName || report.studentNameSnapshot || currentUser?.displayName || 'Siswa'} • {report.academicYear} (Semester {report.semester})
