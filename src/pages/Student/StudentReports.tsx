@@ -47,6 +47,7 @@ export default function StudentReports() {
   const [jhMidtermReports, setJhMidtermReports] = React.useState<any[]>([]);
   const [jhManualLinks, setJhManualLinks] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [selectedReportForViewer, setSelectedReportForViewer] = React.useState<any | null>(null);
 
   React.useEffect(() => {
     let unsubscribeJh: (() => void) | undefined;
@@ -400,47 +401,28 @@ export default function StudentReports() {
     }
   };
 
-  const handleJhMidtermPdfClick = async (report: any) => {
-    try {
-      if (report.id) {
-        const trackingRef = doc(db, 'jh_midterm_delivery_tracking', report.id);
-        const historyLog = Array.isArray(report.history) ? [...report.history] : [];
-        historyLog.push({
-          action: 'VIEWED',
-          timestamp: Date.now(),
-          actorUid: currentUser?.uid || 'student'
-        });
+  const handleJhMidtermPdfClick = (report: any) => {
+    setSelectedReportForViewer(report);
 
-        const now = Date.now();
-        const updatePayload = {
-          deliveryStatus: 'VIEWED',
-          firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
-          firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
-          lastOpenedAt: now,
-          lastViewedAt: now,
-          openCount: (report.openCount || report.viewCount || 0) + 1,
-          viewCount: (report.viewCount || report.openCount || 0) + 1,
-          openedByEmail: currentUser?.email || '',
-          history: historyLog,
-          updatedAt: now
-        };
-
-        await setDoc(trackingRef, updatePayload, { merge: true });
-
-        setJhMidtermReports(prev =>
-          prev.map(r => r.id === report.id ? { ...r, ...updatePayload } : r)
-        );
-      }
-    } catch (err) {
-      console.warn("Failed to update jh midterm tracking view:", err);
-    }
-
-    const pdfUrl = report.activePdfUrl || report.pdfUrl || report.driveFileUrl;
-    if (pdfUrl) {
-      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-    } else {
-      toast.error("URL PDF tidak tersedia.");
-    }
+    // Update the local list so the UI immediately shows "Dilihat"
+    setJhMidtermReports(prev =>
+      prev.map(r => {
+        if (r.id === report.id) {
+          const now = Date.now();
+          return {
+            ...r,
+            deliveryStatus: 'VIEWED',
+            firstOpenedAt: r.firstOpenedAt || r.firstViewedAt || now,
+            firstViewedAt: r.firstViewedAt || r.firstOpenedAt || now,
+            lastOpenedAt: now,
+            lastViewedAt: now,
+            openCount: (r.openCount || r.viewCount || 0) + 1,
+            viewCount: (r.viewCount || r.openCount || 0) + 1
+          };
+        }
+        return r;
+      })
+    );
   };
 
   if (loading) {
@@ -957,14 +939,19 @@ export default function StudentReports() {
                       </div>
 
                       <div className="space-y-3">
-                        <a 
-                          href={link.driveUrl} 
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="w-full flex items-center justify-center gap-2 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-indigo-100 text-center"
+                        <button 
+                          onClick={() => setSelectedReportForViewer({
+                            id: link.id,
+                            type: 'MONTHLY',
+                            driveFileUrl: link.driveUrl,
+                            academicYear: link.academicYear || activeYear,
+                            semester: link.semester || 1,
+                            studentName: studentData?.name || currentUser?.displayName
+                          })}
+                          className="w-full flex items-center justify-center gap-2 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-indigo-100 text-center cursor-pointer"
                         >
                           <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor (Drive)
-                        </a>
+                        </button>
                       </div>
                     </motion.div>
                   );
@@ -994,6 +981,262 @@ export default function StudentReports() {
                </button>
             </div>
          </div>
+      </div>
+
+      {selectedReportForViewer && (
+        <PdfViewerModal
+          report={selectedReportForViewer}
+          onClose={() => setSelectedReportForViewer(null)}
+          currentUser={currentUser}
+        />
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
+// GORGEOUS SYSTEM-INTEGRATED SAFARI-SAFE PDF VIEWER
+// ----------------------------------------------------------------------
+interface PdfViewerModalProps {
+  report: any;
+  onClose: () => void;
+  currentUser: AppUser;
+}
+
+export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalProps) {
+  const [driveFileId, setDriveFileId] = React.useState<string>('');
+  const [loading, setLoading] = React.useState<boolean>(true);
+  const [showWarning, setShowWarning] = React.useState<boolean>(false);
+  const hasTrackedRef = React.useRef(false);
+
+  const driveFileUrl = report.driveFileUrl || report.pdfUrl || report.activePdfUrl || '';
+
+  // 1. Extract file ID helper
+  const extractDriveFileId = (url: string): string => {
+    if (!url) return '';
+    const fileDMatch = url.match(/\/file\/d\/([a-zA-Z0-9-_]+)/);
+    if (fileDMatch && fileDMatch[1]) return fileDMatch[1];
+    const idMatch = url.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+    if (idMatch && idMatch[1]) return idMatch[1];
+    return '';
+  };
+
+  // 2. Fetch published report for precise driveFileId & perform tracking
+  React.useEffect(() => {
+    let isMounted = true;
+
+    const initializeViewer = async () => {
+      // a. Start tracking (async, non-blocking, error-safe)
+      if (report.type !== 'MONTHLY' && report.id && !hasTrackedRef.current) {
+        hasTrackedRef.current = true;
+        // Run tracking as non-blocking async
+        (async () => {
+          try {
+            const trackingRef = doc(db, 'jh_midterm_delivery_tracking', report.id);
+            const historyLog = Array.isArray(report.history) ? [...report.history] : [];
+            historyLog.push({
+              action: 'VIEWED',
+              timestamp: Date.now(),
+              actorUid: currentUser?.uid || 'student'
+            });
+
+            const now = Date.now();
+            const updatePayload = {
+              deliveryStatus: 'VIEWED',
+              isOpened: true, // as requested: isOpened = true
+              firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
+              firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
+              lastOpenedAt: now,
+              lastViewedAt: now,
+              openCount: (report.openCount || report.viewCount || 0) + 1,
+              viewCount: (report.viewCount || report.openCount || 0) + 1,
+              openedByEmail: currentUser?.email || '',
+              history: historyLog,
+              updatedAt: now
+            };
+
+            await setDoc(trackingRef, updatePayload, { merge: true });
+          } catch (err) {
+            console.error("Failed to update jh midterm tracking view:", err);
+          }
+        })();
+      }
+
+      // b. Resolve driveFileId
+      try {
+        if (report.type === 'MONTHLY') {
+          const fid = extractDriveFileId(driveFileUrl);
+          if (isMounted) {
+            setDriveFileId(fid);
+            setLoading(false);
+          }
+        } else {
+          // Midterm Report
+          // First attempt: try fetching from jh_midterm_published_reports
+          const reportId = report.reportId || report.activeReportId;
+          if (reportId) {
+            const pubSnap = await getDocs(
+              query(
+                collection(db, 'jh_midterm_published_reports'),
+                where('id', '==', reportId)
+              )
+            );
+            if (!pubSnap.empty) {
+              const pubData = pubSnap.docs[0].data();
+              if (pubData.driveFileId && isMounted) {
+                setDriveFileId(pubData.driveFileId);
+                setLoading(false);
+                return;
+              }
+            }
+          }
+
+          // Fallback: parse from tracking pdfUrl / driveFileUrl
+          const fid = report.pdfFileId || report.driveFileId || extractDriveFileId(driveFileUrl);
+          if (isMounted) {
+            setDriveFileId(fid);
+            setLoading(false);
+          }
+        }
+      } catch (err) {
+        console.error("Error resolving driveFileId:", err);
+        const fid = report.pdfFileId || report.driveFileId || extractDriveFileId(driveFileUrl);
+        if (isMounted) {
+          setDriveFileId(fid);
+          setLoading(false);
+        }
+      }
+    };
+
+    initializeViewer();
+
+    // c. Safari cross-site tracking / fallback warning after 4.5 seconds
+    const timer = setTimeout(() => {
+      if (isMounted) {
+        setShowWarning(true);
+      }
+    }, 4500);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [report, driveFileUrl, currentUser]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-white w-full max-w-5xl rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200">
+        
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
+                {report.type === 'MONTHLY' ? 'Rapor Bulanan' : 'Midterm Report Viewer'}
+              </h3>
+              <p className="text-[11px] text-slate-500 font-medium">
+                {report.studentName || report.studentNameSnapshot || currentUser?.displayName || 'Siswa'} • {report.academicYear} (Semester {report.semester})
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black rounded-xl cursor-pointer transition-colors uppercase tracking-wider"
+          >
+            Kembali
+          </button>
+        </div>
+
+        {/* Viewer Content */}
+        <div className="flex-1 bg-slate-100 p-4 relative flex flex-col items-center justify-center min-h-[50vh]">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center text-slate-500 gap-3">
+              <Loader2 size={32} className="animate-spin text-blue-600" />
+              <p className="text-xs font-black uppercase tracking-wider">Menyiapkan Dokumen Rapor...</p>
+            </div>
+          ) : driveFileId ? (
+            <div className="w-full h-full relative flex flex-col">
+              
+              {/* Optional browser block helper banner */}
+              {showWarning && (
+                <div className="mb-3 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3 text-xs text-amber-900 shadow-sm">
+                  <span className="text-base mt-0.5">⚠️</span>
+                  <div className="space-y-1">
+                    <p className="font-black leading-tight">Apakah dokumen tidak muncul?</p>
+                    <p className="font-semibold text-slate-500 text-[11px] leading-relaxed">
+                      Beberapa peramban (terutama Safari pada iPhone/iPad/Mac) memblokir sematan Google Drive demi privasi ("Prevent Cross-Site Tracking"). Jika layar di bawah kosong atau meminta login, silakan klik tombol <strong>"Buka di Tab Baru"</strong> di atas/bawah.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* PDF Iframe */}
+              <iframe
+                src={`https://drive.google.com/file/d/${driveFileId}/preview`}
+                className="w-full flex-1 rounded-2xl border border-slate-200 shadow-xs"
+                title="Google Drive PDF Preview"
+                allow="autoplay"
+              />
+            </div>
+          ) : (
+            <div className="text-center p-8 max-w-md space-y-4">
+              <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+                ⚠️
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-black text-slate-800">Pratinjau Gagal Dimuat</h4>
+                <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                  Kami tidak dapat memuat pratinjau dokumen ini secara langsung di halaman. Anda tetap dapat membuka atau mengunduhnya secara aman di luar sistem.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+            Lazuardi Junior High Student Portal
+          </div>
+          <div className="flex items-center gap-2">
+            
+            {/* Standard Anchor Link - 100% pop-up blocker proof */}
+            {driveFileUrl && (
+              <a
+                href={driveFileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
+              >
+                <ExternalLink size={14} />
+                <span>Buka di Tab Baru</span>
+              </a>
+            )}
+
+            {driveFileUrl && (
+              <a
+                href={driveFileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-black uppercase tracking-wider transition-colors"
+              >
+                <Download size={14} />
+                <span>Unduh</span>
+              </a>
+            )}
+
+            <button
+              onClick={onClose}
+              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black rounded-xl uppercase tracking-wider cursor-pointer"
+            >
+              Kembali
+            </button>
+          </div>
+        </div>
+
       </div>
     </div>
   );
