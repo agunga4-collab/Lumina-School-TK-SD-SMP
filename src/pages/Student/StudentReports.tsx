@@ -358,47 +358,28 @@ export default function StudentReports() {
     }
   };
 
-  const handleElemMidtermPdfClick = async (report: any) => {
-    try {
-      if (report.id) {
-        const trackingRef = doc(db, 'elem_midterm_delivery_tracking', report.id);
-        const historyLog = Array.isArray(report.history) ? [...report.history] : [];
-        historyLog.push({
-          action: 'VIEWED',
-          timestamp: Date.now(),
-          actorUid: currentUser?.uid || 'student'
-        });
+  const handleElemMidtermPdfClick = (report: any) => {
+    setSelectedReportForViewer(report);
 
-        const now = Date.now();
-        const updatePayload = {
-          deliveryStatus: 'viewed',
-          firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
-          firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
-          lastOpenedAt: now,
-          lastViewedAt: now,
-          openCount: (report.openCount || report.viewCount || 0) + 1,
-          viewCount: (report.viewCount || report.openCount || 0) + 1,
-          openedByEmail: currentUser?.email || '',
-          history: historyLog,
-          updatedAt: now
-        };
-
-        await setDoc(trackingRef, updatePayload, { merge: true });
-
-        setElemMidtermReports(prev =>
-          prev.map(r => r.id === report.id ? { ...r, ...updatePayload } : r)
-        );
-      }
-    } catch (err) {
-      console.warn("Failed to update elem midterm tracking view:", err);
-    }
-
-    const pdfUrl = report.activePdfUrl || report.pdfUrl || report.driveFileUrl;
-    if (pdfUrl) {
-      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
-    } else {
-      toast.error("URL PDF tidak tersedia.");
-    }
+    // Update the local list so the UI immediately shows "Dilihat"
+    setElemMidtermReports(prev =>
+      prev.map(r => {
+        if (r.id === report.id) {
+          const now = Date.now();
+          return {
+            ...r,
+            deliveryStatus: 'viewed',
+            firstOpenedAt: r.firstOpenedAt || r.firstViewedAt || now,
+            firstViewedAt: r.firstViewedAt || r.firstOpenedAt || now,
+            lastOpenedAt: now,
+            lastViewedAt: now,
+            openCount: (r.openCount || r.viewCount || 0) + 1,
+            viewCount: (r.viewCount || r.openCount || 0) + 1
+          };
+        }
+        return r;
+      })
+    );
   };
 
   const handleJhMidtermPdfClick = (report: any) => {
@@ -743,6 +724,14 @@ export default function StudentReports() {
             </div>
           </div>
         )}
+
+        {selectedReportForViewer && (
+          <PdfViewerModal
+            report={selectedReportForViewer}
+            onClose={() => setSelectedReportForViewer(null)}
+            currentUser={currentUser}
+          />
+        )}
       </div>
     );
   }
@@ -1033,13 +1022,17 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
     let isMounted = true;
 
     const initializeViewer = async () => {
+      const isElementary = report.unit === 'ELEMENTARY';
+      const trackingCollection = isElementary ? 'elem_midterm_delivery_tracking' : 'jh_midterm_delivery_tracking';
+      const deliveryStatusVal = isElementary ? 'viewed' : 'VIEWED';
+
       // a. Start tracking (async, non-blocking, error-safe)
       if (report.type !== 'MONTHLY' && report.id && !hasTrackedRef.current) {
         hasTrackedRef.current = true;
         // Run tracking as non-blocking async
         (async () => {
           try {
-            const trackingRef = doc(db, 'jh_midterm_delivery_tracking', report.id);
+            const trackingRef = doc(db, trackingCollection, report.id);
             const historyLog = Array.isArray(report.history) ? [...report.history] : [];
             historyLog.push({
               action: 'VIEWED',
@@ -1049,7 +1042,7 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
 
             const now = Date.now();
             const updatePayload = {
-              deliveryStatus: 'VIEWED',
+              deliveryStatus: deliveryStatusVal,
               isOpened: true, // as requested: isOpened = true
               firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
               firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
@@ -1064,7 +1057,7 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
 
             await setDoc(trackingRef, updatePayload, { merge: true });
           } catch (err) {
-            console.error("Failed to update jh midterm tracking view:", err);
+            console.error(`Failed to update ${report.unit} midterm tracking view:`, err);
           }
         })();
       }
@@ -1079,21 +1072,55 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
           }
         } else {
           // Midterm Report
-          // First attempt: try fetching from jh_midterm_published_reports
           const reportId = report.reportId || report.activeReportId;
           if (reportId) {
-            const pubSnap = await getDocs(
-              query(
-                collection(db, 'jh_midterm_published_reports'),
-                where('id', '==', reportId)
-              )
-            );
-            if (!pubSnap.empty) {
-              const pubData = pubSnap.docs[0].data();
-              if (pubData.driveFileId && isMounted) {
-                setDriveFileId(pubData.driveFileId);
-                setLoading(false);
-                return;
+            if (isElementary) {
+              // Elementary: check elem_midterm_published_reports first
+              const pubSnap = await getDocs(
+                query(
+                  collection(db, 'elem_midterm_published_reports'),
+                  where('id', '==', reportId)
+                )
+              );
+              if (!pubSnap.empty) {
+                const pubData = pubSnap.docs[0].data();
+                if (pubData.driveFileId && isMounted) {
+                  setDriveFileId(pubData.driveFileId);
+                  setLoading(false);
+                  return;
+                }
+              }
+
+              // Sibling check for Elementary SN: elem_sn_midterm_published_reports
+              const snPubSnap = await getDocs(
+                query(
+                  collection(db, 'elem_sn_midterm_published_reports'),
+                  where('id', '==', reportId)
+                )
+              );
+              if (!snPubSnap.empty) {
+                const pubData = snPubSnap.docs[0].data();
+                if (pubData.driveFileId && isMounted) {
+                  setDriveFileId(pubData.driveFileId);
+                  setLoading(false);
+                  return;
+                }
+              }
+            } else {
+              // Junior High
+              const pubSnap = await getDocs(
+                query(
+                  collection(db, 'jh_midterm_published_reports'),
+                  where('id', '==', reportId)
+                )
+              );
+              if (!pubSnap.empty) {
+                const pubData = pubSnap.docs[0].data();
+                if (pubData.driveFileId && isMounted) {
+                  setDriveFileId(pubData.driveFileId);
+                  setLoading(false);
+                  return;
+                }
               }
             }
           }
@@ -1130,6 +1157,8 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
     };
   }, [report, driveFileUrl, currentUser]);
 
+  const unitNameText = report.unit === 'ELEMENTARY' ? 'Elementary' : 'Junior High';
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-white w-full max-w-5xl rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200">
@@ -1142,7 +1171,7 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
             </div>
             <div>
               <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
-                {report.type === 'MONTHLY' ? 'Rapor Bulanan' : 'Midterm Report Viewer'}
+                {report.type === 'MONTHLY' ? 'Rapor Bulanan' : `Midterm Report Viewer - ${unitNameText}`}
               </h3>
               <p className="text-[11px] text-slate-500 font-medium">
                 {report.studentName || report.studentNameSnapshot || currentUser?.displayName || 'Siswa'} • {report.academicYear} (Semester {report.semester})
@@ -1217,7 +1246,7 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
         {/* Footer Actions */}
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
           <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-            Lazuardi Junior High Student Portal
+            Lazuardi {unitNameText} Student Portal
           </div>
           <div className="flex items-center gap-2">
             
