@@ -754,9 +754,7 @@ export default function App() {
              <Route 
                 path="monthly-reports" 
                 element={
-                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
-                    <StudentMonthlyReports />
-                  </RoleGuard>
+                  <Navigate to="/student/reports" replace />
                 } 
              />
              <Route 

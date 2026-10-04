@@ -48,6 +48,23 @@ export default function StudentReports() {
   const [jhManualLinks, setJhManualLinks] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [selectedReportForViewer, setSelectedReportForViewer] = React.useState<any | null>(null);
+  
+  const [views, setViews] = React.useState<any[]>([]);
+  const [activeReportForPopup, setActiveReportForPopup] = React.useState<any | null>(null);
+  const [submittingView, setSubmittingView] = React.useState(false);
+
+  const formatViewTimestamp = (timestamp: any): string => {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    
+    const d = date.getDate();
+    const m = indonesianMonths[date.getMonth()];
+    const y = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    
+    return `${d} ${m} ${y}, ${hours}.${minutes}`;
+  };
 
   React.useEffect(() => {
     let unsubscribeJh: (() => void) | undefined;
@@ -287,10 +304,33 @@ export default function StudentReports() {
                 id: docSnap.id,
                 ...docSnap.data()
               } as any));
+              // Sort by periodKey descending (newest period first)
+              jhLinks.sort((a, b) => (b.periodKey || '').localeCompare(a.periodKey || ''));
               setJhManualLinks(jhLinks);
             }, (err) => {
-              console.error("onSnapshot error in StudentReports:", err);
+              console.error("onSnapshot error in StudentReports manual links:", err);
             });
+
+            // 3. Fetch monthlyReportViews real-time
+            const qViews = query(
+              collection(db, 'monthlyReportViews'),
+              where('studentId', '==', primaryId)
+            );
+            const unsubscribeViews = onSnapshot(qViews, (snapshot) => {
+              const list = snapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
+              } as any));
+              setViews(list);
+            }, (err) => {
+              console.error("onSnapshot error in monthlyReportViews:", err);
+            });
+
+            const originalUnsubscribeJh = unsubscribeJh;
+            unsubscribeJh = () => {
+              if (originalUnsubscribeJh) originalUnsubscribeJh();
+              if (unsubscribeViews) unsubscribeViews();
+            };
           }
         }
       } catch (err) {
@@ -396,6 +436,41 @@ export default function StudentReports() {
         return r;
       })
     );
+  };
+
+  const handleSelectRole = async (role: 'student' | 'parent') => {
+    if (!activeReportForPopup || !studentData) return;
+    setSubmittingView(true);
+    
+    try {
+      const viewCol = collection(db, 'monthlyReportViews');
+      const newDoc = {
+        studentId: studentData.id,
+        reportId: activeReportForPopup.id,
+        period: activeReportForPopup.periodKey,
+        viewerRole: role,
+        viewedAt: serverTimestamp()
+      };
+      
+      try {
+        await addDoc(viewCol, newDoc);
+      } catch (fsErr) {
+        console.error("Firestore save failed inside handleSelectRole:", fsErr);
+      }
+    } catch (err) {
+      console.error("Error logging monthly report view event:", err);
+    } finally {
+      setSelectedReportForViewer({
+        id: activeReportForPopup.id,
+        type: 'MONTHLY',
+        driveFileUrl: activeReportForPopup.driveUrl,
+        academicYear: activeReportForPopup.academicYear || activeYear,
+        semester: activeReportForPopup.semester || 1,
+        studentName: studentData?.name || currentUser?.displayName
+      });
+      setSubmittingView(false);
+      setActiveReportForPopup(null);
+    }
   };
 
   if (loading) {
@@ -742,32 +817,36 @@ export default function StudentReports() {
           Rapor <span className="text-blue-600">Saya</span>
         </h1>
         <p className="text-gray-400 font-bold max-w-lg">
-          Daftar hasil belajarmu yang sudah diterbitkan sekolah. Klik untuk melihat detail atau mengunduh file.
+          Rapor Midterm dan Rapor Bulanan yang sudah diterbitkan sekolah.
         </p>
       </div>
 
       {reports.length === 0 && jhManualLinks.length === 0 && jhMidtermReports.length === 0 ? (
-        <div className="bg-gray-50 border-2 border-dashed border-gray-200 p-20 rounded-[3rem] text-center space-y-4">
-          <div className="w-20 h-20 bg-gray-100 rounded-[2rem] flex items-center justify-center mx-auto">
-            <FileText className="text-gray-300" size={40} />
+        <div className="bg-white border border-gray-100 p-20 rounded-[3rem] text-center space-y-4 shadow-sm">
+          <div className="w-20 h-20 bg-blue-50/50 rounded-[2rem] flex items-center justify-center mx-auto">
+            <FileText className="text-blue-300" size={40} />
           </div>
           <div className="space-y-2">
             <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Belum Ada Rapor</h3>
-            <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto">Sekolah belum menerbitkan rapor untuk periode ini.</p>
+            <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto">Belum ada rapor yang diterbitkan.</p>
           </div>
         </div>
       ) : (
         <div className="space-y-12">
           {/* SECTION: JUNIOR HIGH MIDTERM REPORT */}
-          {jhMidtermReports.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
-                <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
-                  <FileText size={16} className="text-emerald-600" />
-                  MIDTERM REPORT
-                </h2>
-              </div>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+                <FileText size={16} className="text-emerald-600" />
+                MIDTERM REPORT
+              </h2>
+            </div>
 
+            {jhMidtermReports.length === 0 ? (
+              <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
+                <p className="text-sm font-bold text-gray-400">Belum ada rapor yang diterbitkan.</p>
+              </div>
+            ) : (
               <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -822,151 +901,139 @@ export default function StudentReports() {
                   </table>
                 </div>
               </div>
-            </div>
-          )}
-          {reports.length > 0 && (
-            <div className="space-y-6">
-              <h2 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900">
-                Laporan Hasil Belajar <span className="text-blue-600">Akademik</span>
+            )}
+          </div>
+
+          {/* SECTION: RAPOR BULANAN */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+                <FileText size={16} className="text-blue-600" />
+                RAPOR BULANAN
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {reports.map((report, idx) => (
-                  <motion.div
-                    key={report.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: idx * 0.1 }}
-                    className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100 hover:border-blue-100 transition-all flex flex-col justify-between aspect-square"
-                  >
-                    <div className="space-y-6">
-                      <div className="flex justify-between items-start">
-                        <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
-                          <FileText className="text-blue-600 group-hover:text-white" size={28} />
-                        </div>
-                        <div className="px-4 py-2 bg-gray-950 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest">
-                          {report.type.replace('_', ' ')}
-                        </div>
-                      </div>
+            </div>
 
-                      <div className="space-y-2">
-                        <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
-                          {report.period}
-                        </h3>
-                        <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
-                          <span className="flex items-center gap-1"><Calendar size={12} /> Sem {report.semester}</span>
-                          <span className="w-1 h-1 bg-gray-300 rounded-full" />
-                          <span>{report.academicYear}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <Link 
-                        to={`/academic/rapor/${report.id}?view=student`} 
-                        className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-900 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-600 hover:text-white transition-all transform active:scale-95"
-                      >
-                        <Eye size={14} /> Lihat Detail
-                      </Link>
-                      
-                      <div className="flex gap-2">
-                         <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-blue-600 hover:text-blue-600 transition-all">
-                            <Download size={14} /> PDF
-                         </button>
-                         {report.isEndTerm && (
-                           <button className="flex-1 flex items-center justify-center gap-2 py-4 border-2 border-gray-100 text-gray-400 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:border-emerald-600 hover:text-emerald-600 transition-all">
-                              <Award size={14} /> Profile
-                           </button>
-                         )}
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
+            {jhManualLinks.length === 0 ? (
+              <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
+                <p className="text-sm font-bold text-gray-400">Belum ada rapor yang diterbitkan.</p>
               </div>
-            </div>
-          )}
-
-          {jhManualLinks.length > 0 && (
-            <div className="space-y-6">
-              <h2 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900">
-                Rapor Bulanan <span className="text-blue-600">PDF (Drive Link)</span>
-              </h2>
+            ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                 {jhManualLinks.map((link, idx) => {
                   const monthLabel = getIndonesianMonthLabel(link.periodKey);
+                  
+                  // Calculate tracking summaries
+                  const reportViews = views.filter(v => v.reportId === link.id);
+                  const hasStudentView = reportViews.some(v => v.viewerRole === 'student');
+                  const hasParentView = reportViews.some(v => v.viewerRole === 'parent');
+
+                  let trackingSummary = 'Belum dilihat';
+                  if (hasStudentView && hasParentView) {
+                    trackingSummary = 'Sudah dilihat oleh siswa dan orang tua/wali';
+                  } else if (hasStudentView) {
+                    trackingSummary = 'Sudah dilihat sebagai siswa';
+                  } else if (hasParentView) {
+                    trackingSummary = 'Sudah dilihat sebagai orang tua/wali';
+                  }
+
+                  const studentViews = reportViews.filter(v => v.viewerRole === 'student');
+                  const parentViews = reportViews.filter(v => v.viewerRole === 'parent');
+
+                  const getLatestTimestamp = (vList: any[]) => {
+                    if (vList.length === 0) return null;
+                    return vList.reduce((latest, current) => {
+                      const latTime = latest.viewedAt?.toMillis ? latest.viewedAt.toMillis() : (latest.viewedAt?.seconds ? latest.viewedAt.seconds * 1000 : 0);
+                      const curTime = current.viewedAt?.toMillis ? current.viewedAt.toMillis() : (current.viewedAt?.seconds ? current.viewedAt.seconds * 1000 : 0);
+                      return curTime > latTime ? current : latest;
+                    }, vList[0]).viewedAt;
+                  };
+
+                  const latestStudentTime = getLatestTimestamp(studentViews);
+                  const latestParentTime = getLatestTimestamp(parentViews);
+
                   return (
                     <motion.div
                       key={link.id}
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: idx * 0.1 }}
-                      className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-indigo-100 hover:border-indigo-100 transition-all flex flex-col justify-between aspect-square"
+                      transition={{ delay: idx * 0.05 }}
+                      className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100/50 hover:border-blue-100 transition-all flex flex-col justify-between"
                     >
                       <div className="space-y-6">
                         <div className="flex justify-between items-start">
-                          <div className="w-14 h-14 bg-indigo-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-indigo-600 group-hover:-rotate-6 transition-all duration-500">
-                            <FileText className="text-indigo-600 group-hover:text-white" size={28} />
+                          <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
+                            <FileText className="text-blue-600 group-hover:text-white" size={28} />
                           </div>
-                          <div className="px-4 py-2 bg-indigo-950 text-white rounded-2xl text-[9px] font-black uppercase tracking-widest">
-                            MONTHLY PDF
+                          <div className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl text-[9px] font-black uppercase tracking-widest">
+                            DITERBITKAN
                           </div>
                         </div>
 
                         <div className="space-y-2">
-                          <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-indigo-600 transition-colors leading-tight">
+                          <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
                             {monthLabel || 'Rapor Bulanan'}
                           </h3>
                           <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
-                            <span className="flex items-center gap-1"><Calendar size={12} /> Sem {link.semester}</span>
+                            <span className="flex items-center gap-1">
+                              <Calendar size={12} /> Sem {link.semester || '1'}
+                            </span>
                             <span className="w-1 h-1 bg-gray-300 rounded-full" />
-                            <span>{link.academicYear}</span>
+                            <span>{link.academicYear || activeYear}</span>
                           </div>
                         </div>
                       </div>
 
+                      {/* View Tracking Summary Box */}
+                      <div className="my-6 py-4 px-5 bg-gray-50 rounded-[1.5rem] border border-gray-100/80 space-y-2 text-[10px]">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2.5 h-2.5 rounded-full ${
+                            hasStudentView && hasParentView ? 'bg-emerald-500' : (hasStudentView || hasParentView ? 'bg-blue-500' : 'bg-gray-300')
+                          }`} />
+                          <span className="font-extrabold uppercase tracking-wider text-gray-600">
+                            {trackingSummary}
+                          </span>
+                        </div>
+                        {(latestStudentTime || latestParentTime) && (
+                          <div className="space-y-1 border-t border-gray-100 pt-2 font-bold text-gray-400">
+                            {latestStudentTime && (
+                              <div>
+                                Dilihat siswa: <span className="text-gray-700">{formatViewTimestamp(latestStudentTime)}</span>
+                              </div>
+                            )}
+                            {latestParentTime && (
+                              <div>
+                                Dilihat orang tua/wali: <span className="text-gray-700">{formatViewTimestamp(latestParentTime)}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
                       <div className="space-y-3">
-                        <button 
-                          onClick={() => setSelectedReportForViewer({
-                            id: link.id,
-                            type: 'MONTHLY',
-                            driveFileUrl: link.driveUrl,
-                            academicYear: link.academicYear || activeYear,
-                            semester: link.semester || 1,
-                            studentName: studentData?.name || currentUser?.displayName
-                          })}
-                          className="w-full flex items-center justify-center gap-2 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-indigo-100 text-center cursor-pointer"
-                        >
-                          <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor (Drive)
-                        </button>
+                        {link.driveUrl ? (
+                          <button
+                            onClick={() => setActiveReportForPopup(link)}
+                            className="w-full flex items-center justify-center gap-2 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-blue-100 text-center cursor-pointer"
+                          >
+                            <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor (Drive)
+                          </button>
+                        ) : (
+                          <button
+                            disabled
+                            className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-400 border border-gray-200 rounded-2xl font-black uppercase text-[10px] tracking-widest cursor-not-allowed text-center"
+                          >
+                            Tautan Tidak Tersedia
+                          </button>
+                        )}
                       </div>
                     </motion.div>
                   );
                 })}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
-
-      {/* Motivational Card */}
-      <div className="bg-gray-900 p-12 rounded-[4rem] text-white overflow-hidden relative">
-         <div className="absolute top-0 right-0 w-96 h-96 bg-blue-600/20 rounded-full blur-[100px] -mr-32 -mt-32" />
-         <div className="relative space-y-6">
-            <h2 className="text-4xl font-black uppercase italic tracking-tighter max-w-lg">
-              Teruslah Bertumbuh & Berpikir Kritis! 🚀
-            </h2>
-            <p className="text-gray-400 font-bold text-lg max-w-xl leading-relaxed">
-              Hasil belajarmu adalah cerminan dari usahamu. Jika ada nilai yang ingin kamu tingkatkan, jangan ragu untuk bertanya pada gurumu ya!
-            </p>
-            <div className="flex gap-4">
-               <button className="px-8 py-4 bg-blue-600 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 transition-colors">
-                 Melihat Pencapaian
-               </button>
-               <button className="px-8 py-4 bg-white/10 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-white/20 transition-colors">
-                 Beri Feedback Portal
-               </button>
-            </div>
-         </div>
-      </div>
 
       {selectedReportForViewer && (
         <PdfViewerModal
@@ -974,6 +1041,46 @@ export default function StudentReports() {
           onClose={() => setSelectedReportForViewer(null)}
           currentUser={currentUser}
         />
+      )}
+
+      {activeReportForPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-950/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white max-w-lg w-full rounded-[2.5rem] border border-gray-100 p-10 shadow-2xl space-y-8 animate-in zoom-in-95 duration-300">
+            <div className="space-y-3 text-center">
+              <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 leading-none">
+                Siapa yang melihat rapor ini?
+              </h3>
+              <p className="text-sm font-bold text-gray-500">
+                Silakan pilih untuk membantu sekolah mengetahui rapor telah dilihat.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <button
+                onClick={() => handleSelectRole('student')}
+                disabled={submittingView}
+                className="flex flex-col items-center justify-center gap-3 p-6 border-2 border-gray-100 hover:border-blue-600 hover:bg-blue-50/20 active:scale-95 transition-all rounded-3xl group text-center"
+              >
+                <span className="text-sm font-black uppercase tracking-wider text-gray-700 group-hover:text-blue-600 transition-colors">
+                  Lihat sebagai Siswa
+                </span>
+              </button>
+              <button
+                onClick={() => handleSelectRole('parent')}
+                disabled={submittingView}
+                className="flex flex-col items-center justify-center gap-3 p-6 border-2 border-gray-100 hover:border-blue-600 hover:bg-blue-50/20 active:scale-95 transition-all rounded-3xl group text-center"
+              >
+                <span className="text-sm font-black uppercase tracking-wider text-gray-700 group-hover:text-blue-600 transition-colors">
+                  Lihat sebagai Orang Tua/Wali
+                </span>
+              </button>
+            </div>
+
+            <p className="text-[10px] text-center font-bold text-gray-400 uppercase tracking-widest leading-relaxed">
+              Pilihan ini hanya digunakan untuk pencatatan bahwa rapor telah dilihat.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );

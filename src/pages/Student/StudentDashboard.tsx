@@ -37,6 +37,7 @@ export default function StudentDashboard() {
   const [loading, setLoading] = React.useState(true);
   const [dataError, setDataError] = React.useState<string | null>(null);
   const [isValidated, setIsValidated] = React.useState(false);
+  const [latestReportInfo, setLatestReportInfo] = React.useState<string>('Belum ada rapor yang diterbitkan.');
 
   React.useEffect(() => {
     const validateAndFetch = async () => {
@@ -141,6 +142,31 @@ export default function StudentDashboard() {
 
         setStudentData(studentProfile);
         setClassData(classDetails);
+
+        const userUnit = activeUnit || classDetails?.unitId || studentProfile.unitId || currentUser?.unitId || "JUNIOR_HIGH";
+        if (userUnit === 'JUNIOR_HIGH') {
+          try {
+            const qJh = query(
+              collection(db, 'jh_midterm_delivery_tracking'),
+              where('studentId', '==', studentId.trim()),
+              where('activeForStudent', '==', true)
+            );
+            const snapJh = await getDocs(qJh);
+            if (!snapJh.empty) {
+              const list = snapJh.docs.map(d => d.data());
+              list.sort((a, b) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0));
+              const latest = list[0];
+              const term = latest.midtermTerm || 1;
+              const version = latest.reportVersion ? `v${latest.reportVersion}` : 'v1';
+              setLatestReportInfo(`Rapor terbaru: Midterm ${term} (${version})`);
+            } else {
+              setLatestReportInfo('Belum ada rapor yang diterbitkan.');
+            }
+          } catch (jhErr) {
+            console.warn("Failed to fetch latest midterm report info for dashboard:", jhErr);
+          }
+        }
+
         setIsValidated(true);
       } catch (err: any) {
         console.error("Critical student validation failed:", err);
@@ -230,7 +256,7 @@ export default function StudentDashboard() {
                 <GraduationCap size={14} className="text-blue-500" /> NIS: {currentUser.luminaId || '-'}
              </div>
              <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-400">
-                <Users size={14} className="text-emerald-500" /> Class: {studentData?.classId || '-'}
+                <Users size={14} className="text-emerald-500" /> Class: {classData?.name || studentData?.classId || '-'}
              </div>
              <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-400">
                 <Calendar size={14} className="text-purple-500" /> {activeYear || '2025/2026'}
@@ -263,7 +289,7 @@ export default function StudentDashboard() {
          </Link>
 
          <Link 
-            to={unit === 'JUNIOR_HIGH' ? "/student/monthly-reports" : "/student/reports"}
+            to="/student/reports"
             className="group p-10 bg-white border border-gray-100 rounded-[3rem] shadow-sm hover:border-blue-200 hover:shadow-xl hover:shadow-blue-50 hover:scale-[1.02] active:scale-[0.98] transition-all flex flex-col justify-between aspect-square md:aspect-auto md:h-80"
          >
             <div className="space-y-6 relative">
@@ -272,12 +298,21 @@ export default function StudentDashboard() {
                </div>
                <div className="space-y-2">
                   <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors">Rapor Saya</h2>
-                  <p className="text-sm text-gray-400 font-bold leading-relaxed max-w-[200px]">Cek dan download hasil belajarmu di sini.</p>
+                  <p className="text-sm text-gray-400 font-bold leading-relaxed max-w-[200px]">
+                    {unit === 'JUNIOR_HIGH' 
+                      ? "Lihat rapor Midterm dan Rapor Bulanan yang sudah diterbitkan." 
+                      : "Cek dan download hasil belajarmu di sini."}
+                  </p>
+                  {unit === 'JUNIOR_HIGH' && (
+                    <div className="text-[11px] font-extrabold text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-xl uppercase tracking-wider inline-block mt-3">
+                      {latestReportInfo}
+                    </div>
+                  )}
                </div>
             </div>
 
             <div className="relative flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-gray-300 group-hover:text-blue-600 transition-colors">
-               {unit === 'JUNIOR_HIGH' ? "BUKA RAPOR BULANAN" : "Lihat Rapor"} <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+               {unit === 'JUNIOR_HIGH' ? "BUKA RAPOR SAYA" : "Lihat Rapor"} <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
             </div>
          </Link>
 
