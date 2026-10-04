@@ -139,34 +139,13 @@ const CATEGORY_CONFIG = {
 
 /**
  * Helper: Check if an assignment or progress record is verified.
- * Returns true if status is VERIFIED/APPROVED/COMPLETED, or if verifiedAt/verifiedBy/verifiedByName/verifiedByEmail is present,
- * or if audit history indicates verification.
+ * Returns true only if status is VERIFIED/APPROVED/COMPLETED.
+ * Status is the single source of truth.
  */
 export const isLpuItemVerified = (item: any): boolean => {
   if (!item) return false;
   const statusStr = String(item.status || '').toUpperCase();
-  if (statusStr === 'VERIFIED' || statusStr === 'APPROVED' || statusStr === 'COMPLETED') {
-    return true;
-  }
-  if (item.verifiedAt !== null && item.verifiedAt !== undefined && item.verifiedAt !== '') {
-    return true;
-  }
-  if (item.verifiedBy !== null && item.verifiedBy !== undefined && item.verifiedBy !== '') {
-    return true;
-  }
-  if (item.verifiedByName !== null && item.verifiedByName !== undefined && item.verifiedByName !== '') {
-    return true;
-  }
-  if (item.verifiedByEmail !== null && item.verifiedByEmail !== undefined && item.verifiedByEmail !== '') {
-    return true;
-  }
-  if (Array.isArray(item.history) && item.history.some((h: any) => {
-    const act = String(h?.action || '').toUpperCase();
-    return act === 'VERIFY' || act === 'MANUAL_VERIFY' || act === 'APPROVED';
-  })) {
-    return true;
-  }
-  return false;
+  return statusStr === 'VERIFIED' || statusStr === 'APPROVED' || statusStr === 'COMPLETED';
 };
 
 const formatLpuDateTime = (value: any, fallback: string = '-'): string => {
@@ -931,14 +910,18 @@ function LearningPowerUpTeacherPageContent() {
             }
           }
 
+          const studentClassObj = classes.find(c => c.id === cid || c.id === student.classId || c.name === student.classId || c.name === student.className);
+          const canonicalClassId = studentClassObj?.id || cid || student.classId;
+          const canonicalClassName = studentClassObj?.name || student.className || student.classId || '';
+
           const newAsg: LearningPowerUpAssignment = {
             id: asgId,
             unit: 'JUNIOR_HIGH',
             taskBatchId: batch.id,
             studentId: student.id,
             studentNameSnapshot: student.name,
-            classId: student.classId,
-            classNameSnapshot: student.className || '',
+            classId: canonicalClassId,
+            classNameSnapshot: canonicalClassName,
             subjectKey: subjKey,
             subjectArea: LPU_SUBJECT_MAP[subjKey],
             levelSnapshot: studentLevel || null,
@@ -1265,21 +1248,26 @@ function LearningPowerUpTeacherPageContent() {
           status = 'SUBMITTED';
         } else if (asg.status === 'REVISION_REQUIRED') {
           status = 'REVISION_REQUIRED';
+        } else if (asg.status === 'ASSIGNED') {
+          status = 'ASSIGNED';
         } else {
           status = 'NOT_STARTED';
         }
 
-        const effectiveVerifiedByName = 
-          asg.verifiedByName ||
-          (asg.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.performedByName)?.performedByName) ||
-          (asg.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(asg.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(asg.verifiedBy) ? asg.verifiedBy : null) ||
-          null;
+        const lastVerifyHistory = isVer ? (asg.history?.slice().reverse().find(h => h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY')) : null;
 
-        const effectiveVerifiedAt = 
+        const effectiveVerifiedByName = isVer ? (
+          asg.verifiedByName ||
+          lastVerifyHistory?.performedByName ||
+          (asg.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(asg.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(asg.verifiedBy) ? asg.verifiedBy : null) ||
+          null
+        ) : null;
+
+        const effectiveVerifiedAt = isVer ? (
           asg.verifiedAt ||
-          asg.updatedAt ||
-          (asg.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.timestamp)?.timestamp) ||
-          null;
+          lastVerifyHistory?.timestamp ||
+          null
+        ) : null;
 
         return {
           id: asg.id,
@@ -2403,7 +2391,9 @@ function LearningPowerUpTeacherPageContent() {
             return;
           }
 
-          const classObj = classes.find(c => c.id === student.classId);
+          const classObj = classes.find(c => c.id === student.classId || c.name === student.classId || c.name === (student as any).className);
+          const canonicalClassId = classObj?.id || student.classId;
+          const canonicalClassName = classObj?.name || (student as any).className || student.classId || 'Unknown Class';
           const record = recordsByStudentId[student.id];
           let lvl = '';
           if (record) {
@@ -2440,8 +2430,8 @@ function LearningPowerUpTeacherPageContent() {
             taskBatchId: batchId,
             studentId: student.id,
             studentNameSnapshot: student.name,
-            classId: student.classId,
-            classNameSnapshot: classObj?.name || student.classId || 'Unknown Class',
+            classId: canonicalClassId,
+            classNameSnapshot: canonicalClassName,
             subjectKey: batchSubject,
             subjectArea: LPU_SUBJECT_MAP[batchSubject],
             levelSnapshot: studentLevel,
@@ -2618,7 +2608,9 @@ function LearningPowerUpTeacherPageContent() {
 
         const assignmentsToCreate: LearningPowerUpAssignment[] = [];
         for (const student of studentDocs) {
-          const studentClass = classes.find(c => c.id === student.classId);
+          const studentClass = classes.find(c => c.id === student.classId || c.name === student.classId || c.name === (student as any).className);
+          const canonicalClassId = studentClass?.id || student.classId;
+          const canonicalClassName = studentClass?.name || (student as any).className || '';
           const level = litnumRecordsByStudentId[student.id]?.[newSubject] || '';
           const resolvedTask = resolveLevelTask(cleanLevelTasks, level, newSubject);
 
@@ -2640,8 +2632,8 @@ function LearningPowerUpTeacherPageContent() {
             taskBatchId: editingBatchId,
             studentId: student.id,
             studentNameSnapshot: student.name,
-            classId: student.classId,
-            classNameSnapshot: studentClass?.name || '',
+            classId: canonicalClassId,
+            classNameSnapshot: canonicalClassName,
             subjectKey: newSubject,
             subjectArea: LPU_SUBJECT_MAP[newSubject],
             levelSnapshot: level || null,
@@ -3066,27 +3058,31 @@ function LearningPowerUpTeacherPageContent() {
         field: matchingAsg.subjectKey,
         subjectKey: matchingAsg.subjectKey,
         status: isAsgVer ? 'VERIFIED' : (matchingAsg.status as any || 'NOT_STARTED'),
-        verifiedAt: matchingAsg.verifiedAt,
-        verifiedBy: matchingAsg.verifiedBy,
-        verifiedByEmail: matchingAsg.verifiedByEmail,
-        verifiedByName: matchingAsg.verifiedByName,
+        verifiedAt: isAsgVer ? matchingAsg.verifiedAt : null,
+        verifiedBy: isAsgVer ? matchingAsg.verifiedBy : null,
+        verifiedByEmail: isAsgVer ? matchingAsg.verifiedByEmail : null,
+        verifiedByName: isAsgVer ? matchingAsg.verifiedByName : null,
         verificationMethod: matchingAsg.verificationMethod || (isAsgVer ? 'INDIVIDUAL' : null),
         revisionNote: matchingAsg.history?.filter(h => h.action === 'REVISION_REQUEST' && h.note).slice(-1)[0]?.note || '',
         history: (matchingAsg.history || []) as any
       } as any;
-      matchingProgs.push(asgProg);
+      if (!matchingProgs.some(p => p.id === matchingAsg.id)) {
+        matchingProgs.push(asgProg);
+      }
     }
 
     if (matchingProgs.length === 0) return null;
 
     const getStatusPriorityVal = (p: TaskProgress): number => {
-      if (isLpuItemVerified(p)) return 4;
+      const isAsg = loadedAssignments.some(a => a.id === p.id);
       const s = String(p.status || '').toUpperCase();
-      if (s === 'APPROVED' || s === 'VERIFIED' || s === 'COMPLETED') return 4;
-      if (s === 'SUBMITTED') return 3;
-      if (s === 'REVISION_REQUIRED' || s === 'REVISION_REQUESTED') return 2;
-      if (s === 'ASSIGNED' || s === 'NOT_STARTED') return 1;
-      return 0;
+      let base = 0;
+      if (s === 'APPROVED' || s === 'VERIFIED' || s === 'COMPLETED') base = 40;
+      else if (s === 'SUBMITTED') base = 30;
+      else if (s === 'REVISION_REQUIRED' || s === 'REVISION_REQUESTED') base = 20;
+      else if (s === 'ASSIGNED') base = 10;
+      else if (s === 'NOT_STARTED') base = 5;
+      return base + (isAsg ? 1 : 0);
     };
 
     matchingProgs.sort((a, b) => getStatusPriorityVal(b) - getStatusPriorityVal(a));
@@ -3187,10 +3183,6 @@ function LearningPowerUpTeacherPageContent() {
   const getStudentFieldStatus = (studentId: string, field: 'bahasaIndonesia' | 'english' | 'mengaji' | 'numerasi'): string => {
     if (!activePackage) return 'NOT_STARTED';
 
-    const progress = findProgress(studentId, selectedWeek, field);
-    if (progress?.status === ('CANCELLED' as any)) return 'CANCELLED';
-    if (isLpuItemVerified(progress)) return 'VERIFIED';
-
     const student = students.find(s => s.id === studentId);
     const asg = resolveAssignmentForStudent(
       studentId,
@@ -3199,11 +3191,19 @@ function LearningPowerUpTeacherPageContent() {
       activePackage.weekStartDate
     );
 
-    if (asg?.isCancelled) return 'CANCELLED';
-    if (isLpuItemVerified(asg)) return 'VERIFIED';
+    // If active assignment exists for this student and week, it is the primary source of truth
+    if (asg) {
+      if (asg.isCancelled) return 'CANCELLED';
+      if (isLpuItemVerified(asg)) return 'VERIFIED';
+      return asg.status || 'ASSIGNED';
+    }
 
-    if (asg?.status) return asg.status;
+    // Otherwise check legacy progress
+    const progress = findProgress(studentId, selectedWeek, field);
+    if (progress?.status === ('CANCELLED' as any)) return 'CANCELLED';
+    if (isLpuItemVerified(progress)) return 'VERIFIED';
     if (progress?.status) return progress.status;
+
     return 'NOT_STARTED';
   };
 
@@ -3882,14 +3882,18 @@ function LearningPowerUpTeacherPageContent() {
             timestamp: new Date()
           };
 
+          const studentClassObj = classes.find(c => c.id === student.classId || c.name === student.classId || c.name === (student as any).className);
+          const canonicalClassId = studentClassObj?.id || student.classId;
+          const canonicalClassName = studentClassObj?.name || (student as any).className || 'Unknown Class';
+
           const newAssignment: LearningPowerUpAssignment = {
             id: assignmentId,
             unit: 'JUNIOR_HIGH',
             taskBatchId: targetBatch.id,
             studentId: student.id,
             studentNameSnapshot: student.name,
-            classId: student.classId,
-            classNameSnapshot: classes.find(c => c.id === student.classId)?.name || (student as any).className || 'Unknown Class',
+            classId: canonicalClassId,
+            classNameSnapshot: canonicalClassName,
             subjectKey: field,
             subjectArea: LPU_SUBJECT_MAP[field] as any,
             levelSnapshot: levelSnapshot,
@@ -5298,25 +5302,34 @@ function LearningPowerUpTeacherPageContent() {
                               displayLevel = normM ? formatMengajiDisplay(normM) : normN ? formatNumerasiDisplay(normN) : rawLvl;
                             }
 
-                            const effectiveVerifierName = 
+                            const isVerifiedStatus = status === 'VERIFIED';
+                            const lastVerifyAsgHistory = isVerifiedStatus 
+                              ? asg?.history?.slice().reverse().find(h => h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY')
+                              : null;
+                            const lastVerifyProgHistory = isVerifiedStatus
+                              ? progress?.history?.slice().reverse().find(h => h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY')
+                              : null;
+
+                            const effectiveVerifierName = isVerifiedStatus ? (
                               progress?.verifiedByName || 
                               asg?.verifiedByName ||
-                              (asg?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.performedByName)?.performedByName) ||
-                              (progress?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && (h as any).actorName)?.actorName) ||
+                              lastVerifyAsgHistory?.performedByName ||
+                              (lastVerifyProgHistory as any)?.actorName ||
+                              (lastVerifyProgHistory as any)?.performedByName ||
                               progress?.verifiedByEmail || 
                               asg?.verifiedByEmail ||
                               (progress?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(progress.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(progress.verifiedBy) ? progress.verifiedBy : null) || 
                               (asg?.verifiedBy && !/^[a-zA-Z0-9]{20,30}$/.test(asg.verifiedBy) && !/^[0-9a-fA-F-]{36}$/.test(asg.verifiedBy) ? asg.verifiedBy : null) || 
-                              'Guru Lumina';
+                              null
+                            ) : null;
 
-                            const effectiveVerifiedAt = 
+                            const effectiveVerifiedAt = isVerifiedStatus ? (
                               progress?.verifiedAt || 
                               asg?.verifiedAt || 
-                              progress?.updatedAt || 
-                              asg?.updatedAt || 
-                              (asg?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.timestamp)?.timestamp) ||
-                              (progress?.history?.slice().reverse().find(h => (h.action === 'VERIFY' || (h.action as any) === 'MANUAL_VERIFY') && h.timestamp)?.timestamp) ||
-                              null;
+                              lastVerifyAsgHistory?.timestamp ||
+                              lastVerifyProgHistory?.timestamp ||
+                              null
+                            ) : null;
 
                             return (
                               <td 
@@ -5382,12 +5395,14 @@ function LearningPowerUpTeacherPageContent() {
                                 {status === 'VERIFIED' && (
                                   <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[11px] p-2.5 rounded-xl shadow-lg z-30 w-52 text-center font-bold leading-normal">
                                     <p className="text-emerald-400">
-                                      Verified by: {effectiveVerifierName}
+                                      {effectiveVerifierName ? `Verified by: ${effectiveVerifierName}` : 'Terverifikasi'}
                                     </p>
                                     {(progress?.verificationMethod === 'BULK' || asg?.verificationMethod === 'BULK') && (
                                       <p className="text-slate-300 text-[10px] font-medium">Bulk verification</p>
                                     )}
-                                    <p className="text-slate-400 text-[10px] mt-0.5">{formatVerificationTime(effectiveVerifiedAt)}</p>
+                                    {effectiveVerifiedAt && (
+                                      <p className="text-slate-400 text-[10px] mt-0.5">{formatVerificationTime(effectiveVerifiedAt)}</p>
+                                    )}
                                   </div>
                                 )}
                               </td>
