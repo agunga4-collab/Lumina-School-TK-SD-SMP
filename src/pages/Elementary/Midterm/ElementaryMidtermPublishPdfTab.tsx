@@ -33,6 +33,7 @@ import {
   ensureElementaryDriveFolders,
   uploadElementaryMidtermPdfToDrive
 } from '../../../lib/elementaryMidtermReportPdf';
+import { exportElementaryMidtermExcel } from '../../../utils/exportElementaryMidtermExcel';
 
 interface ElementaryMidtermPublishPdfTabProps {
   selectedClassId: string;
@@ -87,6 +88,29 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
   // Modal Detail Learning Goals State (View-Only)
   const [detailStudent, setDetailStudent] = React.useState<Student | null>(null);
   const [showDebug, setShowDebug] = React.useState<boolean>(false);
+
+  // Excel Export State
+  const [isExportingExcel, setIsExportingExcel] = React.useState<boolean>(false);
+
+  // Check authorization & assignment
+  const isSuperAdminOrHead = React.useMemo(() => {
+    if (!currentUser) return false;
+    const role = (currentUser.role || (currentUser as any).roleId || '').toUpperCase();
+    return ['SUPER_ADMIN', 'PRINCIPAL', 'HEAD_UNIT', 'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_ELEM', 'ADMIN'].includes(role);
+  }, [currentUser]);
+
+  const isAssignedTeacher = React.useMemo(() => {
+    if (!selectedClass || !currentUser?.uid) return false;
+    const uid = currentUser.uid;
+    if (selectedClass.homeroomTeacherId === uid) return true;
+    if (Array.isArray(selectedClass.homeroomTeacherIds) && selectedClass.homeroomTeacherIds.includes(uid)) return true;
+    if (Array.isArray((selectedClass as any).waliKelasIds) && (selectedClass as any).waliKelasIds.includes(uid)) return true;
+    if (Array.isArray(selectedClass.assignedTeacherIds) && selectedClass.assignedTeacherIds.includes(uid)) return true;
+    if (Array.isArray(selectedClass.teacherAssignments) && selectedClass.teacherAssignments.some((a: any) => a.userId === uid)) return true;
+    return false;
+  }, [selectedClass, currentUser?.uid]);
+
+  const canExportExcel = isSuperAdminOrHead || isAssignedTeacher;
 
   // Publishing State
   const [publishingStudentId, setPublishingStudentId] = React.useState<string | null>(null);
@@ -589,6 +613,59 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
     }
   };
 
+  const handleDownloadExcel = async () => {
+    if (!canExportExcel) {
+      toast.error('Anda tidak memiliki hak akses untuk mengunduh rekap ini.');
+      return;
+    }
+    if (!selectedClass) {
+      toast.error('Pilih kelas terlebih dahulu.');
+      return;
+    }
+    if (!students || students.length === 0) {
+      toast.info('Tidak ada data siswa untuk diunduh.');
+      return;
+    }
+
+    setIsExportingExcel(true);
+    const toastId = toast.loading('Menyiapkan file Excel backup midterm...');
+
+    try {
+      const studentAttendanceMap: Record<string, { sakit: number | null; izin: number | null; tanpaKeterangan: number | null }> = {};
+      students.forEach(st => {
+        studentAttendanceMap[st.id] = getDynamicAttendanceForStudent(
+          st.id,
+          studentDataMap[st.id]?.attendance || { sakit: 0, izin: 0, tanpaKeterangan: 0 }
+        );
+      });
+
+      await exportElementaryMidtermExcel({
+        selectedClass,
+        students, // all students in the class, unaffected by filter
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        midtermTerm: selectedTerm,
+        masterGoalsMap,
+        studentDataMap,
+        publishedReportsMap: publishedMap,
+        studentAttendanceMap,
+        attendanceRecords,
+        reportSigningDate,
+        attendanceCutoffDate,
+        cutoffDateRaw,
+        studentUaMap,
+        calculateStudentGoalsProgress,
+      });
+
+      toast.success('File Excel backup berhasil diunduh!', { id: toastId });
+    } catch (err: any) {
+      console.error('[ExportElementaryExcel Error]:', err);
+      toast.error(`Gagal mengunduh file Excel: ${err?.message || 'Terjadi kesalahan sistem'}`, { id: toastId });
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Date validation warning banner */}
@@ -638,14 +715,39 @@ export const ElementaryMidtermPublishPdfTab: React.FC<ElementaryMidtermPublishPd
 
       {/* STUDENT PUBLISH ROSTER TABLE */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-4 bg-slate-900 text-white font-extrabold uppercase text-xs tracking-wider flex items-center justify-between">
+        <div className="p-4 bg-slate-900 text-white font-extrabold uppercase text-xs tracking-wider flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <User size={16} className="text-emerald-400" />
             <span>Daftar Siswa & Status Rapor ({students.length})</span>
           </div>
-          <span className="text-[10.5px] font-medium text-slate-400">
-            Klik angka Learning Goals untuk memeriksa rincian pengisian
-          </span>
+
+          <div className="flex items-center gap-3">
+            <span className="text-[10.5px] font-medium text-slate-400 normal-case hidden md:inline">
+              Klik angka Learning Goals untuk memeriksa rincian pengisian
+            </span>
+
+            {canExportExcel && (
+              <button
+                type="button"
+                onClick={handleDownloadExcel}
+                disabled={isExportingExcel}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                title="Download file Excel backup lengkap untuk seluruh siswa di kelas ini"
+              >
+                {isExportingExcel ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>Mengunduh...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={14} />
+                    <span>Download Excel</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
