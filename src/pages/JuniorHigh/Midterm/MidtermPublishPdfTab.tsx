@@ -28,6 +28,7 @@ import {
   MidtermDetailLearningGoalsModal, 
   calculateJhStudentGoalsProgress 
 } from './MidtermDetailLearningGoalsModal';
+import { exportJuniorHighMidtermExcel } from '../../../utils/exportJuniorHighMidtermExcel';
 import type { 
   MidtermMasterGoalDoc, 
   MidtermStudentDataDoc,
@@ -101,6 +102,9 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
   // Modal Detail Learning Goals State (View-Only)
   const [detailStudent, setDetailStudent] = React.useState<Student | null>(null);
+
+  // Excel Export State
+  const [isExportingExcel, setIsExportingExcel] = React.useState<boolean>(false);
 
   // Publishing in progress
   const [publishingStudentId, setPublishingStudentId] = React.useState<string | null>(null);
@@ -549,6 +553,48 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
     toast.success(`Selesai mempublikasikan ${successCount} dari ${readyStudents.length} rapor siswa.`);
   };
 
+  const handleDownloadExcel = async () => {
+    if (!canPublish) {
+      toast.error('Anda tidak memiliki hak akses untuk mengunduh rekap ini.');
+      return;
+    }
+    if (!selectedClass) {
+      toast.error('Pilih kelas terlebih dahulu.');
+      return;
+    }
+    if (safeStudents.length === 0) {
+      toast.info('Tidak ada data siswa untuk diunduh.');
+      return;
+    }
+
+    setIsExportingExcel(true);
+    const toastId = toast.loading('Menyiapkan file Excel backup midterm...');
+
+    try {
+      await exportJuniorHighMidtermExcel({
+        selectedClass,
+        students: safeStudents, // Always export all students in the class, unaffected by filter tab
+        academicYear,
+        semester,
+        midtermTerm,
+        masterGoalsMap: safeMasterGoalsMap,
+        studentDataMap: safeStudentDataMap,
+        publishedReportsMap: safePublishedReportsMap,
+        studentAttendanceMap: safeStudentAttendanceMap,
+        cutoffAttendanceMap,
+        reportSigningDate,
+        attendanceCutoffDate,
+        disabledSubjects,
+      });
+      toast.success('File Excel backup berhasil diunduh!', { id: toastId });
+    } catch (err: any) {
+      console.error('[ExportExcel Error]:', err);
+      toast.error(`Gagal mengunduh file Excel: ${err?.message || 'Terjadi kesalahan sistem'}`, { id: toastId });
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Date configurations validation error notice */}
@@ -609,16 +655,38 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
           />
 
           {canPublish && (
-            <button
-              onClick={handleBulkPublishReady}
-              disabled={bulkPublishing || !isDatesValid}
-              className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
-            >
-              <Upload size={14} />
-              {bulkPublishing
-                ? `Menerbitkan (${publishProgress?.current}/${publishProgress?.total})...`
-                : 'Publish Semua yang Siap'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleDownloadExcel}
+                disabled={isExportingExcel || bulkPublishing}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                title="Download file Excel backup lengkap untuk seluruh siswa di kelas ini"
+              >
+                {isExportingExcel ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>Mengunduh...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={14} />
+                    <span>Download Excel</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={handleBulkPublishReady}
+                disabled={bulkPublishing || !isDatesValid || isExportingExcel}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 hover:bg-emerald-700 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+              >
+                <Upload size={14} />
+                {bulkPublishing
+                  ? `Menerbitkan (${publishProgress?.current}/${publishProgress?.total})...`
+                  : 'Publish Semua yang Siap'}
+              </button>
+            </>
           )}
         </div>
       </div>
