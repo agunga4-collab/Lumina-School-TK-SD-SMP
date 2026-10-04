@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { 
   FileText, CheckCircle2, AlertCircle, Eye, Upload, 
-  ExternalLink, Download, RefreshCw, AlertTriangle, X, Check, Lock
+  ExternalLink, Download, RefreshCw, AlertTriangle, X, Check, Lock,
+  Users, Clock
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../context/AuthContext';
@@ -23,6 +24,10 @@ import {
   JUNIOR_HIGH_MIDTERM_ROOT_FOLDER_ID
 } from '../../../lib/juniorHighMidtermReportPdf';
 import { MidtermPdfTemplate } from './MidtermPdfTemplate';
+import { 
+  MidtermDetailLearningGoalsModal, 
+  calculateJhStudentGoalsProgress 
+} from './MidtermDetailLearningGoalsModal';
 import type { 
   MidtermMasterGoalDoc, 
   MidtermStudentDataDoc,
@@ -53,6 +58,7 @@ interface MidtermPublishPdfTabProps {
   signingDateRaw?: string;
   cutoffDateRaw?: string;
   disabledSubjects?: string[];
+  onSwitchTab?: (tab: 'GOALS' | 'COMMENTS' | 'REVIEW' | 'PUBLISH' | 'REKAP') => void;
 }
 
 export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
@@ -76,6 +82,7 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   signingDateRaw,
   cutoffDateRaw,
   disabledSubjects = [],
+  onSwitchTab,
 }) => {
   const safeStudents = Array.isArray(students) ? students.filter(Boolean) : [];
   const safeStudentDataMap = studentDataMap && typeof studentDataMap === 'object' ? studentDataMap : {};
@@ -91,6 +98,9 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
   const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
   const [previewSnapshot, setPreviewSnapshot] = React.useState<MidtermReportSnapshot | null>(null);
   const [isPreviewReady, setIsPreviewReady] = React.useState<boolean>(false);
+
+  // Modal Detail Learning Goals State (View-Only)
+  const [detailStudent, setDetailStudent] = React.useState<Student | null>(null);
 
   // Publishing in progress
   const [publishingStudentId, setPublishingStudentId] = React.useState<string | null>(null);
@@ -615,6 +625,19 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
       {/* Table of Students & Readiness Status */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* Table Header Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-900 text-white border-b border-slate-800 gap-2">
+          <div className="flex items-center gap-2">
+            <Users size={16} className="text-emerald-400" />
+            <span className="text-xs font-bold uppercase tracking-wider">
+              Daftar Siswa & Status Rapor ({filteredStudents.length})
+            </span>
+          </div>
+          <span className="text-[10.5px] font-medium text-slate-400">
+            Klik angka Learning Goals untuk memeriksa rincian pengisian
+          </span>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -646,6 +669,13 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
                   const gc = sData?.generalComment;
                   const hasFinalComment = Boolean(gc?.finalComment?.trim());
 
+                  const goalsProgress = calculateJhStudentGoalsProgress(
+                    student,
+                    safeMasterGoalsMap,
+                    sData,
+                    disabledSubjects
+                  );
+
                   return (
                     <tr key={student.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="p-3.5 text-center font-bold text-slate-400">{idx + 1}</td>
@@ -663,25 +693,26 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
 
                       {/* Learning Goals Column */}
                       <td className="p-3.5 text-center">
-                        {isPublished ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
-                            <CheckCircle2 size={12} /> Lengkap
-                          </span>
-                        ) : (Array.isArray(evalStatus?.missingGoalsSubjects) && evalStatus.missingGoalsSubjects.length > 0) ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-lg" title={`Belum ada goal di: ${evalStatus.missingGoalsSubjects.join(', ')}`}>
-                            <AlertCircle size={12} /> {evalStatus.missingGoalsSubjects.length} Mapel Kosong
-                          </span>
-                        ) : (evalStatus?.totalGoals ?? 0) === 0 ? (
-                          <span className="text-[10px] text-slate-400 font-medium">Belum ada goal</span>
-                        ) : evalStatus?.completedGoals === evalStatus?.totalGoals ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
-                            <CheckCircle2 size={12} /> {evalStatus?.completedGoals ?? 0}/{evalStatus?.totalGoals ?? 0} Remark
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg">
-                            {evalStatus?.completedGoals ?? 0}/{evalStatus?.totalGoals ?? 0} Terisi
-                          </span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setDetailStudent(student)}
+                          className="group inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10.5px] font-black transition-all cursor-pointer hover:scale-105"
+                          title="Klik untuk memeriksa rincian pengisian Learning Goals"
+                        >
+                          {goalsProgress.totalGoalsCount === 0 ? (
+                            <span className="px-2.5 py-1 bg-slate-100 text-slate-500 font-bold rounded-full">
+                              Belum ada goal
+                            </span>
+                          ) : goalsProgress.isComplete ? (
+                            <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-black rounded-full inline-flex items-center gap-1 group-hover:bg-emerald-100 shadow-2xs">
+                              <CheckCircle2 size={12} /> Lengkap ({goalsProgress.filledGoalsCount}/{goalsProgress.totalGoalsCount})
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold rounded-full inline-flex items-center gap-1 group-hover:bg-amber-100 shadow-2xs">
+                              <Clock size={12} /> ({goalsProgress.filledGoalsCount}/{goalsProgress.totalGoalsCount} Terisi)
+                            </span>
+                          )}
+                        </button>
                       </td>
 
                       {/* General Comments Column */}
@@ -860,6 +891,22 @@ export const MidtermPublishPdfTab: React.FC<MidtermPublishPdfTabProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Detail Learning Goals (View-Only) */}
+      {detailStudent && (
+        <MidtermDetailLearningGoalsModal
+          student={detailStudent}
+          selectedClass={selectedClass}
+          academicYear={academicYear}
+          semester={semester}
+          midtermTerm={midtermTerm}
+          masterGoalsMap={safeMasterGoalsMap}
+          studentDataDoc={safeStudentDataMap[detailStudent.id]}
+          disabledSubjects={disabledSubjects}
+          onClose={() => setDetailStudent(null)}
+          onSwitchTab={onSwitchTab}
+        />
       )}
 
       {/* Hidden container for off-screen html2canvas PDF rendering */}

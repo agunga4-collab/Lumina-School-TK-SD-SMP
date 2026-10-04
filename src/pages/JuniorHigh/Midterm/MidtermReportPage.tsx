@@ -1039,6 +1039,7 @@ function MidtermReportPageContent() {
               signingDateRaw={signingDateRaw}
               cutoffDateRaw={cutoffDateRaw}
               disabledSubjects={disabledSubjects}
+              onSwitchTab={handleTabSelect}
             />
           )}
 
