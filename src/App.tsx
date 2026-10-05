@@ -128,6 +128,7 @@ import MonthlyReportPdfPage from './pages/JuniorHigh/MonthlyReportPdfPage';
 import MonthlyReportPdfLinkPage from './pages/JuniorHigh/MonthlyReportPdfLinkPage';
 import MidtermReportPage from './pages/JuniorHigh/Midterm/MidtermReportPage';
 import MidtermSnReportPage from './pages/JuniorHigh/MidtermSN/MidtermSnReportPage';
+import OtherReportPage from './pages/JuniorHigh/OtherReportPage';
 import ElementaryMidtermReportPage from './pages/Elementary/Midterm/ElementaryMidtermReportPage';
 import ElementaryMidtermSnReportPage from './pages/Elementary/MidtermSN/ElementaryMidtermSnReportPage';
 import { IncidentReportPage } from './pages/JuniorHigh/IncidentReportPage';
@@ -586,6 +587,11 @@ export default function App() {
             <Route path="midterm-sn" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MidtermSnReportPage />
+              </RoleGuard>
+            } />
+            <Route path="other-report" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
+                <OtherReportPage />
               </RoleGuard>
             } />
             <Route path="incident-report" element={

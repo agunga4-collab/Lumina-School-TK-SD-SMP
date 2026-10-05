@@ -17,7 +17,7 @@ import {
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs, doc, updateDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, setDoc, serverTimestamp, onSnapshot, increment } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { toast } from 'sonner';
 
@@ -46,8 +46,10 @@ export default function StudentReports() {
   const [elemMidtermReports, setElemMidtermReports] = React.useState<any[]>([]);
   const [jhMidtermReports, setJhMidtermReports] = React.useState<any[]>([]);
   const [jhManualLinks, setJhManualLinks] = React.useState<any[]>([]);
+  const [jhOtherReports, setJhOtherReports] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [selectedReportForViewer, setSelectedReportForViewer] = React.useState<any | null>(null);
+  const [selectedOtherReport, setSelectedOtherReport] = React.useState<any | null>(null);
   
   const [views, setViews] = React.useState<any[]>([]);
   const [activeReportForPopup, setActiveReportForPopup] = React.useState<any | null>(null);
@@ -326,10 +328,33 @@ export default function StudentReports() {
               console.error("onSnapshot error in monthlyReportViews:", err);
             });
 
+            // 4. Fetch Junior High Other Report links (published only)
+            const qOtherReports = query(
+              collection(db, 'jh_other_report_links'),
+              where('studentId', '==', primaryId),
+              where('status', '==', 'PUBLISHED')
+            );
+            const unsubscribeOther = onSnapshot(qOtherReports, (snapshot) => {
+              const otherList = snapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
+              } as any));
+              // Urutkan dari yang terbaru (publishedAt or createdAt or updatedAt descending)
+              otherList.sort((a, b) => {
+                const timeA = a.publishedAt?.toMillis ? a.publishedAt.toMillis() : (typeof a.publishedAt === 'number' ? a.publishedAt : (a.createdAt?.toMillis ? a.createdAt.toMillis() : (typeof a.createdAt === 'number' ? a.createdAt : 0)));
+                const timeB = b.publishedAt?.toMillis ? b.publishedAt.toMillis() : (typeof b.publishedAt === 'number' ? b.publishedAt : (b.createdAt?.toMillis ? b.createdAt.toMillis() : (typeof b.createdAt === 'number' ? b.createdAt : 0)));
+                return timeB - timeA;
+              });
+              setJhOtherReports(otherList);
+            }, (err) => {
+              console.error("onSnapshot error in jh_other_report_links:", err);
+            });
+
             const originalUnsubscribeJh = unsubscribeJh;
             unsubscribeJh = () => {
               if (originalUnsubscribeJh) originalUnsubscribeJh();
               if (unsubscribeViews) unsubscribeViews();
+              if (unsubscribeOther) unsubscribeOther();
             };
           }
         }
@@ -436,6 +461,44 @@ export default function StudentReports() {
         return r;
       })
     );
+  };
+
+  const handleOpenOtherReport = (report: any) => {
+    // 1. Immediately set report for viewer modal so UI renders instantly without waiting
+    setSelectedOtherReport(report);
+
+    // 2. Optimistically update local state so badge turns to 'Sudah Dilihat' immediately
+    setJhOtherReports(prev => prev.map(r => {
+      if (r.id === report.id) {
+        return {
+          ...r,
+          isOpened: true,
+          openCount: (r.openCount || 0) + 1,
+          lastOpenedAt: Date.now()
+        };
+      }
+      return r;
+    }));
+
+    // 3. Catat tracking secara non-blocking dan atomik (tanpa await sebelum PDF tampil)
+    try {
+      const docRef = doc(db, 'jh_other_report_links', report.id);
+      const now = Date.now();
+      const updateData: any = {
+        isOpened: true,
+        lastOpenedAt: now,
+        openCount: increment(1),
+        openedByEmail: currentUser?.email || ''
+      };
+      if (!report.isOpened && !report.firstOpenedAt) {
+        updateData.firstOpenedAt = now;
+      }
+      updateDoc(docRef, updateData).catch(err => {
+        console.error("Failed to update tracking for other report:", err);
+      });
+    } catch (e) {
+      console.error("Error dispatching tracking update:", e);
+    }
   };
 
   const handleSelectRole = async (role: 'student' | 'parent') => {
@@ -1032,6 +1095,89 @@ export default function StudentReports() {
               </div>
             )}
           </div>
+
+          {/* SECTION: RAPOR LAINNYA */}
+          {jhOtherReports.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+                <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+                  <FileText size={16} className="text-blue-600" />
+                  RAPOR LAINNYA
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {jhOtherReports.map((report, idx) => {
+                  const isOpened = !!report.isOpened;
+
+                  return (
+                    <motion.div
+                      key={report.id}
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100/50 hover:border-blue-100 transition-all flex flex-col justify-between"
+                    >
+                      <div className="space-y-6">
+                        <div className="flex justify-between items-start">
+                          <div className="w-14 h-14 bg-indigo-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
+                            <FileText className="text-indigo-600 group-hover:text-white" size={28} />
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {isOpened ? (
+                              <div className="px-3.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
+                                <Eye size={11} /> SUDAH DILIHAT
+                              </div>
+                            ) : (
+                              <div className="px-3.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl text-[9px] font-black uppercase tracking-widest">
+                                DITERBITKAN
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
+                            {report.judul || 'Rapor Lainnya'}
+                          </h3>
+                          {report.keterangan && (
+                            <p className="text-xs text-gray-500 font-medium line-clamp-2">
+                              {report.keterangan}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
+                            <span className="flex items-center gap-1">
+                              <Calendar size={12} /> Sem {report.semester || '1'}
+                            </span>
+                            <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                            <span>{report.academicYear || activeYear}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 mt-6">
+                        {report.driveFileUrl || report.driveFileId ? (
+                          <button
+                            onClick={() => handleOpenOtherReport(report)}
+                            className="w-full flex items-center justify-center gap-2 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-blue-100 text-center cursor-pointer"
+                          >
+                            <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor (Drive)
+                          </button>
+                        ) : (
+                          <button
+                            disabled
+                            className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-400 border border-gray-200 rounded-2xl font-black uppercase text-[10px] tracking-widest cursor-not-allowed text-center"
+                          >
+                            Tautan Tidak Tersedia
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1039,6 +1185,14 @@ export default function StudentReports() {
         <PdfViewerModal
           report={selectedReportForViewer}
           onClose={() => setSelectedReportForViewer(null)}
+          currentUser={currentUser}
+        />
+      )}
+
+      {selectedOtherReport && (
+        <OtherReportViewerModal
+          report={selectedOtherReport}
+          onClose={() => setSelectedOtherReport(null)}
           currentUser={currentUser}
         />
       )}
@@ -1420,6 +1574,148 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
             <button
               onClick={onClose}
               className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black rounded-xl uppercase tracking-wider cursor-pointer"
+            >
+              Kembali
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
+// SYSTEM-INTEGRATED SAFARI-SAFE OTHER REPORT PDF VIEWER
+// ----------------------------------------------------------------------
+export function OtherReportViewerModal({ 
+  report, 
+  onClose, 
+  currentUser 
+}: { 
+  report: any; 
+  onClose: () => void; 
+  currentUser: AppUser;
+}) {
+  const [showWarning, setShowWarning] = React.useState<boolean>(false);
+  const [isWarningDismissed, setIsWarningDismissed] = React.useState<boolean>(false);
+
+  const driveFileId = report.driveFileId || (() => {
+    const url = report.driveFileUrl || report.driveUrl || '';
+    const m = url.match(/\/file\/d\/([a-zA-Z0-9-_]+)/);
+    return m ? m[1] : '';
+  })();
+
+  const driveFileUrl = report.driveFileUrl || report.driveUrl || (driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : '');
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => setShowWarning(true), 4500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-white w-full max-w-5xl rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[90vh] animate-in zoom-in-95 duration-200">
+        
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-900 uppercase tracking-wide">
+                {report.judul || 'Rapor Siswa'}
+              </h3>
+              <p className="text-[11px] text-slate-500 font-medium">
+                {report.studentNameSnapshot || currentUser?.displayName || 'Siswa'} • {report.academicYear} (Semester {report.semester})
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black rounded-xl cursor-pointer transition-colors uppercase tracking-wider"
+          >
+            Kembali
+          </button>
+        </div>
+
+        {/* Viewer Content */}
+        <div className="flex-1 bg-slate-100 p-4 relative flex flex-col items-center justify-center min-h-[50vh]">
+          {driveFileId ? (
+            <div className="w-full h-full relative flex flex-col">
+              {showWarning && !isWarningDismissed && (
+                <div className="mb-3 px-4 py-2 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-3 text-xs text-amber-900 shadow-sm relative">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm shrink-0">⚠️</span>
+                    <span className="font-semibold text-slate-800 truncate">
+                      Dokumen tidak muncul? Silakan buka lewat tombol <strong>"Buka di Tab Baru"</strong>.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setIsWarningDismissed(true)}
+                    className="p-1 hover:bg-amber-100 rounded-lg text-amber-800 transition-colors cursor-pointer shrink-0"
+                    title="Tutup"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+              <iframe
+                src={`https://drive.google.com/file/d/${driveFileId}/preview`}
+                className="w-full flex-1 rounded-2xl border border-slate-200 shadow-xs"
+                title="Google Drive PDF Preview"
+                allow="autoplay"
+              />
+            </div>
+          ) : (
+            <div className="text-center p-8 max-w-md space-y-4">
+              <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+                ⚠️
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-black text-slate-800">Pratinjau Gagal Dimuat</h4>
+                <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+                  Tautan dokumen tidak memiliki Google Drive File ID yang valid.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+            Lazuardi Junior High Student Portal
+          </div>
+          <div className="flex items-center gap-2">
+            {driveFileUrl && (
+              <a
+                href={driveFileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
+              >
+                <ExternalLink size={14} />
+                <span>Buka di Tab Baru</span>
+              </a>
+            )}
+
+            {driveFileUrl && (
+              <a
+                href={driveFileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-xs font-black uppercase tracking-wider transition-colors"
+              >
+                <Download size={14} />
+                <span>Unduh</span>
+              </a>
+            )}
+
+            <button
+              onClick={onClose}
+              className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition-colors cursor-pointer"
             >
               Kembali
             </button>

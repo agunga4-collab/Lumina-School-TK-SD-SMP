@@ -865,6 +865,7 @@ export function Layout() {
                       
                       <NavItem to="/junior-high/midterm" icon={<FileCheck size={18} />} label="Midterm Report" />
                       <NavItem to="/junior-high/midterm-sn" icon={<Shield size={18} />} label="Midterm Report SN" />
+                      <NavItem to="/junior-high/other-report" icon={<FileText size={18} />} label="Other Report" />
                       <NavItem to="/junior-high/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
 
                       {/* Daily Notes Dropdown */}
