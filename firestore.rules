@@ -2021,8 +2021,8 @@ service cloud.firestore {
     }
 
     match /jh_other_report_links/{linkId} {
-      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin());
-      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow get, list: if isActive() && (isJuniorHighStaff() || isJuniorHighStaffAuthorized() || isAdmin());
+      allow write: if isActive() && (isJuniorHighStaff() || isJuniorHighStaffAuthorized() || isAdmin());
       allow get, list: if isActive() && isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED';
       allow update: if isActive() && (
         isOwnStudentData(resource.data.studentId) &&
