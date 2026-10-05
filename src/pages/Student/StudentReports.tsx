@@ -233,6 +233,41 @@ export default function StudentReports() {
             }
 
             setElemMidtermReports(listElemMidterm.sort((a, b) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
+
+            // Fetch Elementary Other Report links (published only)
+            const elemPrimaryId = (student?.id || student?.luminaId || (currentUser as any)?.studentId || currentUser?.luminaId || currentUser?.uid || '').trim();
+            const elemCandidateList = Array.from(candidateIds).filter(Boolean);
+            if (elemPrimaryId && !elemCandidateList.includes(elemPrimaryId)) elemCandidateList.push(elemPrimaryId);
+
+            const targetElemId = elemPrimaryId || elemCandidateList[0];
+            if (targetElemId) {
+              const qElemOther = query(
+                collection(db, 'elem_other_report_links'),
+                where('studentId', '==', targetElemId),
+                where('status', '==', 'PUBLISHED')
+              );
+              const unsubscribeElemOther = onSnapshot(qElemOther, (snapshot) => {
+                const otherList = snapshot.docs.map(docSnap => ({
+                  id: docSnap.id,
+                  _collection: 'elem_other_report_links',
+                  ...docSnap.data()
+                } as any));
+                otherList.sort((a, b) => {
+                  const timeA = a.publishedAt?.toMillis ? a.publishedAt.toMillis() : (typeof a.publishedAt === 'number' ? a.publishedAt : (a.createdAt?.toMillis ? a.createdAt.toMillis() : (typeof a.createdAt === 'number' ? a.createdAt : 0)));
+                  const timeB = b.publishedAt?.toMillis ? b.publishedAt.toMillis() : (typeof b.publishedAt === 'number' ? b.publishedAt : (b.createdAt?.toMillis ? b.createdAt.toMillis() : (typeof b.createdAt === 'number' ? b.createdAt : 0)));
+                  return timeB - timeA;
+                });
+                setJhOtherReports(otherList);
+              }, (err) => {
+                console.error("onSnapshot error in elem_other_report_links:", err);
+              });
+
+              const prevUnsub = unsubscribeJh;
+              unsubscribeJh = () => {
+                if (prevUnsub) prevUnsub();
+                if (unsubscribeElemOther) unsubscribeElemOther();
+              };
+            }
           }
 
           // Fetch manual junior high PDF links if unit is JUNIOR_HIGH
@@ -482,7 +517,8 @@ export default function StudentReports() {
 
     // 3. Catat tracking secara non-blocking dan atomik (tanpa await sebelum PDF tampil)
     try {
-      const docRef = doc(db, 'jh_other_report_links', report.id);
+      const targetCol = report._collection || (report.classId && String(report.classId).startsWith('ELEMENTARY') ? 'elem_other_report_links' : 'jh_other_report_links');
+      const docRef = doc(db, targetCol, report.id);
       const now = Date.now();
       const updateData: any = {
         isOpened: true,

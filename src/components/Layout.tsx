@@ -797,6 +797,7 @@ export function Layout() {
                   <NavItem to="/elementary/ldss" icon={<ClipboardCheck size={18} />} label="LDSS" />
                   <NavItem to="/elementary/midterm" icon={<FileText size={18} />} label="Midterm Report" />
                   <NavItem to="/elementary/midterm-sn" icon={<Shield size={18} />} label="Midterm Report SN" />
+                  <NavItem to="/elementary/other-report" icon={<FileText size={18} />} label="Other Report" />
                 </div>
               )}
 
