@@ -1093,8 +1093,73 @@ export async function getReportCards(filters?: {
   classId?: string,
   academicYear?: string,
   semester?: string,
-  status?: string
+  status?: string,
+  studentId?: string
 }): Promise<ReportCard[]> {
+  const isStudentSearch = !!(filters?.studentId);
+  if (isStudentSearch) {
+    try {
+      const allowedReportIds = new Set<string>();
+      
+      // 1. Get IDs from parentReportViews
+      const userEmail = auth.currentUser?.email;
+      if (userEmail) {
+        const views = await getParentReportViews(userEmail).catch(() => []);
+        for (const v of views) {
+          if (v.reportId) allowedReportIds.add(v.reportId);
+          if (Array.isArray(v.reportIds)) {
+            v.reportIds.forEach((id: string) => id && allowedReportIds.add(id));
+          }
+          if (Array.isArray((v as any).items)) {
+            (v as any).items.forEach((item: any) => {
+              if (item && item.reportId) allowedReportIds.add(item.reportId);
+            });
+          }
+        }
+      }
+      
+      // 2. Scan notifications
+      const userId = auth.currentUser?.email || auth.currentUser?.uid;
+      if (userId) {
+        const notifications = await getNotifications(userId).catch(() => []);
+        if (notifications) {
+          for (const n of notifications) {
+            if (n.link) {
+              const match = n.link.match(/\/academic\/rapor\/([a-zA-Z0-9_\-]+)/);
+              if (match && match[1]) {
+                allowedReportIds.add(match[1]);
+              }
+            }
+          }
+        }
+      }
+      
+      if (allowedReportIds.size > 0) {
+        const docSnaps = await Promise.all(
+          Array.from(allowedReportIds).map(id => getDoc(doc(db, 'reportCards', id)).catch(() => null))
+        );
+        const reports = docSnaps
+          .filter(s => s && s.exists())
+          .map(s => ({ id: s!.id, ...s!.data() } as ReportCard));
+          
+        return reports.filter(rc => {
+          if (!rc) return false;
+          if (rc.status !== 'PUBLISHED') return false;
+          if (filters) {
+            if (filters.unitId && rc.unitId !== filters.unitId) return false;
+            if (filters.classId && rc.classId !== filters.classId) return false;
+            if (filters.academicYear && rc.academicYear !== filters.academicYear) return false;
+            if (filters.semester && rc.semester !== filters.semester) return false;
+          }
+          return true;
+        });
+      }
+    } catch (fallbackErr) {
+      console.warn("[getReportCards] Student direct getDoc lookup error:", fallbackErr);
+    }
+    return [];
+  }
+
   try {
     let q = query(collection(db, 'reportCards'));
     if (filters) {

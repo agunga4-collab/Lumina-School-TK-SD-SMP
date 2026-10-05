@@ -140,10 +140,12 @@ export default function StudentReports() {
         } else {
           let studentReports: any[] = [];
           try {
+            const studentIdVal = (student?.nis || student?.luminaId || (currentUser as any)?.studentId || currentUser?.luminaId || '').trim();
             const allReports = await getReportCards({
                unitId: effectiveUnit as any,
                academicYear: activeYear || '2025/2026',
-               status: 'PUBLISHED'
+               status: 'PUBLISHED',
+               studentId: studentIdVal || undefined
             });
             
             // Filter reports where student is included
@@ -240,11 +242,20 @@ export default function StudentReports() {
             setElemMidtermReports(listElemMidterm.sort((a, b) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
 
             // Fetch Elementary Other Report links (published only)
-            const elemPrimaryId = (student?.id || student?.luminaId || (currentUser as any)?.studentId || currentUser?.luminaId || currentUser?.uid || '').trim();
+            const elemPrimaryId = (
+              student?.nis || 
+              student?.luminaId || 
+              (currentUser as any)?.studentId || 
+              currentUser?.luminaId || 
+              student?.id || 
+              currentUser?.uid || 
+              ''
+            ).trim();
 
             if (elemPrimaryId) {
               const loadElemOtherReports = async () => {
                 const matchedReports: any[] = [];
+                console.log(`[StudentReports] Initiating query on collection 'elem_other_report_links' with filters: studentId == '${elemPrimaryId}' AND status == 'PUBLISHED'`);
                 try {
                   const qElemOther = query(
                     collection(db, 'elem_other_report_links'),
@@ -252,16 +263,19 @@ export default function StudentReports() {
                     where('status', '==', 'PUBLISHED')
                   );
                   const snap = await getDocs(qElemOther);
+                  console.log(`[StudentReports] Query on 'elem_other_report_links' succeeded. Returned ${snap.docs.length} documents.`);
+                  
                   snap.docs.forEach(docSnap => {
                     const data = docSnap.data();
+                    console.log(`[StudentReports] Found other report document ID: '${docSnap.id}', data:`, data);
                     matchedReports.push({
                       id: docSnap.id,
                       _collection: 'elem_other_report_links',
                       ...data
                     });
                   });
-                } catch (err) {
-                  console.warn(`[StudentReports] Elementary Other Report fetch failed for student ${elemPrimaryId}:`, err);
+                } catch (err: any) {
+                  console.error(`[StudentReports] Query on 'elem_other_report_links' failed! Collection: 'elem_other_report_links', Filters: studentId == '${elemPrimaryId}' AND status == 'PUBLISHED'. Error Code/Message:`, err);
                 }
                 
                 matchedReports.sort((a, b) => {
