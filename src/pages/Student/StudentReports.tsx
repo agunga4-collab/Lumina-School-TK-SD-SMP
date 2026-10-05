@@ -245,32 +245,41 @@ export default function StudentReports() {
             if (elemPrimaryId && !elemCandidateList.includes(elemPrimaryId)) elemCandidateList.push(elemPrimaryId);
 
             if (elemCandidateList.length > 0) {
-              const qElemOther = query(
-                collection(db, 'elem_other_report_links'),
-                where('studentId', 'in', elemCandidateList),
-                where('status', '==', 'PUBLISHED')
-              );
-              const unsubscribeElemOther = onSnapshot(qElemOther, (snapshot) => {
-                const otherList = snapshot.docs.map(docSnap => ({
-                  id: docSnap.id,
-                  _collection: 'elem_other_report_links',
-                  ...docSnap.data()
-                } as any));
-                otherList.sort((a, b) => {
+              const loadElemOtherReports = async () => {
+                const matchedReports: any[] = [];
+                for (const stId of elemCandidateList) {
+                  try {
+                    const qElemOther = query(
+                      collection(db, 'elem_other_report_links'),
+                      where('studentId', '==', stId),
+                      where('status', '==', 'PUBLISHED')
+                    );
+                    const snap = await getDocs(qElemOther);
+                    snap.docs.forEach(docSnap => {
+                      const data = docSnap.data();
+                      if (!matchedReports.some(r => r.id === docSnap.id)) {
+                        matchedReports.push({
+                          id: docSnap.id,
+                          _collection: 'elem_other_report_links',
+                          ...data
+                        });
+                      }
+                    });
+                  } catch (err) {
+                    console.warn(`[StudentReports] Sequential fetch skipped for candidate ${stId}:`, err);
+                  }
+                }
+                
+                matchedReports.sort((a, b) => {
                   const timeA = a.publishedAt?.toMillis ? a.publishedAt.toMillis() : (typeof a.publishedAt === 'number' ? a.publishedAt : (a.createdAt?.toMillis ? a.createdAt.toMillis() : (typeof a.createdAt === 'number' ? a.createdAt : 0)));
                   const timeB = b.publishedAt?.toMillis ? b.publishedAt.toMillis() : (typeof b.publishedAt === 'number' ? b.publishedAt : (b.createdAt?.toMillis ? b.createdAt.toMillis() : (typeof b.createdAt === 'number' ? b.createdAt : 0)));
                   return timeB - timeA;
                 });
-                setJhOtherReports(otherList);
-              }, (err) => {
-                console.error("onSnapshot error in elem_other_report_links:", err);
-              });
-
-              const prevUnsub = unsubscribeJh;
-              unsubscribeJh = () => {
-                if (prevUnsub) prevUnsub();
-                if (unsubscribeElemOther) unsubscribeElemOther();
+                
+                setJhOtherReports(matchedReports);
               };
+              
+              loadElemOtherReports();
             }
           }
 
