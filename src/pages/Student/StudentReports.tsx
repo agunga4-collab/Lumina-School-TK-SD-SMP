@@ -17,7 +17,7 @@ import {
 } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
-import { collection, query, where, getDocs, doc, updateDoc, setDoc, serverTimestamp, onSnapshot, increment } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, setDoc, serverTimestamp, onSnapshot, increment, addDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { toast } from 'sonner';
 
@@ -284,6 +284,7 @@ export default function StudentReports() {
                   return timeB - timeA;
                 });
                 
+                console.log(`[StudentReports] After sorting & mapping: matchedReports.length=${matchedReports.length}, setting jhOtherReports state.`);
                 setJhOtherReports(matchedReports);
               };
               
@@ -927,6 +928,8 @@ export default function StudentReports() {
     );
   }
 
+  console.log(`[StudentReports] Render state checklist: reports.length=${reports.length}, jhManualLinks.length=${jhManualLinks.length}, jhMidtermReports.length=${jhMidtermReports.length}, jhOtherReports.length=${jhOtherReports.length}`);
+
   return (
     <div className="max-w-5xl mx-auto space-y-12 pb-20 animate-in fade-in duration-700">
       <div className="space-y-4">
@@ -941,7 +944,7 @@ export default function StudentReports() {
         </p>
       </div>
 
-      {reports.length === 0 && jhManualLinks.length === 0 && jhMidtermReports.length === 0 ? (
+      {reports.length === 0 && jhManualLinks.length === 0 && jhMidtermReports.length === 0 && jhOtherReports.length === 0 ? (
         <div className="bg-white border border-gray-100 p-20 rounded-[3rem] text-center space-y-4 shadow-sm">
           <div className="w-20 h-20 bg-blue-50/50 rounded-[2rem] flex items-center justify-center mx-auto">
             <FileText className="text-blue-300" size={40} />
