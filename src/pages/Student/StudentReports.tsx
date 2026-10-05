@@ -863,6 +863,76 @@ export default function StudentReports() {
           )}
         </div>
 
+        {/* SECTION: RAPOR LAINNYA */}
+        {jhOtherReports.length > 0 && (
+          <div className="space-y-4 pt-4">
+            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
+                <FileText size={16} className="text-blue-600" />
+                RAPOR LAINNYA
+              </h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {jhOtherReports.map((report: any, idx: number) => {
+                const isOpened = !!report.isOpened;
+                return (
+                  <motion.div
+                    key={report.id}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: idx * 0.05 }}
+                    className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl transition-all flex flex-col justify-between"
+                  >
+                    <div className="space-y-6">
+                      <div className="flex justify-between items-start">
+                        <div className="w-14 h-14 bg-indigo-50 rounded-[1.5rem] flex items-center justify-center">
+                          <FileText className="text-indigo-600" size={28} />
+                        </div>
+                        {isOpened ? (
+                          <div className="px-3.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
+                            <Eye size={11} /> SUDAH DILIHAT
+                          </div>
+                        ) : (
+                          <div className="px-3.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl text-[9px] font-black uppercase tracking-widest">
+                            DITERBITKAN
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 leading-tight">
+                          {report.judul || 'Rapor Lainnya'}
+                        </h3>
+                        {report.keterangan && (
+                          <p className="text-xs text-gray-500 font-medium line-clamp-2">{report.keterangan}</p>
+                        )}
+                        <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
+                          <span className="flex items-center gap-1"><Calendar size={12} /> Sem {report.semester || 1}</span>
+                          <span className="w-1 h-1 bg-gray-300 rounded-full" />
+                          <span>{report.academicYear || activeYear}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-3 mt-6">
+                      {(report.driveFileUrl || report.driveFileId) ? (
+                        <button
+                          onClick={() => handleOpenOtherReport(report)}
+                          className="w-full flex items-center justify-center gap-2 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all cursor-pointer"
+                        >
+                          <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor Drive
+                        </button>
+                      ) : (
+                        <button disabled className="w-full py-4 bg-gray-100 text-gray-400 border border-gray-200 rounded-2xl font-black uppercase text-[10px] tracking-widest cursor-not-allowed">
+                          Tautan Tidak Tersedia
+                        </button>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* SECTION: ACADEMIC REPORT CARDS */}
         {reports.length > 0 && (
           <div className="space-y-4 pt-4">
@@ -904,8 +974,8 @@ export default function StudentReports() {
                   </div>
 
                   <div className="space-y-3">
-                    <Link 
-                      to={`/academic/rapor/${report.id}?view=student`} 
+                    <Link
+                      to={`/academic/rapor/${report.id}?view=student`}
                       className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-900 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-600 hover:text-white transition-all transform active:scale-95"
                     >
                       <Eye size={14} /> Lihat Detail
@@ -924,10 +994,17 @@ export default function StudentReports() {
             currentUser={currentUser}
           />
         )}
+
+        {selectedOtherReport && (
+          <OtherReportViewerModal
+            report={selectedOtherReport}
+            onClose={() => setSelectedOtherReport(null)}
+            currentUser={currentUser}
+          />
+        )}
       </div>
     );
   }
-
   console.log(`[StudentReports] Render state checklist: reports.length=${reports.length}, jhManualLinks.length=${jhManualLinks.length}, jhMidtermReports.length=${jhMidtermReports.length}, jhOtherReports.length=${jhOtherReports.length}`);
 
   return (
@@ -1746,7 +1823,7 @@ export function OtherReportViewerModal({
         {/* Footer Actions */}
         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
           <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-            Lazuardi Junior High Student Portal
+            Lazuardi {report.classId?.startsWith('ELEMENTARY') ? 'Elementary' : 'Junior High'} Student Portal
           </div>
           <div className="flex items-center gap-2">
             {driveFileUrl && (
