@@ -94,7 +94,6 @@ export default function StudentReports() {
 
         const candidateIds = new Set<string>();
         if (student?.id) candidateIds.add(String(student.id).trim());
-        if (student?.nisn) candidateIds.add(String(student.nisn).trim());
         if (student?.luminaId) candidateIds.add(String(student.luminaId).trim());
         if ((student as any)?.docId) candidateIds.add(String((student as any).docId).trim());
         if (currentUser?.luminaId) candidateIds.add(String(currentUser.luminaId).trim());
@@ -242,33 +241,27 @@ export default function StudentReports() {
 
             // Fetch Elementary Other Report links (published only)
             const elemPrimaryId = (student?.id || student?.luminaId || (currentUser as any)?.studentId || currentUser?.luminaId || currentUser?.uid || '').trim();
-            const elemCandidateList = Array.from(candidateIds).filter(Boolean);
-            if (elemPrimaryId && !elemCandidateList.includes(elemPrimaryId)) elemCandidateList.push(elemPrimaryId);
 
-            if (elemCandidateList.length > 0) {
+            if (elemPrimaryId) {
               const loadElemOtherReports = async () => {
                 const matchedReports: any[] = [];
-                for (const stId of elemCandidateList) {
-                  try {
-                    const qElemOther = query(
-                      collection(db, 'elem_other_report_links'),
-                      where('studentId', '==', stId),
-                      where('status', '==', 'PUBLISHED')
-                    );
-                    const snap = await getDocs(qElemOther);
-                    snap.docs.forEach(docSnap => {
-                      const data = docSnap.data();
-                      if (!matchedReports.some(r => r.id === docSnap.id)) {
-                        matchedReports.push({
-                          id: docSnap.id,
-                          _collection: 'elem_other_report_links',
-                          ...data
-                        });
-                      }
+                try {
+                  const qElemOther = query(
+                    collection(db, 'elem_other_report_links'),
+                    where('studentId', '==', elemPrimaryId),
+                    where('status', '==', 'PUBLISHED')
+                  );
+                  const snap = await getDocs(qElemOther);
+                  snap.docs.forEach(docSnap => {
+                    const data = docSnap.data();
+                    matchedReports.push({
+                      id: docSnap.id,
+                      _collection: 'elem_other_report_links',
+                      ...data
                     });
-                  } catch (err) {
-                    console.warn(`[StudentReports] Sequential fetch skipped for candidate ${stId}:`, err);
-                  }
+                  });
+                } catch (err) {
+                  console.warn(`[StudentReports] Elementary Other Report fetch failed for student ${elemPrimaryId}:`, err);
                 }
                 
                 matchedReports.sort((a, b) => {

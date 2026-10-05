@@ -1114,7 +1114,7 @@ export async function getReportCards(filters?: {
       err.code === 'permission-denied'
     );
     if (isPermissionError) {
-      console.warn("[getReportCards] Query list permission denied, falling back to direct getDoc of specifically allowed/notified reports.");
+      console.warn(`[getReportCards] Query list permission denied on collection 'reportCards' with filters ${JSON.stringify(filters || {})}. Fallback to direct getDoc. Error: ${err.code || err.message}`);
       try {
         const allowedReportIds = new Set<string>();
         

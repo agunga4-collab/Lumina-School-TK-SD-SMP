@@ -112,7 +112,16 @@ function isStudentIdMatch(candidateId: any, student: Student): boolean {
 }
 
 function findStudentMatch(student: Student, savedDocs: any[]): any | undefined {
+  const studentIdVal = (student.nis || student.luminaId || (student as any).studentId || student.id || '').trim().toLowerCase();
   return savedDocs.find(d => {
+    if (d.studentId) {
+      const dIdStr = String(d.studentId).trim().toLowerCase();
+      if (dIdStr === studentIdVal) return true;
+    }
+    if (d.nis) {
+      const dNisStr = String(d.nis).trim().toLowerCase();
+      if (dNisStr === studentIdVal) return true;
+    }
     if (isStudentIdMatch(d.studentId, student)) return true;
     if (d.nis && isStudentIdMatch(d.nis, student)) return true;
     return false;
@@ -252,25 +261,28 @@ export default function ElementaryOtherReportPage() {
   ): OtherReportMapping[] => {
     const classList = classesListRef.current.length > 0 ? classesListRef.current : classesList;
     const selectedClassObj = classList.find(c => c.id === selectedClassId);
-    return (studentsRoster || []).map(student => ({
-      id: student.id,
-      studentId: student.id,
-      studentNameSnapshot: student.name,
-      nisSnapshot: student.id || student.nis || '',
-      nisnSnapshot: student.nisn || '',
-      classId: selectedClassId,
-      classNameSnapshot: selectedClassObj?.name || '',
-      academicYear: selectedYear,
-      semester: selectedSemester,
-      batchId: batchId,
-      judul: batchJudul,
-      keterangan: batchKeterangan,
-      fileName: '',
-      fileId: '',
-      driveUrl: '',
-      status: 'Belum ada PDF' as const,
-      matchedBy: 'NONE' as const
-    }));
+    return (studentsRoster || []).map(student => {
+      const studentIdVal = (student.nis || student.luminaId || (student as any).studentId || student.id || '').trim();
+      return {
+        id: student.id,
+        studentId: studentIdVal,
+        studentNameSnapshot: student.name,
+        nisSnapshot: studentIdVal,
+        nisnSnapshot: student.nisn || '',
+        classId: selectedClassId,
+        classNameSnapshot: selectedClassObj?.name || '',
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        batchId: batchId,
+        judul: batchJudul,
+        keterangan: batchKeterangan,
+        fileName: '',
+        fileId: '',
+        driveUrl: '',
+        status: 'Belum ada PDF' as const,
+        matchedBy: 'NONE' as const
+      };
+    });
   }, [classesList, selectedClassId, selectedYear, selectedSemester]);
 
   // Load batch items from Firestore using batchId as primary key
@@ -319,14 +331,15 @@ export default function ElementaryOtherReportPage() {
       // Merge results with class roster based on studentId
       const newMappings: OtherReportMapping[] = (activeRoster || []).map(student => {
         const saved = findStudentMatch(student, savedDocs);
+        const studentIdVal = (student.nis || student.luminaId || (student as any).studentId || student.id || '').trim();
 
         if (saved) {
           const fileId = saved.driveFileId || saved.fileId || '';
           return {
             id: student.id,
-            studentId: student.id,
+            studentId: studentIdVal,
             studentNameSnapshot: saved.studentNameSnapshot || student.name,
-            nisSnapshot: student.id || student.nis || '',
+            nisSnapshot: studentIdVal,
             nisnSnapshot: saved.nisn || student.nisn || '',
             classId: selectedClassId,
             classNameSnapshot: selectedClassObj?.name || saved.classNameSnapshot || '',
@@ -350,9 +363,9 @@ export default function ElementaryOtherReportPage() {
         } else {
           return {
             id: student.id,
-            studentId: student.id,
+            studentId: studentIdVal,
             studentNameSnapshot: student.name,
-            nisSnapshot: student.id || student.nis || '',
+            nisSnapshot: studentIdVal,
             nisnSnapshot: student.nisn || '',
             classId: selectedClassId,
             classNameSnapshot: selectedClassObj?.name || '',
@@ -804,18 +817,20 @@ export default function ElementaryOtherReportPage() {
     const studentObj = roster.find(s => s.id === targetStudentId);
     if (!studentObj) return;
 
+    const studentIdVal = (studentObj.nis || studentObj.luminaId || (studentObj as any).studentId || studentObj.id || '').trim();
+
     setMappings(prev => {
       // 1. Remove empty placeholder row for this student if present
-      const filtered = prev.filter(m => !(m.studentId === targetStudentId && !m.fileId));
+      const filtered = prev.filter(m => !(m.studentId === studentIdVal && !m.fileId));
 
       // 2. Update the unmatched row with student info
       return filtered.map(m => {
         if (m.id === mappingId) {
           return {
             ...m,
-            studentId: studentObj.id,
+            studentId: studentIdVal,
             studentNameSnapshot: studentObj.name,
-            nisSnapshot: studentObj.id || studentObj.nis || '',
+            nisSnapshot: studentIdVal,
             nisnSnapshot: studentObj.nisn || '',
             status: 'Cocok' as const,
             matchedBy: 'MANUAL' as const
