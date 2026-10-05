@@ -2037,8 +2037,8 @@ service cloud.firestore {
     match /elem_other_report_links/{linkId} {
       allow get, list: if isActive() && (isElementaryStaff() || isAdmin());
       allow write: if isActive() && (isElementaryStaff() || isAdmin());
-      allow get, list: if isActive() && resource != null && resource.data.status == 'PUBLISHED' && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId));
-      allow update: if isActive() && resource != null && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) && (
+      allow get, list: if isActive() && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) && resource.data.status == 'PUBLISHED';
+      allow update: if isActive() && (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) && (
         resource.data.status == 'PUBLISHED' &&
         request.resource.data.studentId == resource.data.studentId &&
         incoming().diff(existing()).affectedKeys().hasOnly([

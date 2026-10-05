@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { db, getClasses, getActiveStudents } from '../../lib/firebase';
 import { 
-  doc, getDocs, deleteDoc, query, collection, where, writeBatch, serverTimestamp, onSnapshot 
+  doc, getDoc, getDocs, deleteDoc, query, collection, where, writeBatch, serverTimestamp, onSnapshot 
 } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
@@ -19,6 +19,7 @@ interface OtherReportMapping {
   studentId: string; // empty if unmatched
   studentNameSnapshot: string;
   nisSnapshot: string;
+  nisnSnapshot?: string;
   classId: string;
   classNameSnapshot: string;
   academicYear: string;
@@ -93,8 +94,7 @@ function isStudentIdMatch(candidateId: any, student: Student): boolean {
     student.luminaId,
     (student as any).studentId,
     (student as any).docId,
-    student.nis,
-    (student as any).nisn
+    student.nis
   ].filter(Boolean).map(id => String(id).trim().toLowerCase());
 
   if (targetIds.includes(candStr)) return true;
@@ -114,7 +114,6 @@ function isStudentIdMatch(candidateId: any, student: Student): boolean {
 function findStudentMatch(student: Student, savedDocs: any[]): any | undefined {
   return savedDocs.find(d => {
     if (isStudentIdMatch(d.studentId, student)) return true;
-    if (d.nisn && isStudentIdMatch(d.nisn, student)) return true;
     if (d.nis && isStudentIdMatch(d.nis, student)) return true;
     return false;
   });
@@ -257,7 +256,8 @@ export default function ElementaryOtherReportPage() {
       id: student.id,
       studentId: student.id,
       studentNameSnapshot: student.name,
-      nisSnapshot: student.nis || (student as any).nisn || '',
+      nisSnapshot: student.id || student.nis || '',
+      nisnSnapshot: student.nisn || '',
       classId: selectedClassId,
       classNameSnapshot: selectedClassObj?.name || '',
       academicYear: selectedYear,
@@ -326,7 +326,8 @@ export default function ElementaryOtherReportPage() {
             id: student.id,
             studentId: student.id,
             studentNameSnapshot: saved.studentNameSnapshot || student.name,
-            nisSnapshot: saved.nisn || saved.nis || student.nis || (student as any).nisn || '',
+            nisSnapshot: student.id || student.nis || '',
+            nisnSnapshot: saved.nisn || student.nisn || '',
             classId: selectedClassId,
             classNameSnapshot: selectedClassObj?.name || saved.classNameSnapshot || '',
             academicYear: saved.academicYear || selectedYear,
@@ -351,7 +352,8 @@ export default function ElementaryOtherReportPage() {
             id: student.id,
             studentId: student.id,
             studentNameSnapshot: student.name,
-            nisSnapshot: student.nis || (student as any).nisn || '',
+            nisSnapshot: student.id || student.nis || '',
+            nisnSnapshot: student.nisn || '',
             classId: selectedClassId,
             classNameSnapshot: selectedClassObj?.name || '',
             academicYear: selectedYear,
@@ -570,7 +572,8 @@ export default function ElementaryOtherReportPage() {
               id: student.id,
               studentId: student.id,
               studentNameSnapshot: saved.studentNameSnapshot || student.name,
-              nisSnapshot: saved.nisn || saved.nis || student.nis || (student as any).nisn || '',
+              nisSnapshot: student.id || student.nis || '',
+              nisnSnapshot: saved.nisn || student.nisn || '',
               classId: selectedClassId,
               classNameSnapshot: selectedClassObj?.name || saved.classNameSnapshot || '',
               academicYear: saved.academicYear || selectedYear,
@@ -599,7 +602,8 @@ export default function ElementaryOtherReportPage() {
               id: student.id,
               studentId: student.id,
               studentNameSnapshot: student.name,
-              nisSnapshot: student.nis || (student as any).nisn || '',
+              nisSnapshot: student.id || student.nis || '',
+              nisnSnapshot: student.nisn || '',
               classId: selectedClassId,
               classNameSnapshot: selectedClassObj?.name || '',
               academicYear: selectedYear,
@@ -811,7 +815,8 @@ export default function ElementaryOtherReportPage() {
             ...m,
             studentId: studentObj.id,
             studentNameSnapshot: studentObj.name,
-            nisSnapshot: studentObj.nis || (studentObj as any).nisn || '',
+            nisSnapshot: studentObj.id || studentObj.nis || '',
+            nisnSnapshot: studentObj.nisn || '',
             status: 'Cocok' as const,
             matchedBy: 'MANUAL' as const
           };
@@ -894,9 +899,20 @@ export default function ElementaryOtherReportPage() {
     const batch = writeBatch(db);
 
     try {
-      const classList = classesListRef.current.length > 0 ? classesListRef.current : classesList;
-      const selectedClassObj = classList.find(c => c.id === selectedClassId);
-      const targetClassName = selectedClassObj?.name || '';
+      let targetClassName = '';
+      try {
+        const classSnap = await getDoc(doc(db, 'classes', selectedClassId));
+        if (classSnap.exists()) {
+          targetClassName = classSnap.data().name || '';
+        }
+      } catch (e) {
+        console.warn("Could not fetch class name snapshot directly from db:", e);
+      }
+      if (!targetClassName) {
+        const classList = classesListRef.current.length > 0 ? classesListRef.current : classesList;
+        const selectedClassObj = classList.find(c => c.id === selectedClassId);
+        targetClassName = selectedClassObj?.name || '';
+      }
 
       validRows.forEach(row => {
         const studentIdKey = String(row.studentId).trim();
@@ -904,7 +920,7 @@ export default function ElementaryOtherReportPage() {
         const ref = doc(db, 'elem_other_report_links', docId);
 
         const fileId = row.fileId || '';
-        const driveUrl = row.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+        const driveUrl = fileId ? `https://drive.google.com/file/d/${fileId}/view` : '';
 
         const dataPayload: any = {
           batchId: activeBatchId,
@@ -917,7 +933,7 @@ export default function ElementaryOtherReportPage() {
           classNameSnapshot: targetClassName || row.classNameSnapshot || '',
           studentId: row.studentId,
           studentNameSnapshot: row.studentNameSnapshot,
-          nisn: row.nisSnapshot || '',
+          nisn: row.nisnSnapshot || '',
           driveFileId: fileId,
           driveFileUrl: driveUrl,
           fileName: row.fileName,
@@ -993,9 +1009,20 @@ export default function ElementaryOtherReportPage() {
     const batch = writeBatch(db);
 
     try {
-      const classList = classesListRef.current.length > 0 ? classesListRef.current : classesList;
-      const selectedClassObj = classList.find(c => c.id === selectedClassId);
-      const targetClassName = selectedClassObj?.name || '';
+      let targetClassName = '';
+      try {
+        const classSnap = await getDoc(doc(db, 'classes', selectedClassId));
+        if (classSnap.exists()) {
+          targetClassName = classSnap.data().name || '';
+        }
+      } catch (e) {
+        console.warn("Could not fetch class name snapshot directly from db:", e);
+      }
+      if (!targetClassName) {
+        const classList = classesListRef.current.length > 0 ? classesListRef.current : classesList;
+        const selectedClassObj = classList.find(c => c.id === selectedClassId);
+        targetClassName = selectedClassObj?.name || '';
+      }
 
       validRows.forEach(row => {
         const studentIdKey = String(row.studentId).trim();
@@ -1003,7 +1030,7 @@ export default function ElementaryOtherReportPage() {
         const ref = doc(db, 'elem_other_report_links', docId);
 
         const fileId = row.fileId || '';
-        const driveUrl = row.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+        const driveUrl = fileId ? `https://drive.google.com/file/d/${fileId}/view` : '';
 
         const dataPayload: any = {
           batchId: activeBatchId,
@@ -1016,7 +1043,7 @@ export default function ElementaryOtherReportPage() {
           classNameSnapshot: targetClassName || row.classNameSnapshot || '',
           studentId: row.studentId,
           studentNameSnapshot: row.studentNameSnapshot,
-          nisn: row.nisSnapshot || '',
+          nisn: row.nisnSnapshot || '',
           driveFileId: fileId,
           driveFileUrl: driveUrl,
           fileName: row.fileName,
