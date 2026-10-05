@@ -138,16 +138,21 @@ export default function StudentReports() {
           });
           setKgMidtermReports(listMidterm.sort((a: any, b: any) => (b.sentAt || b.updatedAt || 0) - (a.sentAt || a.updatedAt || 0)));
         } else {
-          const allReports = await getReportCards({
-             unitId: effectiveUnit as any,
-             academicYear: activeYear || '2025/2026',
-             status: 'PUBLISHED'
-          });
-          
-          // Filter reports where student is included
-          const studentReports = allReports.filter(rc => 
-            rc.studentReports.some(sr => candidateIds.has(sr.studentId))
-          );
+          let studentReports: any[] = [];
+          try {
+            const allReports = await getReportCards({
+               unitId: effectiveUnit as any,
+               academicYear: activeYear || '2025/2026',
+               status: 'PUBLISHED'
+            });
+            
+            // Filter reports where student is included
+            studentReports = allReports.filter(rc => 
+              rc.studentReports.some(sr => candidateIds.has(sr.studentId))
+            );
+          } catch (rcErr) {
+            console.warn("[StudentReports] getReportCards failed (isolated fallback):", rcErr);
+          }
           
           setReports(studentReports.sort((a, b) => b.createdAt - a.createdAt));
 

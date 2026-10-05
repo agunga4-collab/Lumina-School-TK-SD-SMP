@@ -894,10 +894,17 @@ export default function ElementaryOtherReportPage() {
     const batch = writeBatch(db);
 
     try {
+      const classList = classesListRef.current.length > 0 ? classesListRef.current : classesList;
+      const selectedClassObj = classList.find(c => c.id === selectedClassId);
+      const targetClassName = selectedClassObj?.name || '';
+
       validRows.forEach(row => {
         const studentIdKey = String(row.studentId).trim();
         const docId = `${activeBatchId}_${studentIdKey}`;
         const ref = doc(db, 'elem_other_report_links', docId);
+
+        const fileId = row.fileId || '';
+        const driveUrl = row.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
 
         const dataPayload: any = {
           batchId: activeBatchId,
@@ -907,12 +914,12 @@ export default function ElementaryOtherReportPage() {
           academicYear: selectedYear,
           semester: selectedSemester,
           classId: selectedClassId,
-          classNameSnapshot: row.classNameSnapshot,
+          classNameSnapshot: targetClassName || row.classNameSnapshot || '',
           studentId: row.studentId,
           studentNameSnapshot: row.studentNameSnapshot,
           nisn: row.nisSnapshot || '',
-          driveFileId: row.fileId,
-          driveFileUrl: row.driveUrl,
+          driveFileId: fileId,
+          driveFileUrl: driveUrl,
           fileName: row.fileName,
           status: 'DRAFT',
           matchedBy: row.matchedBy || 'STUDENT_ID',
@@ -986,10 +993,17 @@ export default function ElementaryOtherReportPage() {
     const batch = writeBatch(db);
 
     try {
+      const classList = classesListRef.current.length > 0 ? classesListRef.current : classesList;
+      const selectedClassObj = classList.find(c => c.id === selectedClassId);
+      const targetClassName = selectedClassObj?.name || '';
+
       validRows.forEach(row => {
         const studentIdKey = String(row.studentId).trim();
         const docId = `${activeBatchId}_${studentIdKey}`;
         const ref = doc(db, 'elem_other_report_links', docId);
+
+        const fileId = row.fileId || '';
+        const driveUrl = row.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
 
         const dataPayload: any = {
           batchId: activeBatchId,
@@ -999,12 +1013,12 @@ export default function ElementaryOtherReportPage() {
           academicYear: selectedYear,
           semester: selectedSemester,
           classId: selectedClassId,
-          classNameSnapshot: row.classNameSnapshot,
+          classNameSnapshot: targetClassName || row.classNameSnapshot || '',
           studentId: row.studentId,
           studentNameSnapshot: row.studentNameSnapshot,
           nisn: row.nisSnapshot || '',
-          driveFileId: row.fileId,
-          driveFileUrl: row.driveUrl,
+          driveFileId: fileId,
+          driveFileUrl: driveUrl,
           fileName: row.fileName,
           status: 'PUBLISHED',
           matchedBy: row.matchedBy || 'STUDENT_ID',
