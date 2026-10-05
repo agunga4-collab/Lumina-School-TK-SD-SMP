@@ -224,20 +224,30 @@ service cloud.firestore {
       return request.auth.token.email != null ? get(/databases/$(database)/documents/parentStudentLinks/$(request.auth.token.email.lower())).data : {};
     }
 
+    function getStudentNis() {
+      return 'studentId' in currentUser() ? currentUser().studentId : ('luminaId' in currentUser() ? currentUser().luminaId : request.auth.uid);
+    }
+
     function isLinkedStudent(studentId) {
       return isParent() && studentId is string && (
         (
           hasLinkedStudentsField() && (
             studentId in currentUser().linkedStudents ||
             studentId.lower() in currentUser().linkedStudents ||
-            studentId.upper() in currentUser().linkedStudents
+            studentId.upper() in currentUser().linkedStudents ||
+            (currentUser().linkedStudents.size() > 0 && exists(/databases/$(database)/documents/students/$(currentUser().linkedStudents[0])) && 'nisn' in get(/databases/$(database)/documents/students/$(currentUser().linkedStudents[0])).data && get(/databases/$(database)/documents/students/$(currentUser().linkedStudents[0])).data.nisn == studentId) ||
+            (currentUser().linkedStudents.size() > 1 && exists(/databases/$(database)/documents/students/$(currentUser().linkedStudents[1])) && 'nisn' in get(/databases/$(database)/documents/students/$(currentUser().linkedStudents[1])).data && get(/databases/$(database)/documents/students/$(currentUser().linkedStudents[1])).data.nisn == studentId) ||
+            (currentUser().linkedStudents.size() > 2 && exists(/databases/$(database)/documents/students/$(currentUser().linkedStudents[2])) && 'nisn' in get(/databases/$(database)/documents/students/$(currentUser().linkedStudents[2])).data && get(/databases/$(database)/documents/students/$(currentUser().linkedStudents[2])).data.nisn == studentId)
           )
         ) || (
           parentLinkDocExists() &&
           ('studentIds' in parentLinkDoc()) && (
             studentId in parentLinkDoc().studentIds ||
             studentId.lower() in parentLinkDoc().studentIds ||
-            studentId.upper() in parentLinkDoc().studentIds
+            studentId.upper() in parentLinkDoc().studentIds ||
+            (parentLinkDoc().studentIds.size() > 0 && exists(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[0])) && 'nisn' in get(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[0])).data && get(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[0])).data.nisn == studentId) ||
+            (parentLinkDoc().studentIds.size() > 1 && exists(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[1])) && 'nisn' in get(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[1])).data && get(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[1])).data.nisn == studentId) ||
+            (parentLinkDoc().studentIds.size() > 2 && exists(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[2])) && 'nisn' in get(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[2])).data && get(/databases/$(database)/documents/students/$(parentLinkDoc().studentIds[2])).data.nisn == studentId)
           )
         )
       );
@@ -247,7 +257,10 @@ service cloud.firestore {
       return isStudent() && studentId is string && currentUserExists() && (
         (request.auth.uid == studentId) ||
         ('luminaId' in currentUser() && currentUser().luminaId == studentId) ||
-        ('studentId' in currentUser() && currentUser().studentId == studentId)
+        ('studentId' in currentUser() && currentUser().studentId == studentId) ||
+        (exists(/databases/$(database)/documents/students/$(getStudentNis())) && 
+         'nisn' in get(/databases/$(database)/documents/students/$(getStudentNis())).data &&
+         get(/databases/$(database)/documents/students/$(getStudentNis())).data.nisn == studentId)
       );
     }
 

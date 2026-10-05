@@ -94,6 +94,7 @@ export default function StudentReports() {
 
         const candidateIds = new Set<string>();
         if (student?.id) candidateIds.add(String(student.id).trim());
+        if (student?.nisn) candidateIds.add(String(student.nisn).trim());
         if (student?.luminaId) candidateIds.add(String(student.luminaId).trim());
         if ((student as any)?.docId) candidateIds.add(String((student as any).docId).trim());
         if (currentUser?.luminaId) candidateIds.add(String(currentUser.luminaId).trim());
