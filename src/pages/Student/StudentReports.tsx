@@ -244,11 +244,10 @@ export default function StudentReports() {
             const elemCandidateList = Array.from(candidateIds).filter(Boolean);
             if (elemPrimaryId && !elemCandidateList.includes(elemPrimaryId)) elemCandidateList.push(elemPrimaryId);
 
-            const targetElemId = elemPrimaryId || elemCandidateList[0];
-            if (targetElemId) {
+            if (elemCandidateList.length > 0) {
               const qElemOther = query(
                 collection(db, 'elem_other_report_links'),
-                where('studentId', '==', targetElemId),
+                where('studentId', 'in', elemCandidateList),
                 where('status', '==', 'PUBLISHED')
               );
               const unsubscribeElemOther = onSnapshot(qElemOther, (snapshot) => {
