@@ -5,7 +5,7 @@ import {
   AlertCircle, Info, Check, Search, Trash2, ArrowRight, ExternalLink,
   Plus, Undo2, Archive, Eye
 } from 'lucide-react';
-import { db, getClasses, getActiveStudents, handleFirestoreError } from '../../lib/firebase';
+import { db, getClasses, getActiveStudents } from '../../lib/firebase';
 import { 
   doc, getDocs, setDoc, deleteDoc, query, collection, where, writeBatch, serverTimestamp, onSnapshot 
 } from 'firebase/firestore';
@@ -58,7 +58,7 @@ function cleanName(name: string): string {
 }
 
 function normalizeJudul(judul: string): string {
-  return judul
+  return (judul || '')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
@@ -69,6 +69,43 @@ function judulToBatchSlug(judul: string): string {
     .replace(/[^a-z0-9]/g, '_')
     .replace(/_+/g, '_')
     .slice(0, 50);
+}
+
+function normalizeYear(year: string): string {
+  return (year || '').replace(/\//g, '-').trim();
+}
+
+function isYearMatch(y1: any, y2: any): boolean {
+  return normalizeYear(String(y1)) === normalizeYear(String(y2));
+}
+
+function isSemesterMatch(s1: any, s2: any): boolean {
+  return String(s1 || '1').trim() === String(s2 || '1').trim();
+}
+
+function isStudentIdMatch(candidateId: any, student: Student): boolean {
+  if (candidateId === null || candidateId === undefined) return false;
+  const candStr = String(candidateId).trim();
+  if (!candStr) return false;
+
+  const targetIds = [
+    student.id,
+    student.luminaId,
+    (student as any).studentId,
+    (student as any).docId,
+    student.nis,
+    (student as any).nisn
+  ].filter(Boolean).map(id => String(id).trim());
+
+  return targetIds.includes(candStr);
+}
+
+function findStudentMatch(student: Student, savedDocs: any[]): any | undefined {
+  return savedDocs.find(d => {
+    if (isStudentIdMatch(d.studentId, student)) return true;
+    if (d.nisn && isStudentIdMatch(d.nisn, student)) return true;
+    return false;
+  });
 }
 
 function formatTrackingTime(timestamp: any): string {
@@ -101,6 +138,11 @@ export default function OtherReportPage() {
   const [selectedBatchId, setSelectedBatchId] = React.useState<string>('NEW'); // 'NEW' or existing batchId
   const [inputJudul, setInputJudul] = React.useState<string>('');
   const [inputKeterangan, setInputKeterangan] = React.useState<string>('');
+  const isUserExplicitNewRef = React.useRef<boolean>(false);
+
+  // Error state for queries
+  const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [errorIndexUrl, setErrorIndexUrl] = React.useState<string | null>(null);
 
   // Dropdowns & students list
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -156,7 +198,7 @@ export default function OtherReportPage() {
 
         const jhClasses = (all || []).filter(c => {
           const isJH = c.unitId === 'JUNIOR_HIGH';
-          const isActiveYear = c.academicYear === selectedYear;
+          const isActiveYear = isYearMatch(c.academicYear, selectedYear);
           const isNotArchived = c.status !== 'archived';
           if (!isJH || !isActiveYear || !isNotArchived) return false;
           return activeClassKeys.has(c.id) || activeClassKeys.has(c.name);
@@ -166,9 +208,11 @@ export default function OtherReportPage() {
         if (jhClasses.length > 0 && !selectedClassId) {
           setSelectedClassId(jhClasses[0].id);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error fetching classes:', err);
-        toast.error('Gagal memuat kelas Junior High');
+        const msg = err?.message || String(err);
+        setErrorMessage(msg);
+        toast.error('Gagal memuat kelas Junior High: ' + msg);
       } finally {
         setLoadingClasses(false);
       }
@@ -177,25 +221,177 @@ export default function OtherReportPage() {
     fetchJHClasses();
   }, [selectedYear]);
 
-  // Load existing batches for selected year, semester, and class
-  const loadExistingBatches = async () => {
-    if (!selectedClassId || !selectedYear || !selectedSemester) {
+  // Construct blank mappings for roster
+  const constructRosterMappings = React.useCallback((
+    batchId: string,
+    batchJudul: string,
+    batchKeterangan: string,
+    studentsRoster: Student[]
+  ): OtherReportMapping[] => {
+    const selectedClassObj = classesList.find(c => c.id === selectedClassId);
+    return (studentsRoster || []).map(student => ({
+      id: student.id,
+      studentId: student.id,
+      studentNameSnapshot: student.name,
+      nisSnapshot: student.nis || (student as any).nisn || '',
+      classId: selectedClassId,
+      classNameSnapshot: selectedClassObj?.name || '',
+      academicYear: selectedYear,
+      semester: selectedSemester,
+      batchId: batchId,
+      judul: batchJudul,
+      keterangan: batchKeterangan,
+      fileName: '',
+      fileId: '',
+      driveUrl: '',
+      status: 'Belum ada PDF' as const,
+      matchedBy: 'NONE' as const
+    }));
+  }, [classesList, selectedClassId, selectedYear, selectedSemester]);
+
+  // Load batch items from Firestore using batchId as primary key
+  const loadBatchDocuments = React.useCallback(async (
+    targetBatchId: string,
+    targetJudul: string,
+    targetKeterangan: string,
+    studentsRoster: Student[]
+  ) => {
+    if (!targetBatchId) return;
+    setLoadingSaved(true);
+    setErrorMessage(null);
+    setErrorIndexUrl(null);
+
+    try {
+      // Primary key query using batchId
+      const q = query(
+        collection(db, 'jh_other_report_links'),
+        where('batchId', '==', targetBatchId)
+      );
+      const snap = await getDocs(q);
+      const savedDocs = snap.docs.map(docSnap => ({
+        docId: docSnap.id,
+        ...docSnap.data()
+      } as any));
+
+      let effJudul = targetJudul;
+      let effKeterangan = targetKeterangan;
+
+      if (savedDocs.length > 0) {
+        const firstWithJudul = savedDocs.find(d => d.judul);
+        if (firstWithJudul) {
+          if (firstWithJudul.judul) {
+            effJudul = firstWithJudul.judul;
+            setInputJudul(firstWithJudul.judul);
+          }
+          if (firstWithJudul.keterangan !== undefined) {
+            effKeterangan = firstWithJudul.keterangan || '';
+            setInputKeterangan(effKeterangan);
+          }
+        }
+      }
+
+      const selectedClassObj = classesList.find(c => c.id === selectedClassId);
+
+      // Merge results with class roster based on studentId (not name)
+      const newMappings: OtherReportMapping[] = (studentsRoster || []).map(student => {
+        const saved = findStudentMatch(student, savedDocs);
+
+        if (saved) {
+          const fileId = saved.driveFileId || saved.fileId || '';
+          return {
+            id: student.id,
+            studentId: student.id,
+            studentNameSnapshot: saved.studentNameSnapshot || student.name,
+            nisSnapshot: saved.nisn || student.nis || (student as any).nisn || '',
+            classId: selectedClassId,
+            classNameSnapshot: selectedClassObj?.name || saved.classNameSnapshot || '',
+            academicYear: saved.academicYear || selectedYear,
+            semester: String(saved.semester || selectedSemester),
+            batchId: targetBatchId,
+            judul: saved.judul || effJudul,
+            keterangan: saved.keterangan || effKeterangan,
+            fileName: saved.fileName || '',
+            fileId: fileId,
+            driveUrl: saved.driveFileUrl || saved.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : ''),
+            status: fileId ? 'Cocok' : 'Belum ada PDF',
+            matchedBy: saved.matchedBy || 'NAME_AND_CLASS',
+            dbStatus: saved.status || 'DRAFT',
+            isOpened: saved.isOpened || false,
+            firstOpenedAt: saved.firstOpenedAt || null,
+            lastOpenedAt: saved.lastOpenedAt || null,
+            openCount: saved.openCount || 0,
+            openedByEmail: saved.openedByEmail || ''
+          };
+        } else {
+          return {
+            id: student.id,
+            studentId: student.id,
+            studentNameSnapshot: student.name,
+            nisSnapshot: student.nis || (student as any).nisn || '',
+            classId: selectedClassId,
+            classNameSnapshot: selectedClassObj?.name || '',
+            academicYear: selectedYear,
+            semester: selectedSemester,
+            batchId: targetBatchId,
+            judul: effJudul,
+            keterangan: effKeterangan,
+            fileName: '',
+            fileId: '',
+            driveUrl: '',
+            status: 'Belum ada PDF',
+            matchedBy: 'NONE'
+          };
+        }
+      });
+
+      setMappings(newMappings);
+    } catch (err: any) {
+      console.error('[OtherReport] Error loading batch documents:', err);
+      const msg = err?.message || String(err);
+      setErrorMessage(msg);
+      const match = msg.match(/https:\/\/console\.firebase\.google\.com[^\s)"]+/);
+      if (match) {
+        setErrorIndexUrl(match[0]);
+      }
+      toast.error(`Gagal memuat dokumen batch: ${msg}`);
+    } finally {
+      setLoadingSaved(false);
+    }
+  }, [classesList, selectedClassId, selectedYear, selectedSemester]);
+
+  // Load existing batches for selected class, year, and semester
+  const loadExistingBatches = React.useCallback(async (
+    targetClassId: string,
+    targetYear: string,
+    targetSemester: string,
+    currentRoster: Student[]
+  ) => {
+    if (!targetClassId) {
       setExistingBatches([]);
       return;
     }
 
     setLoadingBatches(true);
+    setErrorMessage(null);
+    setErrorIndexUrl(null);
+
     try {
+      // Query documents by classId (canonical class ID)
       const q = query(
         collection(db, 'jh_other_report_links'),
-        where('academicYear', '==', selectedYear),
-        where('semester', '==', selectedSemester),
-        where('classId', '==', selectedClassId)
+        where('classId', '==', targetClassId)
       );
       const snap = await getDocs(q);
 
+      // In-memory filter for year & semester to prevent format mismatches ("2026/2027" vs "2026-2027")
+      const matchingDocs = snap.docs.filter(d => {
+        const data = d.data();
+        return isYearMatch(data.academicYear, targetYear) &&
+               isSemesterMatch(data.semester, targetSemester);
+      });
+
       const batchMap = new Map<string, BatchSummary>();
-      snap.docs.forEach(d => {
+      matchingDocs.forEach(d => {
         const data = d.data();
         const bId = data.batchId;
         if (!bId) return;
@@ -221,193 +417,226 @@ export default function OtherReportPage() {
       const batchList = Array.from(batchMap.values());
       setExistingBatches(batchList);
 
-      // If currently selected batchId is not found in batches and not NEW, select first or keep NEW
-      if (selectedBatchId !== 'NEW') {
-        const currentFound = batchList.find(b => b.batchId === selectedBatchId);
-        if (!currentFound && batchList.length > 0) {
-          setSelectedBatchId(batchList[0].batchId);
-          setInputJudul(batchList[0].judul);
-          setInputKeterangan(batchList[0].keterangan || '');
-        } else if (!currentFound) {
+      // Handle batch selection & pre-populating Judul / Keterangan
+      if (batchList.length > 0) {
+        let activeB: BatchSummary | undefined;
+        // 1. If currently selected batch exists in the loaded list
+        if (selectedBatchId && selectedBatchId !== 'NEW') {
+          activeB = batchList.find(b => b.batchId === selectedBatchId);
+        }
+        // 2. If user hasn't explicitly chosen NEW, auto-select first available batch
+        if (!activeB && !isUserExplicitNewRef.current) {
+          activeB = batchList[0];
+        }
+
+        if (activeB) {
+          setSelectedBatchId(activeB.batchId);
+          setInputJudul(activeB.judul);
+          setInputKeterangan(activeB.keterangan || '');
+          await loadBatchDocuments(activeB.batchId, activeB.judul, activeB.keterangan || '', currentRoster);
+        } else {
+          // User chose NEW explicitly
           setSelectedBatchId('NEW');
+          setMappings(constructRosterMappings('', inputJudul, inputKeterangan, currentRoster));
+        }
+      } else {
+        if (!isUserExplicitNewRef.current) {
+          setSelectedBatchId('NEW');
+          setInputJudul('');
+          setInputKeterangan('');
+          setMappings(constructRosterMappings('', '', '', currentRoster));
         }
       }
-    } catch (err) {
-      console.error('Error loading existing batches:', err);
+    } catch (err: any) {
+      console.error('[OtherReport] Error loading existing batches:', err);
+      const msg = err?.message || String(err);
+      setErrorMessage(msg);
+      const match = msg.match(/https:\/\/console\.firebase\.google\.com[^\s)"]+/);
+      if (match) {
+        setErrorIndexUrl(match[0]);
+      }
+      toast.error(`Gagal memuat batch: ${msg}`);
     } finally {
       setLoadingBatches(false);
     }
-  };
+  }, [selectedBatchId, inputJudul, inputKeterangan, loadBatchDocuments, constructRosterMappings]);
 
+  // Load roster and batches when context changes
   React.useEffect(() => {
-    loadExistingBatches();
-  }, [selectedYear, selectedSemester, selectedClassId]);
+    let isCancelled = false;
 
-  // Calculate current active batchId and effective judul
-  const currentJudul = selectedBatchId === 'NEW' 
-    ? inputJudul.trim() 
-    : (existingBatches.find(b => b.batchId === selectedBatchId)?.judul || inputJudul.trim());
-
-  const currentJudulNormalized = normalizeJudul(currentJudul);
-
-  const calculatedBatchId = React.useMemo(() => {
-    if (selectedBatchId !== 'NEW') return selectedBatchId;
-    if (!currentJudulNormalized || !selectedClassId) return '';
-    const yearNorm = selectedYear.replace(/\//g, '-');
-    const slug = judulToBatchSlug(currentJudulNormalized);
-    return `${yearNorm}_sem${selectedSemester}_${selectedClassId}_${slug}`;
-  }, [selectedBatchId, currentJudulNormalized, selectedYear, selectedSemester, selectedClassId]);
-
-  // Load roster and mappings when context or batch changes
-  React.useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-
-    const loadData = async () => {
+    const syncContext = async () => {
       if (!selectedClassId || !selectedYear) return;
       setLoadingRoster(true);
-      setLoadingSaved(true);
+      setErrorMessage(null);
+      setErrorIndexUrl(null);
 
       try {
-        // 1. Fetch class active roster
         const studentsList = await getActiveStudents(selectedClassId, selectedYear);
+        if (isCancelled) return;
+
         const sortedRoster = (studentsList || []).sort((a, b) => {
           const numA = a.attendanceNumber ?? a.noAbsen ?? a.rollNumber ?? a.rosterNumber ?? 999;
           const numB = b.attendanceNumber ?? b.noAbsen ?? b.rollNumber ?? b.rosterNumber ?? 999;
           if (numA !== numB) return numA - numB;
           return a.name.localeCompare(b.name);
         });
+
         setRoster(sortedRoster);
-
-        const selectedClassObj = classesList.find(c => c.id === selectedClassId);
-
-        // 2. If a valid batchId exists, listen to Firestore in real-time
-        if (calculatedBatchId) {
-          const q = query(
-            collection(db, 'jh_other_report_links'),
-            where('batchId', '==', calculatedBatchId)
-          );
-
-          unsubscribe = onSnapshot(q, (snapshot) => {
-            const savedMap = new Map<string, any>();
-            snapshot.docs.forEach(docSnap => {
-              const data = docSnap.data();
-              savedMap.set(data.studentId, {
-                docId: docSnap.id,
-                ...data
-              });
-            });
-
-            // Map each student in roster
-            const newMappings: OtherReportMapping[] = sortedRoster.map(student => {
-              const saved = savedMap.get(student.id);
-              if (saved) {
-                return {
-                  id: student.id,
-                  studentId: student.id,
-                  studentNameSnapshot: student.name,
-                  nisSnapshot: student.nis || (student as any).nisn || '',
-                  classId: selectedClassId,
-                  classNameSnapshot: selectedClassObj?.name || '',
-                  academicYear: selectedYear,
-                  semester: selectedSemester,
-                  batchId: calculatedBatchId,
-                  judul: saved.judul || currentJudul,
-                  keterangan: saved.keterangan || inputKeterangan,
-                  fileName: saved.fileName || '',
-                  fileId: saved.driveFileId || saved.fileId || '',
-                  driveUrl: saved.driveFileUrl || (saved.driveFileId ? `https://drive.google.com/file/d/${saved.driveFileId}/view` : ''),
-                  status: (saved.driveFileId || saved.fileId) ? 'Cocok' : 'Belum ada PDF',
-                  matchedBy: saved.matchedBy || 'NAME_AND_CLASS',
-                  dbStatus: saved.status,
-                  isOpened: saved.isOpened,
-                  firstOpenedAt: saved.firstOpenedAt,
-                  lastOpenedAt: saved.lastOpenedAt,
-                  openCount: saved.openCount,
-                  openedByEmail: saved.openedByEmail
-                };
-              } else {
-                return {
-                  id: student.id,
-                  studentId: student.id,
-                  studentNameSnapshot: student.name,
-                  nisSnapshot: student.nis || (student as any).nisn || '',
-                  classId: selectedClassId,
-                  classNameSnapshot: selectedClassObj?.name || '',
-                  academicYear: selectedYear,
-                  semester: selectedSemester,
-                  batchId: calculatedBatchId,
-                  judul: currentJudul,
-                  keterangan: inputKeterangan,
-                  fileName: '',
-                  fileId: '',
-                  driveUrl: '',
-                  status: 'Belum ada PDF',
-                  matchedBy: 'NONE'
-                };
-              }
-            });
-
-            setMappings(newMappings);
-            setLoadingSaved(false);
-          }, (err) => {
-            console.error('Error listening to jh_other_report_links:', err);
-            setLoadingSaved(false);
-          });
-        } else {
-          // No batch created or chosen yet; construct clean roster mappings
-          const initialMappings: OtherReportMapping[] = sortedRoster.map(student => ({
-            id: student.id,
-            studentId: student.id,
-            studentNameSnapshot: student.name,
-            nisSnapshot: student.nis || (student as any).nisn || '',
-            classId: selectedClassId,
-            classNameSnapshot: selectedClassObj?.name || '',
-            academicYear: selectedYear,
-            semester: selectedSemester,
-            batchId: '',
-            judul: '',
-            fileName: '',
-            fileId: '',
-            driveUrl: '',
-            status: 'Belum ada PDF',
-            matchedBy: 'NONE'
-          }));
-          setMappings(initialMappings);
-          setLoadingSaved(false);
+        await loadExistingBatches(selectedClassId, selectedYear, selectedSemester, sortedRoster);
+      } catch (err: any) {
+        if (isCancelled) return;
+        console.error('[OtherReport] Error syncing class context:', err);
+        const msg = err?.message || String(err);
+        setErrorMessage(msg);
+        const match = msg.match(/https:\/\/console\.firebase\.google\.com[^\s)"]+/);
+        if (match) {
+          setErrorIndexUrl(match[0]);
         }
-      } catch (err) {
-        console.error('Error loading roster or other report links:', err);
-        toast.error('Gagal memuat data kelas');
+        toast.error(`Gagal memuat data kelas: ${msg}`);
       } finally {
-        setLoadingRoster(false);
+        if (!isCancelled) setLoadingRoster(false);
       }
     };
 
-    loadData();
+    syncContext();
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      isCancelled = true;
     };
-  }, [selectedClassId, selectedYear, selectedSemester, calculatedBatchId, classesList]);
+  }, [selectedClassId, selectedYear, selectedSemester, loadExistingBatches]);
+
+  // Calculate effective judul and activeBatchId
+  const effectiveJudul = selectedBatchId === 'NEW' 
+    ? inputJudul.trim() 
+    : (inputJudul.trim() || existingBatches.find(b => b.batchId === selectedBatchId)?.judul || '');
+
+  const effectiveKeterangan = selectedBatchId === 'NEW'
+    ? inputKeterangan.trim()
+    : (inputKeterangan.trim() || existingBatches.find(b => b.batchId === selectedBatchId)?.keterangan || '');
+
+  const currentJudulNormalized = normalizeJudul(effectiveJudul);
+
+  const activeBatchId = React.useMemo(() => {
+    if (selectedBatchId && selectedBatchId !== 'NEW') {
+      return selectedBatchId;
+    }
+    if (!currentJudulNormalized || !selectedClassId) return '';
+    const yearNorm = normalizeYear(selectedYear);
+    const slug = judulToBatchSlug(currentJudulNormalized);
+    return `${yearNorm}_sem${selectedSemester}_${selectedClassId}_${slug}`;
+  }, [selectedBatchId, currentJudulNormalized, selectedYear, selectedSemester, selectedClassId]);
+
+  // Real-time listener for current active batch
+  React.useEffect(() => {
+    if (!selectedBatchId || selectedBatchId === 'NEW' || roster.length === 0) return;
+
+    const q = query(
+      collection(db, 'jh_other_report_links'),
+      where('batchId', '==', selectedBatchId)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const savedDocs = snapshot.docs.map(docSnap => ({
+        docId: docSnap.id,
+        ...docSnap.data()
+      } as any));
+
+      const selectedClassObj = classesList.find(c => c.id === selectedClassId);
+
+      setMappings(prev => {
+        return roster.map(student => {
+          const saved = findStudentMatch(student, savedDocs);
+          if (saved) {
+            const fileId = saved.driveFileId || saved.fileId || '';
+            return {
+              id: student.id,
+              studentId: student.id,
+              studentNameSnapshot: saved.studentNameSnapshot || student.name,
+              nisSnapshot: saved.nisn || student.nis || (student as any).nisn || '',
+              classId: selectedClassId,
+              classNameSnapshot: selectedClassObj?.name || saved.classNameSnapshot || '',
+              academicYear: saved.academicYear || selectedYear,
+              semester: String(saved.semester || selectedSemester),
+              batchId: selectedBatchId,
+              judul: saved.judul || inputJudul,
+              keterangan: saved.keterangan || inputKeterangan,
+              fileName: saved.fileName || '',
+              fileId: fileId,
+              driveUrl: saved.driveFileUrl || saved.driveUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : ''),
+              status: fileId ? 'Cocok' : 'Belum ada PDF',
+              matchedBy: saved.matchedBy || 'NAME_AND_CLASS',
+              dbStatus: saved.status || 'DRAFT',
+              isOpened: saved.isOpened || false,
+              firstOpenedAt: saved.firstOpenedAt || null,
+              lastOpenedAt: saved.lastOpenedAt || null,
+              openCount: saved.openCount || 0,
+              openedByEmail: saved.openedByEmail || ''
+            };
+          } else {
+            const localEntry = prev.find(p => p.studentId === student.id);
+            if (localEntry && localEntry.fileId && !localEntry.dbStatus) {
+              return localEntry;
+            }
+            return {
+              id: student.id,
+              studentId: student.id,
+              studentNameSnapshot: student.name,
+              nisSnapshot: student.nis || (student as any).nisn || '',
+              classId: selectedClassId,
+              classNameSnapshot: selectedClassObj?.name || '',
+              academicYear: selectedYear,
+              semester: selectedSemester,
+              batchId: selectedBatchId,
+              judul: inputJudul,
+              keterangan: inputKeterangan,
+              fileName: '',
+              fileId: '',
+              driveUrl: '',
+              status: 'Belum ada PDF',
+              matchedBy: 'NONE'
+            };
+          }
+        });
+      });
+    }, (err: any) => {
+      console.error('[OtherReport] onSnapshot error:', err);
+      const msg = err?.message || String(err);
+      setErrorMessage(msg);
+      const match = msg.match(/https:\/\/console\.firebase\.google\.com[^\s)"]+/);
+      if (match) {
+        setErrorIndexUrl(match[0]);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedBatchId, roster, classesList, selectedClassId, selectedYear, selectedSemester, inputJudul, inputKeterangan]);
 
   // Handle switching batch selection
-  const handleSelectBatch = (batchId: string) => {
-    setSelectedBatchId(batchId);
+  const handleSelectBatch = async (batchId: string) => {
     if (batchId === 'NEW') {
+      isUserExplicitNewRef.current = true;
+      setSelectedBatchId('NEW');
       setInputJudul('');
       setInputKeterangan('');
+      setMappings(constructRosterMappings('', '', '', roster));
     } else {
+      isUserExplicitNewRef.current = false;
+      setSelectedBatchId(batchId);
       const found = existingBatches.find(b => b.batchId === batchId);
-      if (found) {
-        setInputJudul(found.judul);
-        setInputKeterangan(found.keterangan || '');
-      }
+      const bJudul = found?.judul || '';
+      const bKet = found?.keterangan || '';
+      if (bJudul) setInputJudul(bJudul);
+      if (bKet !== undefined) setInputKeterangan(bKet);
+      await loadBatchDocuments(batchId, bJudul, bKet, roster);
     }
   };
 
   // Bulk Paste Parsing & Auto-Matching
   const handlePreviewAndMatch = () => {
-    if (!currentJudul.trim()) {
+    if (!effectiveJudul.trim()) {
       toast.error('Silakan isi Judul Rapor terlebih dahulu sebelum mencocokkan data.');
       return;
     }
@@ -488,7 +717,7 @@ export default function OtherReportPage() {
 
       if (matchedStudents.length === 1) {
         const student = matchedStudents[0];
-        const existIdx = updatedMappings.findIndex(m => m.studentId === student.id);
+        const existIdx = updatedMappings.findIndex(m => isStudentIdMatch(m.studentId, student));
         if (existIdx !== -1) {
           updatedMappings[existIdx] = {
             ...updatedMappings[existIdx],
@@ -497,7 +726,7 @@ export default function OtherReportPage() {
             driveUrl: row.fileId ? `https://drive.google.com/file/d/${row.fileId}/view` : '',
             status: 'Cocok',
             matchedBy: 'NAME_AND_CLASS',
-            judul: currentJudul,
+            judul: effectiveJudul,
             keterangan: inputKeterangan
           };
         }
@@ -512,8 +741,8 @@ export default function OtherReportPage() {
           classNameSnapshot: selectedClassObj?.name || '',
           academicYear: selectedYear,
           semester: selectedSemester,
-          batchId: calculatedBatchId,
-          judul: currentJudul,
+          batchId: activeBatchId,
+          judul: effectiveJudul,
           keterangan: inputKeterangan,
           fileName: row.fileName,
           fileId: row.fileId,
@@ -586,11 +815,13 @@ export default function OtherReportPage() {
     if (!confirmDelete) return;
 
     try {
-      if (target.studentId && target.dbStatus && calculatedBatchId) {
-        const docId = `${calculatedBatchId}_${target.studentId}`;
+      if (target.studentId && target.dbStatus && activeBatchId) {
+        const studentIdKey = String(target.studentId).trim();
+        const docId = `${activeBatchId}_${studentIdKey}`;
         const ref = doc(db, 'jh_other_report_links', docId);
         await deleteDoc(ref);
         toast.success(`Berhasil menghapus rapor "${studentName}" dari database.`);
+        await loadExistingBatches(selectedClassId, selectedYear, selectedSemester, roster);
       } else {
         toast.success('Berhasil melepaskan pemetaan file.');
       }
@@ -611,18 +842,19 @@ export default function OtherReportPage() {
       }));
     } catch (err: any) {
       console.error('Error deleting other report link:', err);
-      toast.error('Gagal menghapus link rapor dari database.');
+      const msg = err?.message || String(err);
+      toast.error(`Gagal menghapus link rapor: ${msg}`);
     }
   };
 
   // Save as Draft
   const handleSaveDraft = async () => {
-    if (!currentJudul.trim()) {
+    if (!effectiveJudul.trim()) {
       toast.error('Judul Rapor wajib diisi.');
       return;
     }
 
-    if (!calculatedBatchId) {
+    if (!activeBatchId) {
       toast.error('Konteks kelas atau judul rapor belum lengkap.');
       return;
     }
@@ -638,12 +870,13 @@ export default function OtherReportPage() {
 
     try {
       validRows.forEach(row => {
-        const docId = `${calculatedBatchId}_${row.studentId}`;
+        const studentIdKey = String(row.studentId).trim();
+        const docId = `${activeBatchId}_${studentIdKey}`;
         const ref = doc(db, 'jh_other_report_links', docId);
 
         const dataPayload: any = {
-          batchId: calculatedBatchId,
-          judul: currentJudul,
+          batchId: activeBatchId,
+          judul: effectiveJudul,
           judulNormalized: currentJudulNormalized,
           keterangan: inputKeterangan.trim() || '',
           academicYear: selectedYear,
@@ -678,10 +911,20 @@ export default function OtherReportPage() {
 
       await batch.commit();
       toast.success('Draft batch berhasil disimpan!');
-      loadExistingBatches();
-    } catch (err) {
+
+      const savedBatchId = activeBatchId;
+      if (selectedBatchId === 'NEW') {
+        setSelectedBatchId(savedBatchId);
+        isUserExplicitNewRef.current = false;
+      }
+
+      await loadExistingBatches(selectedClassId, selectedYear, selectedSemester, roster);
+      await loadBatchDocuments(savedBatchId, effectiveJudul, inputKeterangan.trim(), roster);
+    } catch (err: any) {
       console.error('Error saving draft:', err);
-      toast.error('Gagal menyimpan draft');
+      const msg = err?.message || String(err);
+      setErrorMessage(msg);
+      toast.error(`Gagal menyimpan draft: ${msg}`);
     } finally {
       setIsSaving(false);
     }
@@ -689,7 +932,7 @@ export default function OtherReportPage() {
 
   // Publish validation & confirmation
   const handlePublishClick = () => {
-    if (!currentJudul.trim()) {
+    if (!effectiveJudul.trim()) {
       toast.error('Judul Rapor wajib diisi.');
       return;
     }
@@ -704,7 +947,7 @@ export default function OtherReportPage() {
     if (unresolvedCount > 0) {
       setShowUnresolvedModal(true);
     } else {
-      const confirmPub = window.confirm(`Apakah Anda yakin ingin mempublikasikan tautan rapor "${currentJudul}" untuk ${validCount} siswa?`);
+      const confirmPub = window.confirm(`Apakah Anda yakin ingin mempublikasikan tautan rapor "${effectiveJudul}" untuk ${validCount} siswa?`);
       if (confirmPub) {
         executePublish(validCount);
       }
@@ -718,12 +961,13 @@ export default function OtherReportPage() {
 
     try {
       validRows.forEach(row => {
-        const docId = `${calculatedBatchId}_${row.studentId}`;
+        const studentIdKey = String(row.studentId).trim();
+        const docId = `${activeBatchId}_${studentIdKey}`;
         const ref = doc(db, 'jh_other_report_links', docId);
 
         const dataPayload: any = {
-          batchId: calculatedBatchId,
-          judul: currentJudul,
+          batchId: activeBatchId,
+          judul: effectiveJudul,
           judulNormalized: currentJudulNormalized,
           keterangan: inputKeterangan.trim() || '',
           academicYear: selectedYear,
@@ -760,12 +1004,22 @@ export default function OtherReportPage() {
       });
 
       await batch.commit();
-      toast.success(`Rapor "${currentJudul}" berhasil dipublikasikan untuk ${validCount} siswa!`);
+      toast.success(`Rapor "${effectiveJudul}" berhasil dipublikasikan untuk ${validCount} siswa!`);
       setShowUnresolvedModal(false);
-      loadExistingBatches();
-    } catch (err) {
+
+      const publishedBatchId = activeBatchId;
+      if (selectedBatchId === 'NEW') {
+        setSelectedBatchId(publishedBatchId);
+        isUserExplicitNewRef.current = false;
+      }
+
+      await loadExistingBatches(selectedClassId, selectedYear, selectedSemester, roster);
+      await loadBatchDocuments(publishedBatchId, effectiveJudul, inputKeterangan.trim(), roster);
+    } catch (err: any) {
       console.error('Error publishing:', err);
-      toast.error('Gagal mempublikasikan rapor');
+      const msg = err?.message || String(err);
+      setErrorMessage(msg);
+      toast.error(`Gagal mempublikasikan rapor: ${msg}`);
     } finally {
       setIsPublishing(false);
     }
@@ -773,7 +1027,7 @@ export default function OtherReportPage() {
 
   // Action: Tarik / Batalkan Publikasi
   const handleUnpublishBatch = async () => {
-    if (!calculatedBatchId) return;
+    if (!activeBatchId) return;
     const publishedRows = mappings.filter(m => m.studentId && m.fileId && m.dbStatus === 'PUBLISHED');
     if (publishedRows.length === 0) {
       toast.info('Tidak ada rapor berstatus terpublikasi dalam batch ini.');
@@ -781,7 +1035,7 @@ export default function OtherReportPage() {
     }
 
     const confirmUnpub = window.confirm(
-      `Apakah Anda yakin ingin menarik/membatalkan publikasi batch "${currentJudul}"? Siswa tidak akan dapat lagi melihat rapor ini di portal.`
+      `Apakah Anda yakin ingin menarik/membatalkan publikasi batch "${effectiveJudul}"? Siswa tidak akan dapat lagi melihat rapor ini di portal.`
     );
     if (!confirmUnpub) return;
 
@@ -790,7 +1044,8 @@ export default function OtherReportPage() {
 
     try {
       publishedRows.forEach(row => {
-        const docId = `${calculatedBatchId}_${row.studentId}`;
+        const studentIdKey = String(row.studentId).trim();
+        const docId = `${activeBatchId}_${studentIdKey}`;
         const ref = doc(db, 'jh_other_report_links', docId);
         batch.update(ref, {
           status: 'UNPUBLISHED',
@@ -800,11 +1055,14 @@ export default function OtherReportPage() {
       });
 
       await batch.commit();
-      toast.success(`Publikasi batch "${currentJudul}" berhasil ditarik.`);
-      loadExistingBatches();
-    } catch (err) {
+      toast.success(`Publikasi batch "${effectiveJudul}" berhasil ditarik.`);
+      await loadExistingBatches(selectedClassId, selectedYear, selectedSemester, roster);
+      await loadBatchDocuments(activeBatchId, effectiveJudul, inputKeterangan.trim(), roster);
+    } catch (err: any) {
       console.error('Error unpublishing batch:', err);
-      toast.error('Gagal menarik publikasi batch');
+      const msg = err?.message || String(err);
+      setErrorMessage(msg);
+      toast.error(`Gagal menarik publikasi batch: ${msg}`);
     } finally {
       setIsUnpublishing(false);
     }
@@ -812,7 +1070,7 @@ export default function OtherReportPage() {
 
   // Action: Arsipkan Batch
   const handleArchiveBatch = async () => {
-    if (!calculatedBatchId) return;
+    if (!activeBatchId) return;
     const savedRows = mappings.filter(m => m.studentId && m.fileId && m.dbStatus);
     if (savedRows.length === 0) {
       toast.info('Belum ada dokumen tersimpan di database dalam batch ini.');
@@ -820,7 +1078,7 @@ export default function OtherReportPage() {
     }
 
     const confirmArch = window.confirm(
-      `Apakah Anda yakin ingin mengarsipkan batch "${currentJudul}"?`
+      `Apakah Anda yakin ingin mengarsipkan batch "${effectiveJudul}"?`
     );
     if (!confirmArch) return;
 
@@ -829,7 +1087,8 @@ export default function OtherReportPage() {
 
     try {
       savedRows.forEach(row => {
-        const docId = `${calculatedBatchId}_${row.studentId}`;
+        const studentIdKey = String(row.studentId).trim();
+        const docId = `${activeBatchId}_${studentIdKey}`;
         const ref = doc(db, 'jh_other_report_links', docId);
         batch.update(ref, {
           status: 'ARCHIVED',
@@ -839,11 +1098,14 @@ export default function OtherReportPage() {
       });
 
       await batch.commit();
-      toast.success(`Batch "${currentJudul}" berhasil diarsipkan.`);
-      loadExistingBatches();
-    } catch (err) {
+      toast.success(`Batch "${effectiveJudul}" berhasil diarsipkan.`);
+      await loadExistingBatches(selectedClassId, selectedYear, selectedSemester, roster);
+      await loadBatchDocuments(activeBatchId, effectiveJudul, inputKeterangan.trim(), roster);
+    } catch (err: any) {
       console.error('Error archiving batch:', err);
-      toast.error('Gagal mengarsipkan batch');
+      const msg = err?.message || String(err);
+      setErrorMessage(msg);
+      toast.error(`Gagal mengarsipkan batch: ${msg}`);
     } finally {
       setIsArchiving(false);
     }
@@ -870,7 +1132,7 @@ export default function OtherReportPage() {
   // Statistics
   const stats = React.useMemo(() => {
     const total = roster.length;
-    const cocok = mappings.filter(m => m.studentId && m.fileId && m.status === 'Cocok').length;
+    const cocok = mappings.filter(m => m.studentId && m.fileId && (m.status === 'Cocok' || m.dbStatus)).length;
     const draft = mappings.filter(m => m.studentId && m.fileId && m.dbStatus === 'DRAFT').length;
     const published = mappings.filter(m => m.studentId && m.fileId && m.dbStatus === 'PUBLISHED').length;
     const pending = mappings.filter(m => m.studentId && !m.fileId).length;
@@ -899,6 +1161,29 @@ export default function OtherReportPage() {
         </div>
       </div>
 
+      {/* Error Banner */}
+      {errorMessage && (
+        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl flex items-start gap-3 text-xs shadow-xs">
+          <AlertCircle size={18} className="shrink-0 text-red-500 mt-0.5" />
+          <div className="space-y-1">
+            <div className="font-bold uppercase tracking-wider">Terjadi Kendala Memuat Data Firestore</div>
+            <div className="font-mono text-[11px] break-all">{errorMessage}</div>
+            {errorIndexUrl && (
+              <div>
+                <a
+                  href={errorIndexUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 underline font-semibold mt-1"
+                >
+                  Buat Composite Index di Firebase Console <ExternalLink size={12} />
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Filter & Batch Parameters */}
       <div className="bg-white rounded-xl border border-slate-100 p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b border-slate-50 pb-3 mb-2">
@@ -911,7 +1196,7 @@ export default function OtherReportPage() {
           {selectedBatchId !== 'NEW' && (
             <button
               onClick={() => handleSelectBatch('NEW')}
-              className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 transition-colors"
+              className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
             >
               <Plus size={14} /> Buat Judul Baru
             </button>
@@ -1041,7 +1326,7 @@ export default function OtherReportPage() {
                 {pasteText && (
                   <button 
                     onClick={handleClearPaste}
-                    className="text-[10px] font-bold text-slate-400 hover:text-slate-600 underline"
+                    className="text-[10px] font-bold text-slate-400 hover:text-slate-600 underline cursor-pointer"
                   >
                     Clear
                   </button>
@@ -1108,7 +1393,7 @@ export default function OtherReportPage() {
             <div className="flex items-center gap-2">
               <Users size={16} className="text-slate-600" />
               <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                Pratinjau Hasil Pemetaan: {currentJudul || '(Belum Ada Judul)'} ({filteredMappings.length} Baris)
+                Pratinjau Hasil Pemetaan: {effectiveJudul || '(Belum Ada Judul)'} ({filteredMappings.length} Baris)
               </h3>
             </div>
             <div className="w-full sm:w-72 relative">

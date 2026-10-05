@@ -2021,23 +2021,16 @@ service cloud.firestore {
     }
 
     match /jh_other_report_links/{linkId} {
-      allow get, list: if isActive() && (
-        isJuniorHighStaff() ||
-        isAdmin() ||
-        (isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED')
-      );
-      allow create, delete: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow get, list: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow get, list: if isActive() && isOwnStudentData(resource.data.studentId) && resource.data.status == 'PUBLISHED';
       allow update: if isActive() && (
-        isJuniorHighStaff() ||
-        isAdmin() ||
-        (
-          isOwnStudentData(resource.data.studentId) &&
-          resource.data.status == 'PUBLISHED' &&
-          request.resource.data.studentId == resource.data.studentId &&
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount', 'openedByEmail'
-          ])
-        )
+        isOwnStudentData(resource.data.studentId) &&
+        resource.data.status == 'PUBLISHED' &&
+        request.resource.data.studentId == resource.data.studentId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount', 'openedByEmail'
+        ])
       );
     }
 
