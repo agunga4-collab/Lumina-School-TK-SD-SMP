@@ -116,6 +116,29 @@ async function resolveStudentUserAccount(studentId: string, nisn?: string, stude
   return null;
 }
 
+export function getStudentDeliveryStatus(pub: any, track: any): 'NOT_PUBLISHED' | 'READY_TO_SEND' | 'SENT' | 'VIEWED' | 'WITHDRAWN' {
+  if (!pub) return 'NOT_PUBLISHED';
+  if (!track) return 'READY_TO_SEND';
+
+  const status = String(track.deliveryStatus || '').toUpperCase();
+  const activeForStudent = track.activeForStudent;
+
+  if (status === 'WITHDRAWN' || status === 'REVOKED' || activeForStudent === false) {
+    return 'WITHDRAWN';
+  }
+  if (status === 'VIEWED' || track.firstViewedAt || track.firstOpenedAt || track.lastViewedAt) {
+    return 'VIEWED';
+  }
+  if (status === 'SENT' || track.sentAt) {
+    return 'SENT';
+  }
+  if (status === 'READY_TO_SEND') {
+    return 'READY_TO_SEND';
+  }
+
+  return 'READY_TO_SEND';
+}
+
 export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps> = ({
   students,
   publishedReports,
@@ -319,8 +342,8 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
       const pub = publishedMap[st.id];
       if (!pub) return false;
       const track = deliveryTrackingMap[st.id];
-      if (!track) return true;
-      return track.deliveryStatus === 'READY_TO_SEND' || track.deliveryStatus === 'WITHDRAWN';
+      const statusKey = getStudentDeliveryStatus(pub, track);
+      return statusKey === 'READY_TO_SEND' || statusKey === 'WITHDRAWN';
     });
 
     if (readyTargets.length === 0) {
@@ -341,7 +364,8 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
         const trackingRef = doc(db, 'elem_midterm_delivery_tracking', docId);
 
         const existingTracking = deliveryTrackingMap[student.id];
-        const isResend = existingTracking && (existingTracking.deliveryStatus === 'SENT' || existingTracking.deliveryStatus === 'VIEWED');
+        const existingStatus = existingTracking ? getStudentDeliveryStatus(pubReport, existingTracking) : 'READY_TO_SEND';
+        const isResend = existingStatus === 'SENT' || existingStatus === 'VIEWED';
 
         const actorName = currentUser?.displayName || currentUser?.name || currentUser?.email || 'Guru / Admin';
         const actorUid = currentUser?.uid || 'system';
@@ -461,13 +485,14 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
       const track = deliveryTrackingMap[st.id];
 
       if (pub) {
-        if (!track || track.deliveryStatus === 'READY_TO_SEND') {
+        const statusKey = getStudentDeliveryStatus(pub, track);
+        if (statusKey === 'READY_TO_SEND') {
           ready++;
-        } else if (track.deliveryStatus === 'SENT') {
+        } else if (statusKey === 'SENT') {
           sent++;
-        } else if (track.deliveryStatus === 'VIEWED') {
+        } else if (statusKey === 'VIEWED') {
           viewed++;
-        } else if (track.deliveryStatus === 'WITHDRAWN') {
+        } else if (statusKey === 'WITHDRAWN') {
           withdrawn++;
           ready++; // Can be re-sent
         }
@@ -589,15 +614,7 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
               {filteredStudents.map((st, idx) => {
                 const pub = publishedMap[st.id];
                 const track = deliveryTrackingMap[st.id];
-
-                let statusKey = 'NOT_PUBLISHED';
-                if (pub) {
-                  if (track?.deliveryStatus) {
-                    statusKey = track.deliveryStatus;
-                  } else {
-                    statusKey = 'READY_TO_SEND';
-                  }
-                }
+                const statusKey = getStudentDeliveryStatus(pub, track);
 
                 return (
                   <tr key={st.id} className="hover:bg-slate-50/80 transition-colors">
