@@ -549,7 +549,7 @@ export const ElementaryMidtermRekapTab: React.FC<ElementaryMidtermRekapTabProps>
           </div>
 
           <div className="bg-blue-50/70 border border-blue-200/60 rounded-2xl p-3.5 space-y-1">
-            <span className="text-[10px] font-black uppercase text-blue-700 tracking-wider">Terkirim</span>
+            <span className="text-[10px] font-black uppercase text-blue-700 tracking-wider">Terkirim (Belum Dilihat)</span>
             <p className="text-xl font-black text-blue-800">{trackingSummary.sent}</p>
           </div>
 
