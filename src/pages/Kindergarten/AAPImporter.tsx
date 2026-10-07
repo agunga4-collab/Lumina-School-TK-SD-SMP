@@ -75,6 +75,7 @@ export default function AAPImporter({
     isMismatched: boolean;
     mismatchReason?: string;
   }[]>([]);
+  const [excelClassName, setExcelClassName] = React.useState<string>('');
   
   // Detail Modal state
   const [selectedRowIdxForDetail, setSelectedRowIdxForDetail] = React.useState<number | null>(null);
@@ -239,6 +240,7 @@ export default function AAPImporter({
     setIsParsed(false);
     setSelectedRowIdxForDetail(null);
     setDetectedAspectsMeta([]);
+    setExcelClassName('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -266,6 +268,10 @@ export default function AAPImporter({
         return;
       }
 
+      // Read Class Name from B2 (row index 1, column index 1)
+      const classNameFromExcel = rows[1]?.[1] ? String(rows[1][1]).trim() : '';
+      setExcelClassName(classNameFromExcel);
+
       // Helper to resolve aspect standard name
       const getAspectFromHeader = (text: string): string | null => {
         const t = String(text || '').toLowerCase().trim();
@@ -279,78 +285,79 @@ export default function AAPImporter({
 
       // Detect headers and aspects
       let aspectRowIdx = -1;
-      let indicatorRowIdx = -1;
-      let nameColIdx = 1; // Default column B
-      let noColIdx = 0;   // Default column A
-
       for (let r = 0; r < Math.min(rows.length, 15); r++) {
         const row = rows[r];
         if (!row) continue;
-        
-        // Look for any cells with "no", "nama", "full name", "nama siswa"
-        const hasHeaderMarkers = row.some((cell: any) => {
-          if (cell === null || cell === undefined) return false;
-          const s = String(cell).toLowerCase().trim();
-          return s === 'no' || s === 'nama' || s === 'full name' || s === 'nama siswa';
-        });
-
-        if (hasHeaderMarkers) {
-          indicatorRowIdx = r;
-          
-          row.forEach((cell: any, cIdx: number) => {
-            if (cell === null || cell === undefined) return;
-            const s = String(cell).toLowerCase().trim();
-            if (s === 'nama' || s === 'full name' || s === 'nama siswa') {
-              nameColIdx = cIdx;
-            } else if (s === 'no') {
-              noColIdx = cIdx;
-            }
-          });
+        const hasAspectMarker = row.some(cell => cell && String(cell).toLowerCase().includes('aspek'));
+        if (hasAspectMarker) {
+          aspectRowIdx = r;
           break;
         }
       }
 
-      if (indicatorRowIdx === -1) {
-        toast.error('Tidak menemukan baris Header tabel di dalam Excel (Kolom "No" atau "Nama" tidak terdeteksi di 15 baris pertama).');
+      if (aspectRowIdx === -1) {
+        toast.error('Tidak menemukan baris Header Aspek (yang berisi kata "Aspek") di dalam Excel.');
         return;
       }
 
-      // Robustly detect aspectRowIdx by scanning which row contains the most cells matching our known aspects
-      let bestAspectRowIdx = -1;
-      let maxAspectCount = 0;
-      for (let r = 0; r < Math.min(rows.length, 15); r++) {
-        const row = rows[r];
-        if (!row) continue;
-        if (r === indicatorRowIdx) continue;
-        let count = 0;
-        row.forEach((cell: any) => {
-          if (cell && getAspectFromHeader(cell)) {
-            count++;
+      const indicatorRowIdx = aspectRowIdx + 1;
+      const dataStartRowIdx = indicatorRowIdx + 1;
+
+      // Find Name Column Index dynamically (with header "Full Name")
+      let nameColIdx = -1;
+      const aspectRow = rows[aspectRowIdx];
+      const indicatorRow = rows[indicatorRowIdx];
+
+      aspectRow.forEach((cell, idx) => {
+        if (cell && (String(cell).toLowerCase().trim() === 'full-name' || String(cell).toLowerCase().trim() === 'full name')) {
+          nameColIdx = idx;
+        }
+      });
+      if (nameColIdx === -1) {
+        indicatorRow.forEach((cell, idx) => {
+          if (cell && (String(cell).toLowerCase().trim() === 'full-name' || String(cell).toLowerCase().trim() === 'full name' || String(cell).toLowerCase().trim() === 'nama' || String(cell).toLowerCase().trim() === 'nama siswa')) {
+            nameColIdx = idx;
           }
         });
-        if (count > maxAspectCount) {
-          maxAspectCount = count;
-          bestAspectRowIdx = r;
-        }
+      }
+      if (nameColIdx === -1) {
+        nameColIdx = 1; // Fallback to column B
       }
 
-      aspectRowIdx = bestAspectRowIdx !== -1 ? bestAspectRowIdx : indicatorRowIdx;
-
       // Map aspect column starts
-      const aspectHeaders: { colIdx: number; aspectName: string }[] = [];
-      const aspectRow = rows[aspectRowIdx];
+      const aspectHeaders: { colIdx: number; aspectName: string; rawHeader: string }[] = [];
       aspectRow.forEach((cell: any, colIdx: number) => {
         if (!cell) return;
         const aspectName = getAspectFromHeader(cell);
         if (aspectName) {
           // Avoid duplicate aspect column headers
           if (!aspectHeaders.some(h => h.aspectName === aspectName)) {
-            aspectHeaders.push({ colIdx, aspectName });
+            aspectHeaders.push({ colIdx, aspectName, rawHeader: String(cell) });
           }
         }
       });
 
       aspectHeaders.sort((a, b) => a.colIdx - b.colIdx);
+
+      // Find DJ3:DM3 = BB, MB, BSH, BSB (kolom ringkasan)
+      let summaryStartColIdx = -1;
+      const lastAspectColIdx = aspectHeaders[aspectHeaders.length - 1]?.colIdx || 0;
+      for (let c = lastAspectColIdx; c < indicatorRow.length; c++) {
+        const cellVal = String(aspectRow[c] || '').toUpperCase().trim();
+        const indVal = String(indicatorRow[c] || '').toUpperCase().trim();
+        if (cellVal === 'BB' || cellVal === 'MB' || cellVal === 'BSH' || cellVal === 'BSB' ||
+            indVal === 'BB' || indVal === 'MB' || indVal === 'BSH' || indVal === 'BSB' ||
+            indVal === '1' || indVal === '2' || indVal === '3' || indVal === '4' ||
+            cellVal === '1' || cellVal === '2' || cellVal === '3' || cellVal === '4' ||
+            indVal === 'JML BB' || indVal === 'JUMLAH BB') {
+          summaryStartColIdx = c;
+          break;
+        }
+      }
+
+      if (summaryStartColIdx === -1) {
+        summaryStartColIdx = indicatorRow.length;
+      }
 
       interface AspectColumnMap {
         aspectName: string;
@@ -361,40 +368,35 @@ export default function AAPImporter({
       }
 
       const aspectColumnMaps: AspectColumnMap[] = [];
-      const indicatorRow = rows[indicatorRowIdx];
 
-      aspectHeaders.forEach((aspectHeader, idx) => {
+      aspectHeaders.forEach((aspectHeader, i) => {
         const startColIdx = aspectHeader.colIdx;
+        const endColIdx = (i < aspectHeaders.length - 1) 
+          ? aspectHeaders[i+1].colIdx 
+          : summaryStartColIdx;
+
+        const indicators: { colIdx: number; label: string }[] = [];
         let analysisColIdx = -1;
         let recommendationColIdx = -1;
 
-        // Scan from startColIdx to find "Analisis" or "Rekomendasi" or "Stimulasi" column of this aspect
-        for (let c = startColIdx; c < indicatorRow.length; c++) {
-          const cellVal = String(indicatorRow[c] || '').toLowerCase().trim();
-          // We look for 'analisis' or 'rekomendasi' or 'stimulasi' to determine closing columns
-          if (cellVal.includes('analisis') || cellVal.includes('rekomendasi') || cellVal.includes('stimulasi')) {
+        for (let c = startColIdx; c < endColIdx; c++) {
+          const detailVal = indicatorRow[c];
+          if (detailVal === null || detailVal === undefined) continue;
+          const detailStr = String(detailVal).trim();
+          if (detailStr === '') continue;
+
+          // Check for special columns
+          if (detailStr === 'Analisis Perkembangan') {
             analysisColIdx = c;
-            if (c + 1 < indicatorRow.length) {
-              recommendationColIdx = c + 1;
+          } else if (detailStr === 'Rekomendasi Stimulasi') {
+            recommendationColIdx = c;
+          } else {
+            // Check if numeric (like 11, 12... 20)
+            const isNum = !isNaN(Number(detailStr)) && detailStr !== '';
+            if (!isNum) {
+              indicators.push({ colIdx: c, label: detailStr });
             }
-            break;
           }
-        }
-
-        if (analysisColIdx === -1) {
-          analysisColIdx = startColIdx + 9;
-          recommendationColIdx = startColIdx + 10;
-        }
-
-        // Collect indicators inside the Excel
-        const indicators: { colIdx: number; label: string }[] = [];
-        for (let c = startColIdx; c < analysisColIdx; c++) {
-          const label = String(indicatorRow[c] || '').trim();
-          // Filter out other metadata columns if any
-          indicators.push({
-            colIdx: c,
-            label: label || `Indikator ${c - startColIdx + 1}`
-          });
         }
 
         aspectColumnMaps.push({
@@ -434,11 +436,22 @@ export default function AAPImporter({
       indicatorRow.forEach((cell: any, cIdx: number) => {
         if (!cell) return;
         const s = String(cell).toUpperCase().trim();
-        if (s === 'BB' || s === 'JML BB' || s === 'JUMLAH BB' || s === 'TOTAL BB' || s === 'JML_BB') summaryColBB = cIdx;
-        else if (s === 'MB' || s === 'JML MB' || s === 'JUMLAH MB' || s === 'TOTAL MB' || s === 'JML_MB') summaryColMB = cIdx;
-        else if (s === 'BSH' || s === 'JML BSH' || s === 'JUMLAH BSH' || s === 'TOTAL BSH' || s === 'JML_BSH') summaryColBSH = cIdx;
-        else if (s === 'BSB' || s === 'JML BSB' || s === 'JUMLAH BSB' || s === 'TOTAL BSB' || s === 'JML_BSB') summaryColBSB = cIdx;
+        if (s === 'BB' || s === 'JML BB' || s === 'JUMLAH BB' || s === 'TOTAL BB' || s === 'JML_BB' || s === '1') summaryColBB = cIdx;
+        else if (s === 'MB' || s === 'JML MB' || s === 'JUMLAH MB' || s === 'TOTAL MB' || s === 'JML_MB' || s === '2') summaryColMB = cIdx;
+        else if (s === 'BSH' || s === 'JML BSH' || s === 'JUMLAH BSH' || s === 'TOTAL BSH' || s === 'JML_BSH' || s === '3') summaryColBSH = cIdx;
+        else if (s === 'BSB' || s === 'JML BSB' || s === 'JUMLAH BSB' || s === 'TOTAL BSB' || s === 'JML_BSB' || s === '4') summaryColBSB = cIdx;
       });
+
+      if (summaryColBB === -1 || summaryColMB === -1 || summaryColBSH === -1 || summaryColBSB === -1) {
+        aspectRow.forEach((cell: any, cIdx: number) => {
+          if (!cell) return;
+          const s = String(cell).toUpperCase().trim();
+          if (s === 'BB' || s === 'JML BB' || s === 'JUMLAH BB' || s === 'TOTAL BB' || s === 'JML_BB' || s === '1') summaryColBB = cIdx;
+          else if (s === 'MB' || s === 'JML MB' || s === 'JUMLAH MB' || s === 'TOTAL MB' || s === 'JML_MB' || s === '2') summaryColMB = cIdx;
+          else if (s === 'BSH' || s === 'JML BSH' || s === 'JUMLAH BSH' || s === 'TOTAL BSH' || s === 'JML_BSH' || s === '3') summaryColBSH = cIdx;
+          else if (s === 'BSB' || s === 'JML BSB' || s === 'JUMLAH BSB' || s === 'TOTAL BSB' || s === 'JML_BSB' || s === '4') summaryColBSB = cIdx;
+        });
+      }
 
       const getExcelNum = (val: any) => {
         if (val === undefined || val === null || val === '') return 0;
@@ -473,10 +486,10 @@ export default function AAPImporter({
       setDetectedAspectsMeta(meta);
 
       const tempRows: ParsedRow[] = [];
-      const studentDataRows = rows.slice(indicatorRowIdx + 1);
+      const studentDataRows = rows.slice(dataStartRowIdx);
 
       studentDataRows.forEach((row, relativeRowIdx) => {
-        const actualExcelRowIndex = indicatorRowIdx + 1 + relativeRowIdx + 1; // 1-based row index in Excel
+        const actualExcelRowIndex = dataStartRowIdx + relativeRowIdx + 1; // 1-based row index in Excel
         if (!row || row.length === 0) return;
 
         const nameVal = row[nameColIdx];
@@ -536,6 +549,15 @@ export default function AAPImporter({
             };
           });
 
+          // Pre-calculate score metrics to ensure we match Excel's rules
+          const rawScore = indicatorsPayload.reduce((sum, item) => {
+            const val = typeof item.score === 'number' ? item.score : 1;
+            return sum + val;
+          }, 0);
+          const maxScore = indicatorsPayload.length * 4;
+          const percentage = maxScore > 0 ? Math.round((rawScore / maxScore) * 100) : 0;
+          const stage = getStageFromPercentage(percentage);
+
           const analysisRaw = aspectMap.analysisColIdx !== -1 ? row[aspectMap.analysisColIdx] : null;
           const analysis = (analysisRaw !== undefined && analysisRaw !== null && String(analysisRaw).trim() !== '') ? String(analysisRaw).trim() : null;
 
@@ -545,6 +567,10 @@ export default function AAPImporter({
           return {
             aspectName: aspectMap.aspectName,
             indicators: indicatorsPayload,
+            rawScore,
+            maxScore,
+            percentage,
+            stage,
             analysis,
             stimulationRecommendation
           };
@@ -1033,6 +1059,8 @@ export default function AAPImporter({
                 <p className="font-extrabold uppercase tracking-wide">Validasi Berhasil di-Generate</p>
                 <div className="text-indigo-700 mt-1 space-y-1">
                   <p>Berkas: <strong className="font-extrabold text-indigo-950">{selectedFile?.name}</strong> • Sheet: <strong className="font-extrabold text-indigo-950">{selectedSheetName}</strong></p>
+                  <p>Nama Kelas di Excel: <strong className="font-extrabold text-indigo-950">{excelClassName || 'Tidak Terdeteksi'}</strong></p>
+                  <p>Jumlah Siswa Terdeteksi: <strong className="font-extrabold text-indigo-950">{parsedRows.length} Siswa</strong></p>
                   <p>Menghubungkan ke kelas: <strong className="font-extrabold text-indigo-950">{selectedClass?.name}</strong> ({ageRangeUsed} Tahun)</p>
                 </div>
               </div>
@@ -1045,6 +1073,26 @@ export default function AAPImporter({
               <RefreshCw size={12} /> Ganti File Excel
             </button>
           </div>
+
+          {/* Contoh Narasi Siswa Pertama */}
+          {parsedRows.length > 0 && (
+            <div className="bg-indigo-50/30 border border-indigo-100/50 rounded-3xl p-6 space-y-4 shadow-sm">
+              <h4 className="text-xs font-black text-indigo-950 uppercase tracking-widest flex items-center gap-2">
+                <Sparkles size={14} className="text-indigo-600" /> Contoh Narasi Siswa Pertama: <span className="text-gray-900 font-extrabold uppercase">{parsedRows[0].pastedName}</span>
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {parsedRows[0].aspectsData.map((asp, idx) => (
+                  <div key={idx} className="bg-white p-4 rounded-2xl border border-gray-100 space-y-2 text-xs">
+                    <span className="font-black text-indigo-700 uppercase text-[10px] tracking-wider block border-b border-gray-50 pb-1.5">{asp.aspectName}</span>
+                    <div className="space-y-1.5 text-gray-600">
+                      <p className="leading-relaxed"><strong className="text-gray-900">Analisis:</strong> {asp.analysis || <span className="text-gray-300 italic">Tidak ada narasi</span>}</p>
+                      <p className="leading-relaxed"><strong className="text-gray-900">Rekomendasi:</strong> {asp.stimulationRecommendation || <span className="text-gray-300 italic">Tidak ada narasi</span>}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Preview Struktur Aspek & Indikator dari Excel */}
           <div className="bg-white border border-gray-150 rounded-3xl p-6 space-y-4 shadow-sm">
