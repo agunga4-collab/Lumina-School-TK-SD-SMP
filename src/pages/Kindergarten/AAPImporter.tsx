@@ -372,31 +372,61 @@ export default function AAPImporter({
       aspectHeaders.forEach((aspectHeader, i) => {
         const startColIdx = aspectHeader.colIdx;
         const endColIdx = (i < aspectHeaders.length - 1) 
-          ? aspectHeaders[i+1].colIdx 
-          : summaryStartColIdx;
+          ? aspectHeaders[i+1].colIdx - 1
+          : summaryStartColIdx - 1;
 
-        const indicators: { colIdx: number; label: string }[] = [];
+        // Dynamic scanner to find 'Analisis' and 'Rekomendasi' column indices in this block
         let analysisColIdx = -1;
         let recommendationColIdx = -1;
 
-        for (let c = startColIdx; c < endColIdx; c++) {
+        for (let c = startColIdx; c <= endColIdx; c++) {
           const detailVal = indicatorRow[c];
           if (detailVal === null || detailVal === undefined) continue;
-          const detailStr = String(detailVal).trim();
-          if (detailStr === '') continue;
+          const detailStr = String(detailVal).trim().toLowerCase();
 
-          // Check for special columns
-          if (detailStr === 'Analisis Perkembangan') {
+          if (detailStr.includes('analisis') || detailStr.includes('analysis') || detailStr.includes('perkembangan')) {
             analysisColIdx = c;
-          } else if (detailStr === 'Rekomendasi Stimulasi') {
+          } else if (detailStr.includes('rekomendasi') || detailStr.includes('recommendation') || detailStr.includes('stimulasi')) {
             recommendationColIdx = c;
-          } else {
-            // Check if numeric (like 11, 12... 20)
-            const isNum = !isNaN(Number(detailStr)) && detailStr !== '';
-            if (!isNum) {
-              indicators.push({ colIdx: c, label: detailStr });
+          }
+        }
+
+        // Robust fallbacks if headers are missing or differently labeled
+        if (analysisColIdx === -1) {
+          analysisColIdx = endColIdx - 1;
+        }
+        if (recommendationColIdx === -1) {
+          recommendationColIdx = endColIdx;
+        }
+
+        const indicators: { colIdx: number; label: string }[] = [];
+        for (let c = startColIdx; c <= endColIdx; c++) {
+          if (c === analysisColIdx || c === recommendationColIdx) continue;
+
+          const detailVal = indicatorRow[c];
+          const cellStr = detailVal !== null && detailVal !== undefined ? String(detailVal).trim() : '';
+
+          // Skip unused slot numbers like "11", "12" ... "20"
+          const isNum = !isNaN(Number(cellStr)) && cellStr !== '';
+          if (isNum) continue;
+
+          // Skip empty columns unless it is the first column of the block
+          if (cellStr === '' && c !== startColIdx) {
+            continue;
+          }
+
+          let label = cellStr;
+          if (label === '') {
+            // Fallback to Row 3 aspect name if exists
+            const aspectCell = aspectRow[c];
+            if (aspectCell !== undefined && aspectCell !== null && String(aspectCell).trim() !== '') {
+              label = String(aspectCell).trim();
+            } else {
+              label = `Indikator ${c - startColIdx + 1}`;
             }
           }
+
+          indicators.push({ colIdx: c, label });
         }
 
         aspectColumnMaps.push({
@@ -798,7 +828,7 @@ export default function AAPImporter({
         const docId = `${row.matchedStudentId}_${activeYear.replace('/', '_')}`;
         const aapPayload = {
           studentId: row.matchedStudentId,
-          studentName: student.name,
+          studentName: row.pastedName || student.name,
           classId: selectedClassId,
           className: selectedClass?.name || 'Unknown Class',
           academicYear: activeYear,

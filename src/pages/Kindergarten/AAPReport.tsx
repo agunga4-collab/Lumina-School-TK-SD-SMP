@@ -112,8 +112,8 @@ const processMidtermReviews = (aspectReviewsData: any) => {
   AAP_ASPECTS.forEach(aspect => {
     processed[aspect] = {
       summary: '',
-      progressRating: 'MB',
-      followupDecision: 'Lanjutkan',
+      progressRating: '',
+      followupDecision: '',
       teacherNotes: '',
       recommendation: ''
     };
@@ -479,8 +479,8 @@ export default function AAPReport() {
 
         initialForm[aspect] = {
           summary: '', // Blank initially, filled by teacher
-          progressRating: suggestedRating,
-          followupDecision: 'Lanjutkan',
+          progressRating: '',
+          followupDecision: '',
           teacherNotes: '', // Blank initially, filled by teacher
           recommendation: '' // Blank initially, filled by teacher
         };
@@ -3131,99 +3131,6 @@ export default function AAPReport() {
                                   )}
                                 </div>
                               </div>
-
-                              {/* Section 2: Rencana Tindak Lanjut */}
-                              <div className="space-y-2">
-                                <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                                  <ClipboardCheck size={12} className="text-indigo-600" /> Rencana Stimulasi Terkini
-                                </h5>
-                                <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-3 text-[11px] leading-relaxed">
-                                  {plan.hasPlan ? (
-                                    <>
-                                      <div>
-                                        <span className="font-bold text-gray-900">Target Perkembangan:</span>
-                                        <p className="text-gray-600 mt-0.5 font-medium">{plan.targetDevelopment || '-'}</p>
-                                      </div>
-                                      <div>
-                                        <span className="font-bold text-gray-900">Strategi & Aktivitas:</span>
-                                        <p className="text-gray-600 mt-0.5">{plan.stimulationStrategy || '-'}</p>
-                                      </div>
-                                      <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-                                        <div>
-                                          <span className="font-bold text-gray-900">Frekuensi:</span>
-                                          <p className="text-gray-600 font-medium">{plan.frequency || '-'}</p>
-                                        </div>
-                                        <div>
-                                          <span className="font-bold text-gray-900">Periode:</span>
-                                          <p className="text-gray-600 font-medium">
-                                            {plan.startDate || plan.endDate ? `${plan.startDate || '-'} s/d ${plan.endDate || '-'}` : '-'}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <div className="text-center py-2 text-gray-400 italic">
-                                      Belum ada rencana stimulasi dibuat untuk aspek ini.
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Section 3: Bukti Pelaksanaan */}
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                                    <Paperclip size={12} className="text-indigo-600" /> Bukti Pelaksanaan ({aspectEvidences.length})
-                                  </h5>
-                                  {aspectEvidences.length > 3 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setAllEvidenceModalAspectId(aspectName)}
-                                      className="text-[9px] font-black text-indigo-600 uppercase tracking-wider hover:underline cursor-pointer"
-                                    >
-                                      Lihat Semua ({aspectEvidences.length})
-                                    </button>
-                                  )}
-                                </div>
-
-                                {aspectEvidences.length === 0 ? (
-                                  <div className="bg-amber-50/50 border border-amber-150 rounded-2xl p-4 text-center">
-                                    <p className="text-[10px] text-amber-700 font-extrabold leading-normal">
-                                      Belum ada bukti pelaksanaan terhubung.
-                                    </p>
-                                    <p className="text-[9px] text-amber-600/80 leading-normal mt-0.5">
-                                      Review tengah semester dapat tetap disimpan sebagai draf tanpa melampirkan bukti.
-                                    </p>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-2">
-                                    {aspectEvidences.slice(0, 3).map((ev: any) => (
-                                      <div key={ev.id} className="bg-white border border-gray-150 rounded-2xl p-3 space-y-1.5 text-[10px] leading-relaxed relative hover:border-gray-300 transition-colors">
-                                        <div className="flex items-center justify-between gap-2">
-                                          <span className="font-extrabold text-gray-800 line-clamp-1">{ev.cachedTitle}</span>
-                                          <span className="text-[8px] font-mono text-gray-400 shrink-0 uppercase">
-                                            {ev.evidenceDate ? new Date(ev.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'}) : ''}
-                                          </span>
-                                        </div>
-                                        {ev.teacherRelevanceNote && (
-                                          <p className="text-gray-500 italic bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                            " {ev.teacherRelevanceNote} "
-                                          </p>
-                                        )}
-                                        <div className="flex justify-end gap-1.5 pt-1">
-                                          <button
-                                            type="button"
-                                            onClick={() => handleOpenDetailView(ev)}
-                                            className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 cursor-pointer"
-                                          >
-                                            Lihat Detail
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
                             </div>
 
                             {/* RIGHT COLUMN: CATATAN MIDTERM (kosong, diisi guru) */}
@@ -3266,7 +3173,8 @@ export default function AAPReport() {
                                         if (bStage === 'BT') bStage = 'BB';
                                         if (bStage === 'MH') bStage = 'BSB';
 
-                                        let mStage = aspectForm.progressRating || 'MB';
+                                        let mStage = aspectForm.progressRating;
+                                        if (!mStage) return null; // Hide if empty
                                         if (mStage === 'BT') mStage = 'BB';
                                         if (mStage === 'MH') mStage = 'BSB';
 
@@ -3302,10 +3210,11 @@ export default function AAPReport() {
                                       })()}
                                     </label>
                                     <select
-                                      value={aspectForm.progressRating || 'MB'}
+                                      value={aspectForm.progressRating || ''}
                                       onChange={(e) => updateAspectFormField('progressRating', e.target.value)}
                                       className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                                     >
+                                      <option value="">Pilih penilaian...</option>
                                       <option value="BB">Belum Berkembang (BB)</option>
                                       <option value="MB">Mulai Berkembang (MB)</option>
                                       <option value="BSH">Berkembang Sesuai Harapan (BSH)</option>
@@ -3319,10 +3228,11 @@ export default function AAPReport() {
                                       Keputusan Tindak Lanjut <span className="text-rose-500">*</span>
                                     </label>
                                     <select
-                                      value={aspectForm.followupDecision || 'Lanjutkan'}
+                                      value={aspectForm.followupDecision || ''}
                                       onChange={(e) => updateAspectFormField('followupDecision', e.target.value)}
                                       className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                                     >
+                                      <option value="">Pilih keputusan...</option>
                                       <option value="Lanjutkan">Lanjutkan Rencana</option>
                                       <option value="Ubah Kegiatan">Ubah Kegiatan</option>
                                       <option value="Naikkan Target">Naikkan Target</option>

@@ -617,6 +617,8 @@ export default function AAPAssessment() {
               const isAssessed = !!assessments[student.id];
               const isExpanded = expandedStudentId === student.id;
 
+              const displayName = assessments[student.id]?.studentName || student.name;
+
               return (
                 <div 
                   key={student.id}
@@ -632,10 +634,10 @@ export default function AAPAssessment() {
                     {/* Student Metadata & Initials */}
                     <div className="flex items-center gap-4">
                       <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white font-black text-lg flex items-center justify-center shadow-md select-none shrink-0">
-                        {student.name.charAt(0)}
+                        {displayName.charAt(0)}
                       </div>
                       <div className="space-y-1 min-w-0">
-                        <h4 className="text-base font-black text-gray-900 tracking-tight leading-tight uppercase truncate">{student.name}</h4>
+                        <h4 className="text-base font-black text-gray-900 tracking-tight leading-tight uppercase truncate">{displayName}</h4>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[10px] font-bold text-gray-400 font-mono uppercase tracking-tight">NIS: {student.id}</span>
                           <span className="w-1 h-1 rounded-full bg-gray-300"></span>
