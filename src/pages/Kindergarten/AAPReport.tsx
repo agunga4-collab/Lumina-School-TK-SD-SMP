@@ -33,6 +33,8 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useTeacherAssignedClasses } from '../../hooks/useTeacherAssignedClasses';
 
+const SHOW_FOLLOWUP_TAB = true;
+
 const KM_ASPECTS = [
   {
     id: 'nilai_agama_budi_pekerti',
@@ -43,7 +45,7 @@ const KM_ASPECTS = [
   {
     id: 'jati_diri',
     name: 'Jati Diri',
-    aapAspects: ['Motorik Kasar', 'Motorik Halus', 'Sosial & Kemandirian'],
+    aapAspects: ['Motorik Kasar', 'Motorik Halus'],
     description: 'Identitas diri, emosi, motorik kasar & halus'
   },
   {
@@ -53,6 +55,103 @@ const KM_ASPECTS = [
     description: 'Kemampuan bahasa, berpikir logis, matematika, sains, seni'
   }
 ];
+
+const processFollowupPlans = (plansData: any) => {
+  const processed: Record<string, any> = {};
+  AAP_ASPECTS.forEach(aspect => {
+    processed[aspect] = {
+      aspectId: aspect,
+      aspectName: aspect,
+      hasPlan: false,
+      status: 'Belum Ada Rencana',
+      aapSummary: '',
+      aapRecommendation: '',
+      targetDevelopment: '',
+      stimulationStrategy: '',
+      frequency: '',
+      pelaksana: 'Guru & Orang Tua',
+      indikatorKeberhasilan: 'Anak menunjukkan kemajuan perilaku sesuai target stimulasi',
+      startDate: '',
+      endDate: '',
+      teacherNotes: '',
+      history: []
+    };
+  });
+  if (!plansData) return processed;
+
+  // Direct mapping of AAP aspects
+  AAP_ASPECTS.forEach(aspect => {
+    if (plansData[aspect]) {
+      processed[aspect] = {
+        ...processed[aspect],
+        ...plansData[aspect],
+        hasPlan: plansData[aspect].hasPlan ?? (plansData[aspect].status && plansData[aspect].status !== 'Belum Ada Rencana')
+      };
+    }
+  });
+
+  // Backward compatibility check for KM aspects
+  if (!plansData['Motorik Kasar'] && !plansData['Motorik Halus'] && !plansData['Bahasa'] && !plansData['Kognitif'] && !plansData['Sosial & Kemandirian']) {
+    if (plansData['nilai_agama_budi_pekerti']) {
+      processed['Sosial & Kemandirian'] = { ...processed['Sosial & Kemandirian'], ...plansData['nilai_agama_budi_pekerti'], hasPlan: true };
+    }
+    if (plansData['jati_diri']) {
+      processed['Motorik Kasar'] = { ...processed['Motorik Kasar'], ...plansData['jati_diri'], hasPlan: true };
+      processed['Motorik Halus'] = { ...processed['Motorik Halus'], ...plansData['jati_diri'], hasPlan: true };
+    }
+    if (plansData['literasi_sains']) {
+      processed['Bahasa'] = { ...processed['Bahasa'], ...plansData['literasi_sains'], hasPlan: true };
+      processed['Kognitif'] = { ...processed['Kognitif'], ...plansData['literasi_sains'], hasPlan: true };
+    }
+  }
+  return processed;
+};
+
+const processMidtermReviews = (aspectReviewsData: any) => {
+  const processed: Record<string, any> = {};
+  AAP_ASPECTS.forEach(aspect => {
+    processed[aspect] = {
+      summary: '',
+      progressRating: 'MB',
+      followupDecision: 'Lanjutkan',
+      teacherNotes: '',
+      recommendation: ''
+    };
+  });
+  if (!aspectReviewsData) return processed;
+
+  AAP_ASPECTS.forEach(aspect => {
+    if (aspectReviewsData[aspect]) {
+      processed[aspect] = { ...processed[aspect], ...aspectReviewsData[aspect] };
+    }
+  });
+
+  // Backward compatibility check for KM aspects
+  if (!aspectReviewsData['Motorik Kasar'] && !aspectReviewsData['Motorik Halus'] && !aspectReviewsData['Bahasa'] && !aspectReviewsData['Kognitif'] && !aspectReviewsData['Sosial & Kemandirian']) {
+    if (aspectReviewsData['nilai_agama_budi_pekerti']) {
+      processed['Sosial & Kemandirian'] = { ...processed['Sosial & Kemandirian'], ...aspectReviewsData['nilai_agama_budi_pekerti'] };
+    }
+    if (aspectReviewsData['jati_diri']) {
+      processed['Motorik Kasar'] = { ...processed['Motorik Kasar'], ...aspectReviewsData['jati_diri'] };
+      processed['Motorik Halus'] = { ...processed['Motorik Halus'], ...aspectReviewsData['jati_diri'] };
+    }
+    if (aspectReviewsData['literasi_sains']) {
+      processed['Bahasa'] = { ...processed['Bahasa'], ...aspectReviewsData['literasi_sains'] };
+      processed['Kognitif'] = { ...processed['Kognitif'], ...aspectReviewsData['literasi_sains'] };
+    }
+  }
+
+  // Map legacy ratings for processed aspects (BT -> BB, MH -> BSB)
+  AAP_ASPECTS.forEach(aspect => {
+    if (processed[aspect].progressRating === 'BT') {
+      processed[aspect].progressRating = 'BB';
+    } else if (processed[aspect].progressRating === 'MH') {
+      processed[aspect].progressRating = 'BSB';
+    }
+  });
+
+  return processed;
+};
 
 const getDraftForAspect = (aspectId: string, assessment: any) => {
   if (!assessment || !assessment.aspects) return { summary: '', recommendation: '' };
@@ -70,19 +169,16 @@ const getDraftForAspect = (aspectId: string, assessment: any) => {
   } else if (aspectId === 'jati_diri') {
     const mk = getAspectData('Motorik Kasar');
     const mh = getAspectData('Motorik Halus');
-    const s = getAspectData('Sosial & Kemandirian');
 
     const mkDesc = mk.analysis || AAP_DEVELOPMENT_ANALYSIS['Motorik Kasar']?.[mk.stage as any] || 'Siswa menunjukkan perkembangan fisik kasar sesuai tahapan.';
     const mhDesc = mh.analysis || AAP_DEVELOPMENT_ANALYSIS['Motorik Halus']?.[mh.stage as any] || 'Siswa menunjukkan perkembangan fisik halus sesuai tahapan.';
-    const sDesc = s.analysis || AAP_DEVELOPMENT_ANALYSIS['Sosial & Kemandirian']?.[s.stage as any] || 'Siswa menunjukkan perkembangan sosial emosional sesuai tahapan.';
 
     const mkRec = mk.stimulationRecommendation || AAP_RECOMMENDATIONS['Motorik Kasar']?.[mk.stage as any] || 'Sediakan latihan fisik motorik terstruktur.';
     const mhRec = mh.stimulationRecommendation || AAP_RECOMMENDATIONS['Motorik Halus']?.[mh.stage as any] || 'Latih koordinasi mata-tangan secara teratur.';
-    const sRec = s.stimulationRecommendation || AAP_RECOMMENDATIONS['Sosial & Kemandirian']?.[s.stage as any] || 'Sediakan bimbingan kemandirian seimbang.';
 
     return {
-      summary: `• Motorik Kasar (${mk.stage || '-'}): ${mkDesc}\n• Motorik Halus (${mh.stage || '-'}): ${mhDesc}\n• Sosial & Kemandirian (${s.stage || '-'}): ${sDesc}`,
-      recommendation: `• Motorik Kasar: ${mkRec}\n• Motorik Halus: ${mhRec}\n• Sosial & Kemandirian: ${sRec}`
+      summary: `• Motorik Kasar (${mk.stage || '-'}): ${mkDesc}\n• Motorik Halus (${mh.stage || '-'}): ${mhDesc}`,
+      recommendation: `• Motorik Kasar: ${mkRec}\n• Motorik Halus: ${mhRec}`
     };
   } else if (aspectId === 'literasi_sains') {
     const b = getAspectData('Bahasa');
@@ -101,6 +197,68 @@ const getDraftForAspect = (aspectId: string, assessment: any) => {
   }
 
   return { summary: '', recommendation: '' };
+};
+
+const generateDraftForStudent = (studentId: string, assessment: any, existingPlans: any) => {
+  if (!assessment || !assessment.aspects) return existingPlans;
+
+  const aspects = [...assessment.aspects];
+  // Filter for BB and MB stages and sort by percentage score ascending
+  const lowAspects = aspects
+    .filter((asp: any) => asp.stage === 'BB' || asp.stage === 'MB')
+    .sort((a: any, b: any) => a.percentage - b.percentage);
+
+  // Take maximum 3 lowest aspects
+  const priorityAspectNames = lowAspects.slice(0, 3).map((asp: any) => asp.aspectName);
+
+  const updatedPlans = { ...existingPlans };
+
+  AAP_ASPECTS.forEach((aspectName) => {
+    // If the aspect already has an active plan (status !== 'Belum Ada Rencana'), do not overwrite!
+    const existing = existingPlans[aspectName];
+    if (existing && existing.status !== 'Belum Ada Rencana' && existing.hasPlan) {
+      return;
+    }
+
+    // Only auto-draft for priority aspects (BB/MB and maximum 3 lowest)
+    if (priorityAspectNames.includes(aspectName)) {
+      const aspData = assessment.aspects.find((a: any) => a.aspectName === aspectName);
+      if (aspData) {
+        const stageNow = aspData.stage || 'MB';
+        const nextStageMap: Record<string, string> = {
+          'BB': 'MB',
+          'MB': 'BSH',
+          'BSH': 'BSB',
+          'BSB': 'BSB'
+        };
+        const nextStage = nextStageMap[stageNow] || 'BSH';
+        const target = `Meningkatkan kemampuan dari ${stageNow} ke ${nextStage}`;
+
+        const recText = aspData.stimulationRecommendation || AAP_RECOMMENDATIONS[aspectName as any]?.[stageNow as any] || '';
+        
+        updatedPlans[aspectName] = {
+          aspectId: aspectName,
+          aspectName: aspectName,
+          hasPlan: true,
+          status: 'Draf',
+          aapSummary: aspData.analysis || AAP_DEVELOPMENT_ANALYSIS[aspectName as any]?.[stageNow as any] || '',
+          aapRecommendation: recText,
+          targetDevelopment: target,
+          stimulationStrategy: recText,
+          frequency: '3x seminggu',
+          pelaksana: 'Guru & Orang Tua',
+          indikatorKeberhasilan: 'Anak menunjukkan kemajuan perilaku sesuai target stimulasi',
+          startDate: new Date().toISOString().split('T')[0],
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          teacherNotes: '',
+          history: existing?.history || [],
+          updatedAt: new Date().toISOString()
+        };
+      }
+    }
+  });
+
+  return updatedPlans;
 };
 
 export default function AAPReport() {
@@ -124,6 +282,12 @@ export default function AAPReport() {
 
   // Navigation state / Active tabs
   const [activeTab, setActiveTab] = React.useState<'individual' | 'followup' | 'midterm' | 'endofterm' | 'class'>('individual');
+
+  React.useEffect(() => {
+    if (activeTab === 'followup' && !SHOW_FOLLOWUP_TAB) {
+      setActiveTab('individual');
+    }
+  }, [activeTab]);
 
   // Metadata states
   const [students, setStudents] = React.useState<any[]>([]);
@@ -153,6 +317,8 @@ export default function AAPReport() {
   const [isLoadingPlans, setIsLoadingPlans] = React.useState(false);
   const [isSavingPlan, setIsSavingPlan] = React.useState<Record<string, boolean>>({});
   const [editingAspectId, setEditingAspectId] = React.useState<string | null>(null);
+
+  const currentAssessment = assessments[selectedStudentId];
 
   // Phase 2: Evidence of Implementation (Bukti Pelaksanaan) states
   const [connectedEvidences, setConnectedEvidences] = React.useState<any[]>([]);
@@ -229,10 +395,12 @@ export default function AAPReport() {
   const [editEndDate, setEditEndDate] = React.useState('');
   const [editStatus, setEditStatus] = React.useState<'Belum Dimulai' | 'Berjalan' | 'Selesai' | 'Disesuaikan'>('Belum Dimulai');
   const [editTeacherNotes, setEditTeacherNotes] = React.useState('');
+  const [editPelaksana, setEditPelaksana] = React.useState<'Guru' | 'Orang Tua' | 'Guru & Orang Tua'>('Guru & Orang Tua');
+  const [editIndikator, setEditIndikator] = React.useState<string>('Anak menunjukkan kemajuan perilaku sesuai target stimulasi');
 
   // Effect to load follow-up plans when student changes
   React.useEffect(() => {
-    setFollowupPlans({}); // Clear state immediately to prevent leakage of old data
+    setFollowupPlans(processFollowupPlans({})); // Clear state immediately with default structure
     if (!selectedStudentId || !activeYear) {
       return;
     }
@@ -243,9 +411,9 @@ export default function AAPReport() {
         const docRef = doc(db, 'aap_followup_plans', `${selectedStudentId}_${activeYear.replace('/', '_')}`);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setFollowupPlans(docSnap.data().plans || {});
+          setFollowupPlans(processFollowupPlans(docSnap.data().plans || {}));
         } else {
-          setFollowupPlans({});
+          setFollowupPlans(processFollowupPlans({}));
         }
       } catch (err) {
         console.error("Error loading follow-up plans:", err);
@@ -285,27 +453,43 @@ export default function AAPReport() {
     loadMidtermReview();
   }, [selectedStudentId, activeYear, selectedTermId]);
 
-  // Sync loaded midterm review to local state
+  // Sync loaded midterm review to local state with empty initials if no saved review exists
   React.useEffect(() => {
     if (midtermReview) {
-      setMidtermForm(midtermReview.aspectReviews || {});
+      setMidtermForm(processMidtermReviews(midtermReview.aspectReviews || {}));
       setOverallTeacherSummary(midtermReview.overallTeacherSummary || '');
     } else {
-      // Initialize with empty form
+      // Initialize with suggested prefilled form with empty text fields!
       const initialForm: Record<string, any> = {};
-      KM_ASPECTS.forEach(aspect => {
-        initialForm[aspect.id] = {
-          summary: '',
-          progressRating: 'MB', // Default to Mulai Berkembang
-          followupDecision: 'Lanjutkan', // Default to Lanjutkan
-          teacherNotes: '',
-          recommendation: ''
+      AAP_ASPECTS.forEach(aspect => {
+        const aspData = currentAssessment?.aspects?.find((a: any) => a.aspectName === aspect);
+        const baselineStage = aspData?.stage || 'MB';
+        
+        let mappedBaselineStage = baselineStage;
+        if (mappedBaselineStage === 'BT') mappedBaselineStage = 'BB';
+        if (mappedBaselineStage === 'MH') mappedBaselineStage = 'BSB';
+
+        // Suggest progress rating based on baseline
+        const suggestedRatingMap: Record<string, string> = {
+          'BB': 'MB',
+          'MB': 'BSH',
+          'BSH': 'BSH',
+          'BSB': 'BSB'
+        };
+        const suggestedRating = suggestedRatingMap[mappedBaselineStage] || 'MB';
+
+        initialForm[aspect] = {
+          summary: '', // Blank initially, filled by teacher
+          progressRating: suggestedRating,
+          followupDecision: 'Lanjutkan',
+          teacherNotes: '', // Blank initially, filled by teacher
+          recommendation: '' // Blank initially, filled by teacher
         };
       });
       setMidtermForm(initialForm);
       setOverallTeacherSummary('');
     }
-  }, [midtermReview, selectedStudentId, selectedTermId]);
+  }, [midtermReview, selectedStudentId, selectedTermId, currentAssessment, followupPlans]);
 
   // Load End of Term Report when student/academicYear/term changes
   React.useEffect(() => {
@@ -447,7 +631,6 @@ export default function AAPReport() {
   }, [selectedClassId, activeYear]);
 
   // Sync general conclusion state with loaded assessment
-  const currentAssessment = assessments[selectedStudentId];
   React.useEffect(() => {
     if (currentAssessment) {
       if (currentAssessment.generalConclusion) {
@@ -1020,10 +1203,10 @@ export default function AAPReport() {
   }, [availableEvidence, modalStartDate, modalEndDate, modalSourceFilter, modalDomainFilter, modalSearchQuery]);
 
   // Start or Edit Plan
-  const handleStartPlanning = (aspectId: string) => {
-    const existing = followupPlans[aspectId] || {};
+  const handleStartPlanning = (aspectName: string) => {
+    const existing = followupPlans[aspectName] || {};
     
-    if (existing.hasPlan) {
+    if (existing.status && existing.status !== 'Belum Ada Rencana' && existing.hasPlan) {
       setEditSummary(existing.aapSummary || '');
       setEditRecommendation(existing.aapRecommendation || '');
       setEditTargetDevelopment(existing.targetDevelopment || '');
@@ -1031,35 +1214,53 @@ export default function AAPReport() {
       setEditFrequency(existing.frequency || '');
       setEditStartDate(existing.startDate || '');
       setEditEndDate(existing.endDate || '');
-      setEditStatus(existing.status || 'Belum Dimulai');
+      setEditStatus(existing.status || 'Draf');
       setEditTeacherNotes(existing.teacherNotes || '');
+      setEditPelaksana(existing.pelaksana || 'Guru & Orang Tua');
+      setEditIndikator(existing.indikatorKeberhasilan || 'Anak menunjukkan kemajuan perilaku sesuai target stimulasi');
     } else {
-      const draft = getDraftForAspect(aspectId, currentAssessment);
-      setEditSummary(draft.summary);
-      setEditRecommendation(draft.recommendation);
-      setEditTargetDevelopment('');
-      setEditStimulationStrategy('');
-      setEditFrequency('');
-      setEditStartDate('');
-      setEditEndDate('');
-      setEditStatus('Belum Dimulai');
+      const assessment = assessments[selectedStudentId];
+      const aspData = assessment?.aspects?.find((a: any) => a.aspectName === aspectName);
+      const stageNow = aspData?.stage || 'MB';
+      
+      const nextStageMap: Record<string, string> = {
+        'BB': 'MB',
+        'MB': 'BSH',
+        'BSH': 'BSB',
+        'BSB': 'BSB'
+      };
+      const nextStage = nextStageMap[stageNow] || 'BSH';
+      const target = `Meningkatkan kemampuan dari ${stageNow} ke ${nextStage}`;
+      const recText = aspData?.stimulationRecommendation || AAP_RECOMMENDATIONS[aspectName as AAPAspectName]?.[stageNow as any] || 'Sediakan stimulasi teratur di kelas dan rumah.';
+      const summaryText = aspData?.analysis || AAP_DEVELOPMENT_ANALYSIS[aspectName as AAPAspectName]?.[stageNow as any] || 'Siswa menunjukkan perkembangan sesuai tahapan.';
+
+      setEditSummary(summaryText);
+      setEditRecommendation(recText);
+      setEditTargetDevelopment(target);
+      setEditStimulationStrategy(recText);
+      setEditFrequency('3x seminggu');
+      setEditStartDate(new Date().toISOString().split('T')[0]);
+      setEditEndDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      setEditStatus('Draf');
       setEditTeacherNotes('');
+      setEditPelaksana('Guru & Orang Tua');
+      setEditIndikator('Anak menunjukkan kemajuan perilaku sesuai target stimulasi');
     }
-    setEditingAspectId(aspectId);
+    setEditingAspectId(aspectName);
   };
 
   // Save Plan
-  const handleSaveFollowupPlan = async (aspectId: string) => {
+  const handleSaveFollowupPlan = async (aspectName: string) => {
     if (!selectedStudentId || !activeYear) return;
-    if (isSavingPlan[aspectId]) return; // Prevent double submit
+    if (isSavingPlan[aspectName]) return; // Prevent double submit
 
-    setIsSavingPlan(prev => ({ ...prev, [aspectId]: true }));
+    setIsSavingPlan(prev => ({ ...prev, [aspectName]: true }));
     try {
       const updatedPlans = {
         ...followupPlans,
-        [aspectId]: {
-          aspectId,
-          aspectName: KM_ASPECTS.find(a => a.id === aspectId)?.name || aspectId,
+        [aspectName]: {
+          aspectId: aspectName,
+          aspectName,
           hasPlan: true,
           aapSummary: editSummary,
           aapRecommendation: editRecommendation,
@@ -1069,7 +1270,10 @@ export default function AAPReport() {
           startDate: editStartDate,
           endDate: editEndDate,
           status: editStatus,
+          pelaksana: editPelaksana,
+          indikatorKeberhasilan: editIndikator,
           teacherNotes: editTeacherNotes,
+          history: followupPlans[aspectName]?.history || [],
           updatedAt: new Date().toISOString()
         }
       };
@@ -1092,7 +1296,128 @@ export default function AAPReport() {
       console.error("Error saving follow-up plan:", err);
       toast.error("Gagal menyimpan rencana tindak lanjut.");
     } finally {
-      setIsSavingPlan(prev => ({ ...prev, [aspectId]: false }));
+      setIsSavingPlan(prev => ({ ...prev, [aspectName]: false }));
+    }
+  };
+
+  // Activate Plan status transition
+  const handleActivatePlan = async (aspectName: string) => {
+    if (!selectedStudentId || !activeYear) return;
+    try {
+      const existing = followupPlans[aspectName];
+      if (!existing) return;
+
+      const updatedPlans = {
+        ...followupPlans,
+        [aspectName]: {
+          ...existing,
+          status: 'Aktif' as const,
+          updatedAt: new Date().toISOString()
+        }
+      };
+
+      const docRef = doc(db, 'aap_followup_plans', `${selectedStudentId}_${activeYear.replace('/', '_')}`);
+      await setDoc(docRef, { plans: updatedPlans }, { merge: true });
+      setFollowupPlans(updatedPlans);
+      toast.success(`Rencana untuk aspek "${aspectName}" sekarang Aktif! 🚀`);
+    } catch (err) {
+      console.error("Error activating plan:", err);
+      toast.error("Gagal mengaktifkan rencana.");
+    }
+  };
+
+  // Draft for Selected Student
+  const handleDraftForSelectedStudent = async () => {
+    if (!selectedStudentId || !currentAssessment) {
+      toast.error("Belum ada data penilaian untuk murid terpilih.");
+      return;
+    }
+
+    const confirmDraft = window.confirm(`Apakah Anda yakin ingin membuat draf rencana stimulasi otomatis untuk ${activeStudentObj?.name || 'Siswa'}? Rencana stimulasi yang sudah diisi guru tidak akan ditimpa.`);
+    if (!confirmDraft) return;
+
+    try {
+      const drafted = generateDraftForStudent(selectedStudentId, currentAssessment, followupPlans);
+      const docRef = doc(db, 'aap_followup_plans', `${selectedStudentId}_${activeYear.replace('/', '_')}`);
+      await setDoc(docRef, {
+        studentId: selectedStudentId,
+        studentName: activeStudentObj?.name || 'Siswa',
+        academicYear: activeYear,
+        classId: selectedClassId,
+        className: activeClassObj?.name || 'Kelas',
+        plans: drafted,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      setFollowupPlans(drafted);
+      toast.success("Draf rencana stimulasi berhasil di-generate! ✨");
+    } catch (err) {
+      console.error("Error drafting for student:", err);
+      toast.error("Gagal men-generate draf rencana stimulasi.");
+    }
+  };
+
+  // Bulk Draft for entire Class
+  const handleBulkDraftClass = async () => {
+    if (!selectedClassId || !activeYear) return;
+    const confirmBulk = window.confirm("Apakah Anda yakin ingin membuat draf rencana stimulasi otomatis untuk seluruh siswa di kelas ini? Data rencana yang sudah ada tidak akan diubah atau ditimpa.");
+    if (!confirmBulk) return;
+
+    toast.loading("Membuat draf rencana untuk satu kelas...", { id: 'bulk-draft' });
+    try {
+      // 1. Fetch all followup plans for the class to check existing plans
+      const q = query(
+        collection(db, 'aap_followup_plans'),
+        where('classId', '==', selectedClassId),
+        where('academicYear', '==', activeYear)
+      );
+      const plansSnap = await getDocs(q);
+      const existingPlansMap: Record<string, any> = {};
+      plansSnap.forEach(docSnap => {
+        existingPlansMap[docSnap.data().studentId] = docSnap.data().plans || {};
+      });
+
+      // 2. Process each student
+      let countCreated = 0;
+      for (const student of students) {
+        const assessment = assessments[student.id];
+        if (!assessment) continue;
+
+        const existingPlans = existingPlansMap[student.id] || {};
+        const processedPlans = processFollowupPlans(existingPlans); // Compatibility check
+
+        // Check if student already has plans that are drafted, active, or reviewed
+        const hasExistingPlan = Object.values(processedPlans).some(
+          (p: any) => p.status && p.status !== 'Belum Ada Rencana'
+        );
+
+        // If has plans, don't overwrite
+        if (hasExistingPlan) continue;
+
+        const draftedPlans = generateDraftForStudent(student.id, assessment, processedPlans);
+        
+        // Save back to Firestore
+        const docRef = doc(db, 'aap_followup_plans', `${student.id}_${activeYear.replace('/', '_')}`);
+        await setDoc(docRef, {
+          studentId: student.id,
+          studentName: student.name || 'Siswa',
+          academicYear: activeYear,
+          classId: selectedClassId,
+          className: activeClassObj?.name || 'Kelas',
+          plans: draftedPlans,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+
+        if (student.id === selectedStudentId) {
+          setFollowupPlans(draftedPlans);
+        }
+        countCreated++;
+      }
+
+      toast.success(`Berhasil membuat draf otomatis untuk ${countCreated} siswa!`, { id: 'bulk-draft' });
+    } catch (err) {
+      console.error("Error bulk drafting class:", err);
+      toast.error("Gagal membuat draf massal seluruh kelas.", { id: 'bulk-draft' });
     }
   };
 
@@ -1106,6 +1431,67 @@ export default function AAPReport() {
 
     setIsSavingMidterm(true);
     try {
+      // Automatic Archiving and Re-drafting for "Ubah Kegiatan" decision
+      let planUpdatesNeeded = false;
+      const updatedFollowupPlans = { ...followupPlans };
+
+      for (const aspectName of AAP_ASPECTS) {
+        const review = midtermForm[aspectName];
+        if (review && review.followupDecision === 'Ubah Kegiatan') {
+          const currentPlan = followupPlans[aspectName];
+          // We only archive if there is an active plan and it hasn't been archived yet (i.e. status is not 'Draf')
+          if (currentPlan && currentPlan.hasPlan && currentPlan.status !== 'Draf') {
+            const archiveItem = {
+              ...currentPlan,
+              archivedAt: new Date().toISOString()
+            };
+            const updatedHistory = [...(currentPlan.history || []), archiveItem];
+
+            // Setup a new fresh draf for the child
+            const assessment = assessments[selectedStudentId];
+            const aspData = assessment?.aspects?.find((a: any) => a.aspectName === aspectName);
+            const stageNow = aspData?.stage || 'MB';
+            const nextStageMap: Record<string, string> = {
+              'BB': 'MB',
+              'MB': 'BSH',
+              'BSH': 'BSB',
+              'BSB': 'BSB'
+            };
+            const nextStage = nextStageMap[stageNow] || 'BSH';
+            const target = `Meningkatkan kemampuan dari ${stageNow} ke ${nextStage}`;
+            const recText = aspData?.stimulationRecommendation || AAP_RECOMMENDATIONS[aspectName as AAPAspectName]?.[stageNow as any] || 'Sediakan stimulasi teratur di kelas dan rumah.';
+            const summaryText = aspData?.analysis || AAP_DEVELOPMENT_ANALYSIS[aspectName as AAPAspectName]?.[stageNow as any] || 'Siswa menunjukkan perkembangan sesuai tahapan.';
+
+            updatedFollowupPlans[aspectName] = {
+              aspectId: aspectName,
+              aspectName,
+              hasPlan: true,
+              status: 'Draf',
+              aapSummary: summaryText,
+              aapRecommendation: recText,
+              targetDevelopment: target,
+              stimulationStrategy: recText,
+              frequency: '3x seminggu',
+              pelaksana: 'Guru & Orang Tua',
+              indikatorKeberhasilan: 'Anak menunjukkan kemajuan perilaku sesuai target stimulasi',
+              startDate: new Date().toISOString().split('T')[0],
+              endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+              teacherNotes: 'Rencana stimulasi baru dibuat setelah keputusan "Ubah Kegiatan" di evaluasi Midterm.',
+              history: updatedHistory,
+              updatedAt: new Date().toISOString()
+            };
+            planUpdatesNeeded = true;
+          }
+        }
+      }
+
+      if (planUpdatesNeeded) {
+        const plansDocRef = doc(db, 'aap_followup_plans', `${selectedStudentId}_${activeYear.replace('/', '_')}`);
+        await setDoc(plansDocRef, { plans: updatedFollowupPlans }, { merge: true });
+        setFollowupPlans(updatedFollowupPlans);
+        toast.info("Rencana stimulasi lama berhasil diarsipkan dan draf stimulasi baru telah dibuat.");
+      }
+
       const docId = `${selectedStudentId}_${activeYear.replace('/', '_')}_${selectedTermId.replace(' ', '_')}`;
       const payload: any = {
         studentId: selectedStudentId,
@@ -1517,17 +1903,6 @@ export default function AAPReport() {
             <User size={14} /> Laporan Individu
           </button>
           <button
-            onClick={() => setActiveTab('followup')}
-            className={cn(
-              "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[170px]",
-              activeTab === 'followup' 
-                ? "bg-indigo-600 text-white shadow-md" 
-                : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-            )}
-          >
-            <ClipboardCheck size={14} /> Rencana Tindak Lanjut
-          </button>
-          <button
             onClick={() => setActiveTab('midterm')}
             className={cn(
               "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[140px]",
@@ -1538,6 +1913,19 @@ export default function AAPReport() {
           >
             <BookOpen size={14} /> Review Midterm
           </button>
+          {SHOW_FOLLOWUP_TAB && (
+            <button
+              onClick={() => setActiveTab('followup')}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all min-w-[170px]",
+                activeTab === 'followup' 
+                  ? "bg-indigo-600 text-white shadow-md" 
+                  : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+              )}
+            >
+              <ClipboardCheck size={14} /> Rencana Tindak Lanjut
+            </button>
+          )}
           <button
             onClick={() => setActiveTab('endofterm')}
             className={cn(
@@ -1964,484 +2352,588 @@ export default function AAPReport() {
           </div>
         ) : (
           <div className="space-y-8">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 pb-4">
+            {/* Header and Bulk Action Buttons Bar */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-5">
               <div>
                 <h2 className="text-base font-black text-gray-900 uppercase tracking-tight">Rencana Tindak Lanjut AAP</h2>
                 <p className="text-xs text-gray-500 mt-1">Ubah hasil dan rekomendasi AAP menjadi rencana stimulasi harian/mingguan yang spesifik untuk <b>{activeStudentObj?.name || 'Siswa'}</b>.</p>
               </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={handleDraftForSelectedStudent}
+                  className="flex items-center gap-1.5 px-4 py-2 border border-indigo-150 bg-indigo-50/50 hover:bg-indigo-100/50 text-indigo-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                >
+                  <Sparkles size={13} /> Buat Draf Rencana ({activeStudentObj?.name})
+                </button>
+                <button
+                  onClick={handleBulkDraftClass}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md active:scale-95 cursor-pointer"
+                >
+                  <Layers size={13} /> Buat Draf Seluruh Kelas
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-8">
-              {KM_ASPECTS.map((aspect) => {
-                const plan = followupPlans[aspect.id] || {};
-                const isEditing = editingAspectId === aspect.id;
-
+            <div className="space-y-10">
+              {KM_ASPECTS.map((kmAspect) => {
                 return (
-                  <div key={aspect.id} className="bg-white border border-gray-150 rounded-3xl p-6 md:p-8 shadow-sm transition-all relative overflow-hidden">
-                    {/* Header of Card */}
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-gray-100 pb-4 mb-6">
-                      <div className="space-y-1">
-                        <span className="inline-flex items-center gap-1.5 text-[9px] font-black tracking-widest text-indigo-600 uppercase">
-                          Aspek Perkembangan Kurikulum Merdeka
-                        </span>
-                        <h3 className="text-sm font-black text-gray-900 tracking-tight leading-tight">{aspect.name}</h3>
-                        <p className="text-[11px] text-gray-500 leading-relaxed max-w-2xl">{aspect.description}</p>
-                      </div>
-
-                      {/* Status indicator badge (Only when hasPlan and not editing) */}
-                      {plan.hasPlan && !isEditing && (
-                        <span className={cn(
-                          "px-3 py-1 text-[10px] font-black rounded-xl border uppercase tracking-wider self-start sm:self-center shrink-0",
-                          plan.status === 'Selesai' ? "bg-emerald-50 text-emerald-700 border-emerald-150" :
-                          plan.status === 'Berjalan' ? "bg-blue-50 text-blue-700 border-blue-150" :
-                          plan.status === 'Disesuaikan' ? "bg-amber-50 text-amber-700 border-amber-150" :
-                          "bg-gray-100 text-gray-600 border-gray-200"
-                        )}>
-                          {plan.status || 'Belum Dimulai'}
-                        </span>
-                      )}
+                  <div key={kmAspect.id} className="space-y-6">
+                    {/* Visual Grouping Header for Kurikulum Merdeka */}
+                    <div className="bg-gradient-to-r from-gray-50 to-white border border-gray-150 rounded-2xl p-4 md:p-5 flex flex-col justify-center space-y-1">
+                      <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest block">Kelompok Kurikulum Merdeka</span>
+                      <h4 className="text-sm font-black text-gray-900 tracking-tight leading-tight">{kmAspect.name}</h4>
+                      <p className="text-[11px] text-gray-500 max-w-3xl leading-relaxed">{kmAspect.description}</p>
                     </div>
 
-                    {/* Edit mode vs Display mode */}
-                    {isEditing ? (
-                      /* EDIT MODE FORM */
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Pre-fill Summary (Disabled or Editable draft) */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
-                              <span>Ringkasan Hasil AAP Terakhir</span>
-                              <span className="text-[9px] text-indigo-500 font-bold lowercase tracking-normal">otomatis diisi</span>
-                            </label>
-                            <textarea
-                              value={editSummary}
-                              onChange={(e) => setEditSummary(e.target.value)}
-                              rows={4}
-                              className="w-full text-xs font-bold text-gray-700 bg-gray-50 border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
-                              placeholder="Ringkasan hasil asesmen..."
-                            />
-                          </div>
+                    <div className="grid grid-cols-1 gap-8 pl-0 md:pl-4">
+                      {kmAspect.aapAspects.map((aspectName) => {
+                        const plan = followupPlans[aspectName] || { status: 'Belum Ada Rencana' };
+                        const isEditing = editingAspectId === aspectName;
 
-                          {/* Pre-fill Recommendations */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
-                              <span>Rekomendasi AAP (Draft)</span>
-                              <span className="text-[9px] text-indigo-500 font-bold lowercase tracking-normal">otomatis diisi</span>
-                            </label>
-                            <textarea
-                              value={editRecommendation}
-                              onChange={(e) => setEditRecommendation(e.target.value)}
-                              rows={4}
-                              className="w-full text-xs font-bold text-gray-700 bg-gray-50 border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
-                              placeholder="Rekomendasi stimulasi..."
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          {/* Target Perkembangan */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                              Target Perkembangan <span className="text-rose-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={editTargetDevelopment}
-                              onChange={(e) => setEditTargetDevelopment(e.target.value)}
-                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                              placeholder="Contoh: Anak mandiri memakai sepatu"
-                              required
-                            />
-                          </div>
-
-                          {/* Frekuensi */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                              Frekuensi Pelaksanaan <span className="text-rose-500">*</span>
-                            </label>
-                            <input
-                              type="text"
-                              value={editFrequency}
-                              onChange={(e) => setEditFrequency(e.target.value)}
-                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                              placeholder="Contoh: Setiap hari, 3x seminggu"
-                              required
-                            />
-                          </div>
-
-                          {/* Status */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</label>
-                            <select
-                              value={editStatus}
-                              onChange={(e: any) => setEditStatus(e.target.value)}
-                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                            >
-                              <option value="Belum Dimulai">Belum Dimulai</option>
-                              <option value="Berjalan">Berjalan</option>
-                              <option value="Selesai">Selesai</option>
-                              <option value="Disesuaikan">Disesuaikan</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Strategi atau Aktivitas Stimulasi */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                              Strategi / Aktivitas Stimulasi <span className="text-rose-500">*</span>
-                            </label>
-                            <textarea
-                              value={editStimulationStrategy}
-                              onChange={(e) => setEditStimulationStrategy(e.target.value)}
-                              rows={3}
-                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
-                              placeholder="Contoh: Memberi tugas meronce manik-manik setiap jam istirahat..."
-                              required
-                            />
-                          </div>
-
-                          {/* Catatan Guru */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Catatan Guru / Catatan Khusus</label>
-                            <textarea
-                              value={editTeacherNotes}
-                              onChange={(e) => setEditTeacherNotes(e.target.value)}
-                              rows={3}
-                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
-                              placeholder="Masukkan catatan tambahan atau kemajuan observasi anak..."
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Periode Pelaksanaan (Start/End Date) */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Periode Pelaksanaan</label>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="relative">
-                                <input
-                                  type="date"
-                                  value={editStartDate}
-                                  onChange={(e) => setEditStartDate(e.target.value)}
-                                  className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                                />
-                                <span className="absolute right-3 top-3.5 text-gray-400 pointer-events-none">
-                                  <Calendar size={14} />
+                        return (
+                          <div key={aspectName} className="bg-white border border-gray-150 rounded-3xl p-6 md:p-8 shadow-sm transition-all relative overflow-hidden">
+                            {/* Header of Aspek Card */}
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-gray-100 pb-4 mb-6">
+                              <div className="space-y-1">
+                                <span className="inline-flex items-center gap-1.5 text-[9px] font-black tracking-widest text-indigo-600 uppercase">
+                                  Aspek Perkembangan AAP
                                 </span>
+                                <h3 className="text-sm font-black text-gray-900 tracking-tight leading-tight">{aspectName}</h3>
                               </div>
-                              <div className="relative">
-                                <input
-                                  type="date"
-                                  value={editEndDate}
-                                  onChange={(e) => setEditEndDate(e.target.value)}
-                                  className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                                />
-                                <span className="absolute right-3 top-3.5 text-gray-400 pointer-events-none">
-                                  <Calendar size={14} />
-                                </span>
-                              </div>
-                            </div>
-                          </div>
 
-                          {/* Action Buttons */}
-                          <div className="flex items-end justify-end gap-3 pb-0.5">
-                            <button
-                              type="button"
-                              onClick={() => setEditingAspectId(null)}
-                              className="px-4 py-2.5 border border-gray-150 text-gray-600 hover:bg-gray-50 font-black rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 cursor-pointer"
-                            >
-                              Batal
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSaveFollowupPlan(aspect.id)}
-                              disabled={isSavingPlan[aspect.id] || !editTargetDevelopment || !editStimulationStrategy || !editFrequency}
-                              className="flex items-center gap-1.5 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 cursor-pointer"
-                            >
-                              <Save size={13} /> {isSavingPlan[aspect.id] ? 'Menyimpan...' : 'Simpan Rencana'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : plan.hasPlan ? (
-                      /* DISPLAY MODE FOR FILLED PLAN */
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Summary Display */}
-                          <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 space-y-1.5">
-                            <h4 className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Ringkasan Hasil AAP</h4>
-                            <div className="text-xs font-bold text-gray-700 whitespace-pre-wrap leading-relaxed">{plan.aapSummary}</div>
-                          </div>
-
-                          {/* Recommendation Display */}
-                          <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 space-y-1.5">
-                            <h4 className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Rekomendasi Stimulasi & Tindak Lanjut</h4>
-                            <div className="text-xs font-bold text-gray-700 whitespace-pre-wrap leading-relaxed">{plan.aapRecommendation}</div>
-                          </div>
-                        </div>
-
-                        {/* Stimulus Action Plan Details */}
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-indigo-50/20 rounded-2xl border border-indigo-100/50 p-6">
-                          <div className="space-y-1 md:col-span-2">
-                            <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Strategi & Aktivitas Stimulasi</span>
-                            <p className="text-xs font-bold text-gray-800 leading-relaxed">{plan.stimulationStrategy}</p>
-                          </div>
-                          
-                          <div className="space-y-3">
-                            <div>
-                              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Target Perkembangan</span>
-                              <p className="text-xs font-extrabold text-gray-900 leading-relaxed">{plan.targetDevelopment}</p>
-                            </div>
-                            <div>
-                              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Frekuensi</span>
-                              <p className="text-xs font-extrabold text-gray-900 leading-relaxed">{plan.frequency}</p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            <div>
-                              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Periode Pelaksanaan</span>
-                              <p className="text-xs font-extrabold text-gray-900 leading-relaxed">
-                                {plan.startDate || plan.endDate ? (
-                                  `${plan.startDate ? plan.startDate : '-'} s/d ${plan.endDate ? plan.endDate : '-'}`
-                                ) : (
-                                  'Tidak ditentukan'
-                                )}
-                              </p>
-                            </div>
-                            <div>
-                              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Diperbarui</span>
-                              <p className="text-xs font-mono font-bold text-gray-500">{plan.updatedAt ? new Date(plan.updatedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}) : '-'}</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Teacher Notes (If present) */}
-                        {plan.teacherNotes && (
-                          <div className="bg-amber-50/30 border border-amber-100/50 rounded-2xl p-4">
-                            <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest block mb-1">Catatan Guru</span>
-                            <p className="text-xs font-bold text-gray-700 leading-relaxed">{plan.teacherNotes}</p>
-                          </div>
-                        )}
-
-                        {/* SECTION BUKTI PELAKSANAAN */}
-                        <div className="border border-gray-150 rounded-2xl overflow-hidden bg-gray-50/30">
-                          {/* Header Toggle */}
-                          <div className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 bg-gray-50/50 hover:bg-gray-100/50 transition-colors border-b border-gray-150 gap-4">
-                            <button
-                              type="button"
-                              onClick={() => toggleEvidenceExpanded(aspect.id)}
-                              className="flex items-center gap-2 text-left focus:outline-none flex-1"
-                            >
-                              <Paperclip size={16} className="text-indigo-600 shrink-0" />
-                              <div>
-                                <h4 className="text-xs font-black text-gray-800 uppercase tracking-wide">Bukti Pelaksanaan</h4>
-                                <p className="text-[10px] text-gray-500 font-bold">
-                                  {connectedEvidences.filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`).length} bukti terhubung
-                                </p>
-                              </div>
-                            </button>
-                            <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEvidenceModal(aspect.id)}
-                                className="px-3 py-1.5 bg-indigo-50 border border-indigo-150 text-indigo-600 hover:bg-indigo-100/50 transition-colors font-black rounded-lg text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer"
-                              >
-                                <Plus size={12} /> Hubungkan Bukti
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => toggleEvidenceExpanded(aspect.id)}
-                                className="p-1 focus:outline-none text-gray-400 hover:text-gray-600 cursor-pointer"
-                              >
-                                {expandedEvidenceAspects[aspect.id] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Collapsible Content */}
-                          {expandedEvidenceAspects[aspect.id] && (
-                            <div className="p-4 bg-white space-y-4">
-                              {/* Non-intrusive status change suggestion */}
-                              {suggestStatusChangeAspectId === aspect.id && plan.status === 'Belum Dimulai' && (
-                                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
-                                  <div className="flex items-start gap-2">
-                                    <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
-                                    <div>
-                                      <p className="text-[11px] font-bold text-amber-800">Saran Pembaruan Status</p>
-                                      <p className="text-[10px] text-amber-600 leading-normal">
-                                        Bukti pelaksanaan pertama telah ditambahkan. Apakah rencana ini sudah mulai berjalan?
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                              {/* Status indicator badge (Only when hasPlan and not editing) */}
+                              {plan.hasPlan && !isEditing && (
+                                <div className="flex items-center gap-2">
+                                  <span className={cn(
+                                    "px-3 py-1 text-[10px] font-black rounded-xl border uppercase tracking-wider self-start sm:self-center shrink-0",
+                                    plan.status === 'Selesai' ? "bg-emerald-50 text-emerald-700 border-emerald-150" :
+                                    plan.status === 'Aktif' ? "bg-indigo-50 text-indigo-700 border-indigo-150" :
+                                    plan.status === 'Draf' ? "bg-amber-50 text-amber-700 border-amber-150" :
+                                    plan.status === 'Berjalan' ? "bg-blue-50 text-blue-700 border-blue-150" :
+                                    plan.status === 'Disesuaikan' ? "bg-amber-50 text-amber-700 border-amber-150" :
+                                    "bg-gray-100 text-gray-600 border-gray-200"
+                                  )}>
+                                    {plan.status || 'Belum Dimulai'}
+                                  </span>
+                                  {plan.status === 'Draf' && (
                                     <button
                                       type="button"
-                                      onClick={() => setSuggestStatusChangeAspectId(null)}
-                                      className="px-2.5 py-1 text-[10px] font-black text-gray-500 hover:text-gray-700 uppercase cursor-pointer"
+                                      onClick={() => handleActivatePlan(aspectName)}
+                                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-black uppercase rounded-lg shadow-sm transition-all active:scale-95 cursor-pointer"
                                     >
-                                      Tetap Belum Dimulai
+                                      Aktifkan
                                     </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleUpdatePlanStatus(aspect.id, 'Berjalan')}
-                                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black text-[10px] rounded-lg uppercase tracking-wider shadow-sm cursor-pointer"
-                                    >
-                                      Ubah menjadi Berjalan
-                                    </button>
-                                  </div>
+                                  )}
                                 </div>
                               )}
+                            </div>
 
-                              {connectedEvidences.filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`).length === 0 ? (
-                                <div className="text-center py-6 px-4">
-                                  <p className="text-xs font-bold text-gray-400">Belum ada bukti pelaksanaan yang terhubung.</p>
-                                  <p className="text-[10px] text-gray-400 mt-1">Gunakan tombol "Hubungkan Bukti" di atas untuk menautkan data observasi, checklist emosional, atau rangkuman mingguan.</p>
+                            {/* Edit mode vs Display mode */}
+                            {isEditing ? (
+                              /* EDIT MODE FORM */
+                              <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* Pre-fill Summary (Disabled or Editable draft) */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                                      <span>Ringkasan Hasil AAP Terakhir</span>
+                                      <span className="text-[9px] text-indigo-500 font-bold lowercase tracking-normal">otomatis diisi</span>
+                                    </label>
+                                    <textarea
+                                      value={editSummary}
+                                      onChange={(e) => setEditSummary(e.target.value)}
+                                      rows={4}
+                                      className="w-full text-xs font-bold text-gray-700 bg-gray-50 border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
+                                      placeholder="Ringkasan hasil asesmen..."
+                                    />
+                                  </div>
+
+                                  {/* Pre-fill Recommendations */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                                      <span>Rekomendasi AAP (Draft)</span>
+                                      <span className="text-[9px] text-indigo-500 font-bold lowercase tracking-normal">otomatis diisi</span>
+                                    </label>
+                                    <textarea
+                                      value={editRecommendation}
+                                      onChange={(e) => setEditRecommendation(e.target.value)}
+                                      rows={4}
+                                      className="w-full text-xs font-bold text-gray-700 bg-gray-50 border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
+                                      placeholder="Rekomendasi stimulasi..."
+                                    />
+                                  </div>
                                 </div>
-                              ) : (
-                                <div className="divide-y divide-gray-150">
-                                  {connectedEvidences
-                                    .filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`)
-                                    .map((evidence, idx) => {
-                                      const hasThumbnail = !!evidence.cachedThumbnailUrl;
-                                      const isSourceAvailable = existingSourceKeys.has(`${evidence.sourceType}_${evidence.sourceDocumentId}`);
-                                      return (
-                                        <div key={evidence.id} className={cn("py-4 first:pt-0 last:pb-0 flex flex-col md:flex-row gap-4 justify-between items-start", idx > 0 && "pt-4")}>
-                                          <div className="flex gap-3 items-start flex-1 min-w-0">
-                                            {/* Thumbnail / Source icon wrapper */}
-                                            {hasThumbnail ? (
-                                              <img
-                                                src={evidence.cachedThumbnailUrl}
-                                                alt="Thumbnail bukti"
-                                                referrerPolicy="no-referrer"
-                                                className="w-12 h-12 object-cover rounded-xl border border-gray-150 shrink-0"
-                                              />
-                                            ) : (
-                                              <div className="w-12 h-12 rounded-xl bg-gray-150 border border-gray-200 flex items-center justify-center shrink-0 text-gray-500">
-                                                <FileText size={20} />
-                                              </div>
-                                            )}
 
-                                            {/* Title and summary info */}
-                                            <div className="space-y-1 flex-1 min-w-0">
-                                              <div className="flex flex-wrap items-center gap-2">
-                                                <span className="text-[9px] font-mono font-bold text-gray-500">
-                                                  {evidence.evidenceDate ? new Date(evidence.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}) : 'Tanggal -'}
-                                                </span>
-                                                <span className={cn(
-                                                  "px-2 py-0.5 text-[8px] font-black rounded border uppercase tracking-wider",
-                                                  evidence.sourceType === 'OBSERVATION' ? "bg-purple-50 text-purple-700 border-purple-150" :
-                                                  evidence.sourceType === 'CHECKLIST' ? "bg-teal-50 text-teal-700 border-teal-150" :
-                                                  evidence.sourceType === 'WEEKLY_SUMMARY' ? "bg-amber-50 text-amber-700 border-amber-150" :
-                                                  "bg-blue-50 text-blue-700 border-blue-150"
-                                                )}>
-                                                  {evidence.cachedSourceLabel || evidence.sourceType}
-                                                </span>
-                                                {!isSourceAvailable && !isLoadingSourceKeys && (
-                                                  <span className="px-2 py-0.5 text-[8px] font-black rounded border bg-rose-50 text-rose-700 border-rose-150 uppercase tracking-wider animate-pulse">
-                                                    Sumber bukti tidak tersedia
-                                                  </span>
-                                                )}
-                                                {evidence.cachedDomain && (
-                                                  <span className="text-[9px] font-bold text-gray-400 italic">
-                                                    ({evidence.cachedDomain})
-                                                  </span>
-                                                )}
-                                              </div>
-                                              <h5 className="text-xs font-extrabold text-gray-900 leading-tight truncate">
-                                                {evidence.cachedTitle}
-                                              </h5>
-                                              <p className="text-[11px] text-gray-500 line-clamp-2 leading-relaxed whitespace-pre-wrap">
-                                                {evidence.cachedSummary}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                  {/* Target Perkembangan */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                      Target Perkembangan <span className="text-rose-500">*</span>
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editTargetDevelopment}
+                                      onChange={(e) => setEditTargetDevelopment(e.target.value)}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      placeholder="Contoh: Meningkatkan kemampuan dari BB ke MB"
+                                      required
+                                    />
+                                  </div>
+
+                                  {/* Frekuensi */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                      Frekuensi Pelaksanaan <span className="text-rose-500">*</span>
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editFrequency}
+                                      onChange={(e) => setEditFrequency(e.target.value)}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      placeholder="Contoh: Setiap hari, 3x seminggu"
+                                      required
+                                    />
+                                  </div>
+
+                                  {/* Status */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</label>
+                                    <select
+                                      value={editStatus}
+                                      onChange={(e: any) => setEditStatus(e.target.value)}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                    >
+                                      <option value="Draf">Draf</option>
+                                      <option value="Aktif">Aktif</option>
+                                      <option value="Selesai">Selesai</option>
+                                      <option value="Berjalan">Berjalan</option>
+                                      <option value="Disesuaikan">Disesuaikan</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* Pelaksana Rencana */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                      Pelaksana Stimulasi <span className="text-rose-500">*</span>
+                                    </label>
+                                    <select
+                                      value={editPelaksana}
+                                      onChange={(e: any) => setEditPelaksana(e.target.value)}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                                    >
+                                      <option value="Guru">Guru</option>
+                                      <option value="Orang Tua">Orang Tua</option>
+                                      <option value="Guru & Orang Tua">Guru & Orang Tua</option>
+                                    </select>
+                                  </div>
+
+                                  {/* Indikator Keberhasilan */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                      Indikator Keberhasilan <span className="text-rose-500">*</span>
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editIndikator}
+                                      onChange={(e) => setEditIndikator(e.target.value)}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                      placeholder="Kriteria keberhasilan..."
+                                      required
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* Strategi atau Aktivitas Stimulasi */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                      Strategi / Aktivitas Stimulasi <span className="text-rose-500">*</span>
+                                    </label>
+                                    <textarea
+                                      value={editStimulationStrategy}
+                                      onChange={(e) => setEditStimulationStrategy(e.target.value)}
+                                      rows={3}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
+                                      placeholder="Langkah kongkrit dan kegiatan harian..."
+                                      required
+                                    />
+                                  </div>
+
+                                  {/* Catatan Guru */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Catatan Guru / Catatan Khusus</label>
+                                    <textarea
+                                      value={editTeacherNotes}
+                                      onChange={(e) => setEditTeacherNotes(e.target.value)}
+                                      rows={3}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
+                                      placeholder="Catatan tambahan kemajuan atau hambatan..."
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* Periode Pelaksanaan (Start/End Date) */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Periode Pelaksanaan</label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                      <div className="relative">
+                                        <input
+                                          type="date"
+                                          value={editStartDate}
+                                          onChange={(e) => setEditStartDate(e.target.value)}
+                                          className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                        />
+                                        <span className="absolute right-3 top-3.5 text-gray-400 pointer-events-none">
+                                          <Calendar size={14} />
+                                        </span>
+                                      </div>
+                                      <div className="relative">
+                                        <input
+                                          type="date"
+                                          value={editEndDate}
+                                          onChange={(e) => setEditEndDate(e.target.value)}
+                                          className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                        />
+                                        <span className="absolute right-3 top-3.5 text-gray-400 pointer-events-none">
+                                          <Calendar size={14} />
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Action Buttons */}
+                                  <div className="flex items-end justify-end gap-3 pb-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingAspectId(null)}
+                                      className="px-4 py-2.5 border border-gray-150 text-gray-600 hover:bg-gray-50 font-black rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 cursor-pointer"
+                                    >
+                                      Batal
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveFollowupPlan(aspectName)}
+                                      disabled={isSavingPlan[aspectName] || !editTargetDevelopment || !editStimulationStrategy || !editFrequency}
+                                      className="flex items-center gap-1.5 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-md transition-all active:scale-95 cursor-pointer"
+                                    >
+                                      <Save size={13} /> {isSavingPlan[aspectName] ? 'Menyimpan...' : 'Simpan Rencana'}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : plan.hasPlan && plan.status !== 'Belum Ada Rencana' ? (
+                              /* DISPLAY MODE FOR FILLED PLAN */
+                              <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* Summary Display */}
+                                  <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 space-y-1.5">
+                                    <h4 className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Ringkasan Hasil AAP</h4>
+                                    <div className="text-xs font-bold text-gray-700 whitespace-pre-wrap leading-relaxed">{plan.aapSummary}</div>
+                                  </div>
+
+                                  {/* Recommendation Display */}
+                                  <div className="bg-gray-50/50 rounded-2xl border border-gray-100 p-4 space-y-1.5">
+                                    <h4 className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Rekomendasi Stimulasi & Tindak Lanjut</h4>
+                                    <div className="text-xs font-bold text-gray-700 whitespace-pre-wrap leading-relaxed">{plan.aapRecommendation}</div>
+                                  </div>
+                                </div>
+
+                                {/* Stimulus Action Plan Details */}
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-indigo-50/20 rounded-2xl border border-indigo-100/50 p-6">
+                                  <div className="space-y-2 md:col-span-2">
+                                    <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Strategi & Aktivitas Stimulasi</span>
+                                    <p className="text-xs font-bold text-gray-800 leading-relaxed">{plan.stimulationStrategy}</p>
+                                    <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-indigo-100/30">
+                                      <div>
+                                        <span className="text-[8px] font-black text-indigo-400 uppercase block">Pelaksana</span>
+                                        <p className="text-[10px] font-extrabold text-gray-700">{plan.pelaksana || 'Guru & Orang Tua'}</p>
+                                      </div>
+                                      <div>
+                                        <span className="text-[8px] font-black text-indigo-400 uppercase block">Indikator Keberhasilan</span>
+                                        <p className="text-[10px] font-extrabold text-gray-700 leading-tight">{plan.indikatorKeberhasilan || 'Sesuai Target'}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="space-y-3">
+                                    <div>
+                                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Target Perkembangan</span>
+                                      <p className="text-xs font-extrabold text-gray-900 leading-relaxed">{plan.targetDevelopment}</p>
+                                    </div>
+                                    <div>
+                                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Frekuensi</span>
+                                      <p className="text-xs font-extrabold text-gray-900 leading-relaxed">{plan.frequency}</p>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-3">
+                                    <div>
+                                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Periode Pelaksanaan</span>
+                                      <p className="text-xs font-extrabold text-gray-900 leading-relaxed">
+                                        {plan.startDate || plan.endDate ? (
+                                          `${plan.startDate ? plan.startDate : '-'} s/d ${plan.endDate ? plan.endDate : '-'}`
+                                        ) : (
+                                          'Tidak ditentukan'
+                                        )}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest block">Diperbarui</span>
+                                      <p className="text-xs font-mono font-bold text-gray-500">{plan.updatedAt ? new Date(plan.updatedAt).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}) : '-'}</p>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Teacher Notes (If present) */}
+                                {plan.teacherNotes && (
+                                  <div className="bg-amber-50/30 border border-amber-150 rounded-2xl p-4">
+                                    <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest block mb-1">Catatan Guru</span>
+                                    <p className="text-xs font-bold text-gray-700 leading-relaxed">{plan.teacherNotes}</p>
+                                  </div>
+                                )}
+
+                                {/* SECTION BUKTI PELAKSANAAN */}
+                                <div className="border border-gray-150 rounded-2xl overflow-hidden bg-gray-50/30">
+                                  {/* Header Toggle */}
+                                  <div className="w-full flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 bg-gray-50/50 hover:bg-gray-100/50 transition-colors border-b border-gray-150 gap-4">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleEvidenceExpanded(aspectName)}
+                                      className="flex items-center gap-2 text-left focus:outline-none flex-1"
+                                    >
+                                      <Paperclip size={16} className="text-indigo-600 shrink-0" />
+                                      <div>
+                                        <h4 className="text-xs font-black text-gray-800 uppercase tracking-wide">Bukti Pelaksanaan</h4>
+                                        <p className="text-[10px] text-gray-500 font-bold">
+                                          {connectedEvidences.filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspectName}`).length} bukti terhubung
+                                        </p>
+                                      </div>
+                                    </button>
+                                    <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEvidenceModal(aspectName)}
+                                        className="px-3 py-1.5 bg-indigo-50 border border-indigo-150 text-indigo-600 hover:bg-indigo-100/50 transition-colors font-black rounded-lg text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <Plus size={12} /> Hubungkan Bukti
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleEvidenceExpanded(aspectName)}
+                                        className="p-1 focus:outline-none text-gray-400 hover:text-gray-600 cursor-pointer"
+                                      >
+                                        {expandedEvidenceAspects[aspectName] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Collapsible Content */}
+                                  {expandedEvidenceAspects[aspectName] && (
+                                    <div className="p-4 bg-white space-y-4">
+                                      {suggestStatusChangeAspectId === aspectName && plan.status === 'Belum Dimulai' && (
+                                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+                                          <div className="flex items-start gap-2">
+                                            <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                                            <div>
+                                              <p className="text-[11px] font-bold text-amber-800">Saran Pembaruan Status</p>
+                                              <p className="text-[10px] text-amber-600 leading-normal">
+                                                Bukti pelaksanaan pertama telah ditambahkan. Apakah rencana ini sudah mulai berjalan?
                                               </p>
-
-                                              {/* Teacher's Connection Note */}
-                                              <div className="mt-3 pt-2 border-t border-dashed border-gray-150 space-y-1">
-                                                <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Catatan Keterkaitan Guru (Opsional)</label>
-                                                <div className="flex gap-2">
-                                                  <textarea
-                                                    placeholder="Masukkan catatan keterkaitan, misal: Pada kegiatan ini anak menunjukkan kemajuan..."
-                                                    value={relevanceNotesEdit[evidence.id] !== undefined ? relevanceNotesEdit[evidence.id] : (evidence.teacherRelevanceNote || '')}
-                                                    onChange={(e) => {
-                                                      setRelevanceNotesEdit(prev => ({
-                                                        ...prev,
-                                                        [evidence.id]: e.target.value
-                                                      }));
-                                                    }}
-                                                    rows={2}
-                                                    className="flex-1 text-[11px] font-bold text-gray-700 bg-white border border-gray-150 rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 leading-relaxed"
-                                                  />
-                                                  {(relevanceNotesEdit[evidence.id] !== undefined && relevanceNotesEdit[evidence.id] !== evidence.teacherRelevanceNote) && (
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => handleSaveRelevanceNote(evidence.id, relevanceNotesEdit[evidence.id])}
-                                                      className="px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase rounded-xl shadow-sm self-end h-8 transition-all active:scale-95 cursor-pointer"
-                                                    >
-                                                      Simpan
-                                                    </button>
-                                                  )}
-                                                </div>
-                                              </div>
                                             </div>
                                           </div>
-
-                                          {/* Actions (View Detail, Delete Connection) */}
-                                          <div className="flex items-center gap-1.5 self-end md:self-start shrink-0">
+                                          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                                             <button
                                               type="button"
-                                              onClick={() => handleOpenDetailView(evidence)}
-                                              className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all cursor-pointer"
-                                              title="Lihat Detail Bukti"
+                                              onClick={() => setSuggestStatusChangeAspectId(null)}
+                                              className="px-2.5 py-1 text-[10px] font-black text-gray-500 hover:text-gray-700 uppercase cursor-pointer"
                                             >
-                                              <Eye size={15} />
+                                              Tetap Belum Dimulai
                                             </button>
                                             <button
                                               type="button"
-                                              onClick={() => handleUnlinkEvidence(evidence.id)}
-                                              className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
-                                              title="Hapus Hubungan Bukti"
+                                              onClick={() => handleUpdatePlanStatus(aspectName, 'Berjalan')}
+                                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black text-[10px] rounded-lg uppercase tracking-wider shadow-sm cursor-pointer"
                                             >
-                                              <Trash2 size={15} />
+                                              Ubah menjadi Berjalan
                                             </button>
                                           </div>
                                         </div>
-                                      );
-                                    })}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                                      )}
 
-                        {/* Card Edit Button */}
-                        <div className="flex justify-end pt-2 border-t border-gray-50">
-                          <button
-                            type="button"
-                            onClick={() => handleStartPlanning(aspect.id)}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 font-black rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 cursor-pointer"
-                          >
-                            <Edit3 size={13} /> Edit Rencana
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* EMPTY PLAN STATE WITH BUAT RENCANA BUTTON */
-                      <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
-                        <ClipboardCheck className="text-gray-300 mb-3 animate-pulse" size={40} />
-                        <h4 className="text-xs font-black text-gray-700 uppercase tracking-wider">Belum Ada Rencana Stimulasi</h4>
-                        <p className="text-[11px] text-gray-400 mt-1 max-w-sm leading-relaxed">
-                          Aspek ini belum memiliki rencana stimulasi tindak lanjut. Tekan tombol di bawah untuk membuat draf rencana stimulasi berdasarkan hasil asesmen awal.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => handleStartPlanning(aspect.id)}
-                          className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
-                        >
-                          <Plus size={14} /> Buat Rencana
-                        </button>
-                      </div>
-                    )}
+                                      {connectedEvidences.filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspectName}`).length === 0 ? (
+                                        <div className="text-center py-6 px-4">
+                                          <p className="text-xs font-bold text-gray-400">Belum ada bukti pelaksanaan yang terhubung.</p>
+                                          <p className="text-[10px] text-gray-400 mt-1">Gunakan tombol "Hubungkan Bukti" di atas untuk menautkan data observasi, checklist emosional, atau rangkuman mingguan.</p>
+                                        </div>
+                                      ) : (
+                                        <div className="divide-y divide-gray-150">
+                                          {connectedEvidences
+                                            .filter(e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspectName}`)
+                                            .map((evidence, idx) => {
+                                              const hasThumbnail = !!evidence.cachedThumbnailUrl;
+                                              const isSourceAvailable = existingSourceKeys.has(`${evidence.sourceType}_${evidence.sourceDocumentId}`);
+                                              return (
+                                                <div key={evidence.id} className={cn("py-4 first:pt-0 last:pb-0 flex flex-col md:flex-row gap-4 justify-between items-start", idx > 0 && "pt-4")}>
+                                                  <div className="flex gap-3 items-start flex-1 min-w-0">
+                                                    {hasThumbnail ? (
+                                                      <img
+                                                        src={evidence.cachedThumbnailUrl}
+                                                        alt="Thumbnail bukti"
+                                                        referrerPolicy="no-referrer"
+                                                        className="w-12 h-12 object-cover rounded-xl border border-gray-150 shrink-0"
+                                                      />
+                                                    ) : (
+                                                      <div className="w-12 h-12 rounded-xl bg-gray-150 border border-gray-200 flex items-center justify-center shrink-0 text-gray-500">
+                                                        <FileText size={20} />
+                                                      </div>
+                                                    )}
+
+                                                    <div className="space-y-1 flex-1 min-w-0">
+                                                      <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="text-[9px] font-mono font-bold text-gray-500">
+                                                          {evidence.evidenceDate ? new Date(evidence.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}) : 'Tanggal -'}
+                                                        </span>
+                                                        <span className={cn(
+                                                          "px-2 py-0.5 text-[8px] font-black rounded border uppercase tracking-wider",
+                                                          evidence.sourceType === 'OBSERVATION' ? "bg-purple-50 text-purple-700 border-purple-150" :
+                                                          evidence.sourceType === 'CHECKLIST' ? "bg-teal-50 text-teal-700 border-teal-150" :
+                                                          evidence.sourceType === 'WEEKLY_SUMMARY' ? "bg-amber-50 text-amber-700 border-amber-150" :
+                                                          "bg-blue-50 text-blue-700 border-blue-150"
+                                                        )}>
+                                                          {evidence.cachedSourceLabel || evidence.sourceType}
+                                                        </span>
+                                                        {!isSourceAvailable && !isLoadingSourceKeys && (
+                                                          <span className="px-2 py-0.5 text-[8px] font-black rounded border bg-rose-50 text-rose-700 border-rose-150 uppercase tracking-wider animate-pulse">
+                                                            Sumber bukti tidak tersedia
+                                                          </span>
+                                                        )}
+                                                        {evidence.cachedDomain && (
+                                                          <span className="text-[9px] font-bold text-gray-400 italic">
+                                                            ({evidence.cachedDomain})
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                      <h5 className="text-xs font-extrabold text-gray-900 leading-tight truncate">
+                                                        {evidence.cachedTitle}
+                                                      </h5>
+                                                      <p className="text-[11px] text-gray-500 line-clamp-2 leading-relaxed whitespace-pre-wrap">
+                                                        {evidence.cachedSummary}
+                                                      </p>
+
+                                                      {/* Teacher's Connection Note */}
+                                                      <div className="mt-3 pt-2 border-t border-dashed border-gray-150 space-y-1">
+                                                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest block">Catatan Keterkaitan Guru (Opsional)</label>
+                                                        <div className="flex gap-2">
+                                                          <textarea
+                                                            placeholder="Masukkan catatan keterkaitan, misal: Pada kegiatan ini anak menunjukkan kemajuan..."
+                                                            value={relevanceNotesEdit[evidence.id] !== undefined ? relevanceNotesEdit[evidence.id] : (evidence.teacherRelevanceNote || '')}
+                                                            onChange={(e) => {
+                                                              setRelevanceNotesEdit(prev => ({
+                                                                ...prev,
+                                                                [evidence.id]: e.target.value
+                                                              }));
+                                                            }}
+                                                            rows={2}
+                                                            className="flex-1 text-[11px] font-bold text-gray-700 bg-white border border-gray-150 rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 leading-relaxed"
+                                                          />
+                                                          {(relevanceNotesEdit[evidence.id] !== undefined && relevanceNotesEdit[evidence.id] !== evidence.teacherRelevanceNote) && (
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => handleSaveRelevanceNote(evidence.id, relevanceNotesEdit[evidence.id])}
+                                                              className="px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase rounded-xl shadow-sm self-end h-8 transition-all active:scale-95 cursor-pointer"
+                                                            >
+                                                              Simpan
+                                                            </button>
+                                                          )}
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  </div>
+
+                                                  <div className="flex items-center gap-1.5 self-end md:self-start shrink-0">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleOpenDetailView(evidence)}
+                                                      className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all cursor-pointer"
+                                                      title="Lihat Detail Bukti"
+                                                    >
+                                                      <Eye size={15} />
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleUnlinkEvidence(evidence.id)}
+                                                      className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
+                                                      title="Hapus Hubungan Bukti"
+                                                    >
+                                                      <Trash2 size={15} />
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Plan History Section */}
+                                {plan.history && plan.history.length > 0 && (
+                                  <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
+                                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                      <RefreshCw size={12} className="text-gray-400" /> Riwayat Rencana Sebelumnya ({plan.history.length})
+                                    </h4>
+                                    <div className="space-y-3 max-h-48 overflow-y-auto pr-2 animate-fade-in">
+                                      {plan.history.map((hist: any, hIdx: number) => (
+                                        <div key={hIdx} className="bg-gray-50 border border-gray-150 p-3.5 rounded-2xl text-[11px] leading-relaxed space-y-1.5">
+                                          <div className="flex items-center justify-between text-[10px] font-mono text-gray-400 border-b border-gray-150/40 pb-1">
+                                            <span>Diarsipkan pada: {hist.archivedAt ? new Date(hist.archivedAt).toLocaleString('id-ID', {day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'}) : '-'}</span>
+                                            <span className="font-bold text-indigo-600">VERSI #{hIdx + 1}</span>
+                                          </div>
+                                          <p><b>Target:</b> {hist.targetDevelopment}</p>
+                                          <p><b>Strategi:</b> {hist.stimulationStrategy}</p>
+                                          {hist.teacherNotes && <p className="italic text-gray-500"><b>Catatan:</b> "{hist.teacherNotes}"</p>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Card Edit Button */}
+                                <div className="flex justify-end pt-2 border-t border-gray-50">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartPlanning(aspectName)}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 font-black rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 cursor-pointer"
+                                  >
+                                    <Edit3 size={13} /> Edit Rencana
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              /* EMPTY PLAN STATE WITH BUAT RENCANA BUTTON */
+                              <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+                                <ClipboardCheck className="text-gray-300 mb-3 animate-pulse" size={40} />
+                                <h4 className="text-xs font-black text-gray-700 uppercase tracking-wider">Belum Ada Rencana Stimulasi</h4>
+                                <p className="text-[11px] text-gray-400 mt-1 max-w-sm leading-relaxed">
+                                  Aspek {aspectName} belum memiliki rencana stimulasi. Tekan tombol di bawah untuk membuat draf rencana stimulasi berdasarkan hasil asesmen awal.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartPlanning(aspectName)}
+                                  className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
+                                >
+                                  <Plus size={14} /> Buat Rencana
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 );
               })}
@@ -2471,9 +2963,9 @@ export default function AAPReport() {
                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Aspek Direview</span>
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xl font-black text-gray-900">
-                    {KM_ASPECTS.filter(aspect => midtermForm[aspect.id]?.summary?.trim()).length}
+                    {AAP_ASPECTS.filter(aspect => midtermForm[aspect]?.summary?.trim()).length}
                   </span>
-                  <span className="text-xs font-bold text-gray-400">/ 3 Aspek</span>
+                  <span className="text-xs font-bold text-gray-400">/ 5 Aspek</span>
                 </div>
               </div>
 
@@ -2493,15 +2985,15 @@ export default function AAPReport() {
                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Status Rencana</span>
                 <div className="flex flex-col gap-0.5 text-[10px] font-bold text-gray-600">
                   <div className="flex justify-between">
-                    <span>Berjalan:</span>
+                    <span>Berjalan/Aktif:</span>
                     <span className="font-extrabold text-blue-600">
-                      {KM_ASPECTS.filter(a => followupPlans[a.id]?.status === 'Berjalan').length}
+                      {AAP_ASPECTS.filter(a => followupPlans[a]?.status === 'Berjalan' || followupPlans[a]?.status === 'Aktif').length}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Selesai:</span>
                     <span className="font-extrabold text-emerald-600">
-                      {KM_ASPECTS.filter(a => followupPlans[a.id]?.status === 'Selesai').length}
+                      {AAP_ASPECTS.filter(a => followupPlans[a]?.status === 'Selesai').length}
                     </span>
                   </div>
                 </div>
@@ -2531,355 +3023,430 @@ export default function AAPReport() {
           </div>
 
           {/* Aspect Evaluator Section */}
-          <div className="space-y-8">
-            {KM_ASPECTS.map((aspect, idx) => {
-              const plan = followupPlans[aspect.id] || {};
-              const aspectForm = midtermForm[aspect.id] || {
-                summary: '',
-                progressRating: 'MB',
-                followupDecision: 'Lanjutkan',
-                teacherNotes: '',
-                recommendation: '',
-                adjustmentStrategy: ''
-              };
-
-              const updateAspectFormField = (field: string, value: any) => {
-                setMidtermForm(prev => ({
-                  ...prev,
-                  [aspect.id]: {
-                    ...prev[aspect.id],
-                    [field]: value
-                  }
-                }));
-              };
-
-              // Retrieve connected evidences for this aspect's plan
-              const aspectEvidences = connectedEvidences.filter(
-                e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspect.id}`
-              );
-
-              // Get baseline assessment for this aspect
-              const draftBaseline = getDraftForAspect(aspect.id, currentAssessment);
-
+          <div className="space-y-10">
+            {KM_ASPECTS.map((kmAspect) => {
               return (
-                <div key={aspect.id} className="bg-white border border-gray-150 rounded-3xl overflow-hidden shadow-sm">
-                  {/* Aspect Header Banner */}
-                  <div className="bg-gray-50/50 border-b border-gray-100 px-6 py-5 md:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">
-                        Aspek {idx + 1}: Kurikulum Merdeka
-                      </span>
-                      <h4 className="text-sm font-black text-gray-950 tracking-tight">
-                        {aspect.name}
-                      </h4>
-                      <p className="text-[11px] text-gray-500">
-                        {aspect.description}
-                      </p>
-                    </div>
-
-                    {/* Status Badge of Current Plan */}
-                    {plan.hasPlan ? (
-                      <span className={cn(
-                        "px-3 py-1 text-[10px] font-black rounded-xl border uppercase tracking-wider self-start sm:self-center shrink-0",
-                        plan.status === 'Selesai' ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                        plan.status === 'Berjalan' ? "bg-blue-50 text-blue-700 border-blue-200" :
-                        plan.status === 'Disesuaikan' ? "bg-amber-50 text-amber-700 border-amber-200" :
-                        "bg-gray-100 text-gray-600 border-gray-200"
-                      )}>
-                        Rencana: {plan.status || 'Belum Dimulai'}
-                      </span>
-                    ) : (
-                      <span className="px-3 py-1 text-[10px] font-black rounded-xl border border-dashed border-gray-200 bg-gray-50 text-gray-400 uppercase tracking-wider self-start sm:self-center shrink-0">
-                        Belum Ada Rencana Stimulasi
-                      </span>
-                    )}
+                <div key={kmAspect.id} className="space-y-6">
+                  {/* Visual Grouping Header for Kurikulum Merdeka */}
+                  <div className="bg-gradient-to-r from-gray-50 to-white border border-gray-150 rounded-2xl p-4 md:p-5 flex flex-col justify-center space-y-1">
+                    <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest block">Kelompok Kurikulum Merdeka</span>
+                    <h4 className="text-sm font-black text-gray-900 tracking-tight leading-tight">{kmAspect.name}</h4>
+                    <p className="text-[11px] text-gray-500 max-w-3xl leading-relaxed">{kmAspect.description}</p>
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-gray-150">
-                    {/* LEFT COLUMN: Data Source & Evidences */}
-                    <div className="lg:col-span-5 p-6 md:p-8 space-y-6 bg-gray-50/20">
-                      {/* Section 1: Baseline AAP */}
-                      <div className="space-y-2">
-                        <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                          <CheckCircle2 size={12} className="text-indigo-600" /> Hasil Asesmen Awal (Baseline)
-                        </h5>
-                        <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-2 text-[11px]">
-                          {currentAssessment ? (
-                            <>
-                              <div className="flex flex-wrap items-center gap-2">
-                                {aspect.aapAspects.map(subName => {
-                                  const subData = currentAssessment.aspects?.find((a: any) => a.aspectName === subName);
-                                  return (
-                                    <span key={subName} className="inline-flex items-center gap-1 bg-indigo-50/50 border border-indigo-100 px-2 py-0.5 rounded-lg font-bold text-[10px] text-indigo-700">
-                                      {subName}: <b className="uppercase">{subData?.stage || '-'}</b>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                              <p className="font-bold text-gray-900 mt-2">Ringkasan:</p>
-                              <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{draftBaseline.summary}</p>
-                            </>
-                          ) : (
-                            <p className="text-gray-400 italic">Belum ada data Asesmen Awal Pembelajaran (AAP).</p>
-                          )}
-                        </div>
-                      </div>
+                  <div className="grid grid-cols-1 gap-8 pl-0 md:pl-4">
+                    {kmAspect.aapAspects.map((aspectName) => {
+                      const plan = followupPlans[aspectName] || {};
+                      const aspectForm = midtermForm[aspectName] || {
+                        summary: '',
+                        progressRating: 'MB',
+                        followupDecision: 'Lanjutkan',
+                        teacherNotes: '',
+                        recommendation: '',
+                        adjustmentStrategy: ''
+                      };
 
-                      {/* Section 2: Rencana Tindak Lanjut */}
-                      <div className="space-y-2">
-                        <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                          <ClipboardCheck size={12} className="text-indigo-600" /> Rencana Stimulasi Terkini
-                        </h5>
-                        <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-3 text-[11px] leading-relaxed">
-                          {plan.hasPlan ? (
-                            <>
-                              <div>
-                                <span className="font-bold text-gray-900">Target Perkembangan:</span>
-                                <p className="text-gray-600 mt-0.5 font-medium">{plan.targetDevelopment || '-'}</p>
-                              </div>
-                              <div>
-                                <span className="font-bold text-gray-900">Strategi & Aktivitas:</span>
-                                <p className="text-gray-600 mt-0.5">{plan.stimulationStrategy || '-'}</p>
-                              </div>
-                              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
-                                <div>
-                                  <span className="font-bold text-gray-900">Frekuensi:</span>
-                                  <p className="text-gray-600 font-medium">{plan.frequency || '-'}</p>
-                                </div>
-                                <div>
-                                  <span className="font-bold text-gray-900">Periode:</span>
-                                  <p className="text-gray-600 font-medium">
-                                    {plan.startDate || plan.endDate ? `${plan.startDate || '-'} s/d ${plan.endDate || '-'}` : '-'}
-                                  </p>
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="text-center py-2 text-gray-400 italic">
-                              Belum ada rencana stimulasi dibuat untuk aspek ini.
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      const updateAspectFormField = (field: string, value: any) => {
+                        setMidtermForm(prev => ({
+                          ...prev,
+                          [aspectName]: {
+                            ...prev[aspectName],
+                            [field]: value
+                          }
+                        }));
+                      };
 
-                      {/* Section 3: Bukti Pelaksanaan */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                            <Paperclip size={12} className="text-indigo-600" /> Bukti Pelaksanaan ({aspectEvidences.length})
-                          </h5>
-                          {aspectEvidences.length > 3 && (
-                            <button
-                              type="button"
-                              onClick={() => setAllEvidenceModalAspectId(aspect.id)}
-                              className="text-[9px] font-black text-indigo-600 uppercase tracking-wider hover:underline cursor-pointer"
-                            >
-                              Lihat Semua ({aspectEvidences.length})
-                            </button>
-                          )}
-                        </div>
+                      // Retrieve connected evidences for this aspect's plan
+                      const aspectEvidences = connectedEvidences.filter(
+                        e => e.planId === `${selectedStudentId}_${activeYear.replace('/', '_')}_${aspectName}`
+                      );
 
-                        {aspectEvidences.length === 0 ? (
-                          <div className="bg-amber-50/50 border border-amber-150 rounded-2xl p-4 text-center">
-                            <p className="text-[10px] text-amber-700 font-extrabold leading-normal">
-                              Belum ada bukti pelaksanaan terhubung.
-                            </p>
-                            <p className="text-[9px] text-amber-600/80 leading-normal mt-0.5">
-                              Review tengah semester dapat tetap disimpan sebagai draf tanpa melampirkan bukti.
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            {aspectEvidences.slice(0, 3).map((ev: any) => (
-                              <div key={ev.id} className="bg-white border border-gray-150 rounded-2xl p-3 space-y-1.5 text-[10px] leading-relaxed relative hover:border-gray-300 transition-colors">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-extrabold text-gray-800 line-clamp-1">{ev.cachedTitle}</span>
-                                  <span className="text-[8px] font-mono text-gray-400 shrink-0 uppercase">
-                                    {ev.evidenceDate ? new Date(ev.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'}) : ''}
-                                  </span>
-                                </div>
-                                {ev.teacherRelevanceNote && (
-                                  <p className="text-gray-500 italic bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                    " {ev.teacherRelevanceNote} "
-                                  </p>
-                                )}
-                                <div className="flex justify-end gap-1.5 pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenDetailView(ev)}
-                                    className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 cursor-pointer"
-                                  >
-                                    Lihat Detail
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                      // Get baseline assessment for this aspect
+                      const aspData = currentAssessment?.aspects?.find((a: any) => a.aspectName === aspectName) || {};
+                      const baselineStage = aspData.stage || 'MB';
+                      const baselineAnalysis = aspData.analysis || AAP_DEVELOPMENT_ANALYSIS[aspectName]?.[baselineStage] || '';
+                      const recommendationTemplate = aspData.stimulationRecommendation || AAP_RECOMMENDATIONS[aspectName]?.[baselineStage] || '';
 
-                    {/* RIGHT COLUMN: Review Editor Form */}
-                    <div className="lg:col-span-7 p-6 md:p-8 space-y-6">
-                      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                        <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                          <Edit3 size={12} className="text-indigo-600" /> Pengisian Evaluasi Midterm
-                        </h5>
-                        {midtermReview?.reviewStatus === 'completed' && (
-                          <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-lg text-[9px] font-black uppercase">
-                            Terkunci (Read Only)
-                          </span>
-                        )}
-                      </div>
-
-                      <fieldset disabled={midtermReview?.reviewStatus === 'completed'} className="space-y-5 disabled:opacity-90">
-                        {/* 1. Ringkasan Perkembangan */}
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
-                            Ringkasan Perkembangan Anak hingga Midterm <span className="text-rose-500">*</span>
-                          </label>
-                          <textarea
-                            value={aspectForm.summary || ''}
-                            onChange={(e) => updateAspectFormField('summary', e.target.value)}
-                            rows={3}
-                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
-                            placeholder="Deskripsikan kemajuan riil anak hingga pertengahan term berdasarkan capaian harian, observasi, dan bukti pelaksanaan..."
-                            required
-                          />
-                        </div>
-
-                        {/* 2. Rating & Keputusan */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Progress Rating */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
-                              Penilaian Perkembangan Midterm <span className="text-rose-500">*</span>
-                            </label>
-                            <select
-                              value={aspectForm.progressRating || 'MB'}
-                              onChange={(e) => updateAspectFormField('progressRating', e.target.value)}
-                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-                            >
-                              <option value="BT">Belum Terlihat (BT)</option>
-                              <option value="MB">Mulai Berkembang (MB)</option>
-                              <option value="BSH">Berkembang Sesuai Harapan (BSH)</option>
-                              <option value="MH">Melampaui Harapan (MH)</option>
-                            </select>
-                          </div>
-
-                          {/* Follow up Decision */}
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
-                              Keputusan Tindak Lanjut <span className="text-rose-500">*</span>
-                            </label>
-                            <select
-                              value={aspectForm.followupDecision || 'Lanjutkan'}
-                              onChange={(e) => updateAspectFormField('followupDecision', e.target.value)}
-                              className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-                            >
-                              <option value="Lanjutkan">Lanjutkan Rencana</option>
-                              <option value="Sesuaikan">Sesuaikan Rencana</option>
-                              <option value="Selesaikan">Selesaikan Rencana</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        {/* Interactive Decision Actions */}
-                        {aspectForm.followupDecision === 'Sesuaikan' && (
-                          <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-4 animate-fade-in">
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">
-                                Strategi Penyesuaian Baru <span className="text-rose-500">*</span>
-                              </label>
-                              <textarea
-                                value={aspectForm.adjustmentStrategy || ''}
-                                onChange={(e) => updateAspectFormField('adjustmentStrategy', e.target.value)}
-                                rows={2}
-                                className="w-full text-xs font-bold text-amber-950 bg-white border border-amber-200 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-amber-500/20 leading-relaxed placeholder:font-normal"
-                                placeholder="Jelaskan perubahan target perkembangan, modifikasi strategi stimulasi, atau penyesuaian frekuensi/alat..."
-                                required
-                              />
-                            </div>
-                            <div className="flex justify-end">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  // Open Rencana Tindak Lanjut card for this aspect
-                                  setActiveTab('followup');
-                                  setEditingAspectId(aspect.id);
-                                  // Seed the edit states
-                                  setEditSummary(plan.aapSummary || draftBaseline.summary);
-                                  setEditRecommendation(plan.aapRecommendation || draftBaseline.recommendation);
-                                  setEditTargetDevelopment(plan.targetDevelopment || '');
-                                  setEditFrequency(plan.frequency || '');
-                                  setEditStatus('Disesuaikan');
-                                  setEditStimulationStrategy(plan.stimulationStrategy || '');
-                                  setEditTeacherNotes(plan.teacherNotes || '');
-                                  setEditStartDate(plan.startDate || '');
-                                  setEditEndDate(plan.endDate || '');
-                                  toast.info(`Membuka form penyesuaian rencana stimulasi untuk "${aspect.name}".`);
-                                }}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black rounded-lg text-[10px] uppercase tracking-wider transition-all shadow-sm cursor-pointer"
-                              >
-                                <Edit3 size={12} /> Buka & Edit Rencana
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {aspectForm.followupDecision === 'Selesaikan' && plan.status !== 'Selesai' && (
-                          <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in">
+                      return (
+                        <div key={aspectName} className="bg-white border border-gray-150 rounded-3xl overflow-hidden shadow-sm">
+                          {/* Aspect Header Banner */}
+                          <div className="bg-gray-50/50 border-b border-gray-100 px-6 py-5 md:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div className="space-y-1">
-                              <p className="text-[11px] font-bold text-emerald-800">Selesaikan Rencana Stimulasi?</p>
-                              <p className="text-[10px] text-emerald-600 leading-normal max-w-md">
-                                Anda merekomendasikan penyelesaian rencana ini. Konfirmasikan penyelesaian rencana stimulasi agar status di Rencana Tindak Lanjut berganti menjadi "Selesai".
-                              </p>
+                              <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">
+                                Aspek Perkembangan AAP
+                              </span>
+                              <h4 className="text-sm font-black text-gray-950 tracking-tight">
+                                {aspectName}
+                              </h4>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowCompletePlanConfirm({
-                                  aspectId: aspect.id,
-                                  aspectName: aspect.name
-                                });
-                              }}
-                              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] rounded-lg uppercase tracking-wider shadow-sm shrink-0 cursor-pointer self-end sm:self-center"
-                            >
-                              Selesaikan Sekarang
-                            </button>
+
+                            {/* Status Badge of Current Plan */}
+                            {plan.hasPlan ? (
+                              <span className={cn(
+                                "px-3 py-1 text-[10px] font-black rounded-xl border uppercase tracking-wider self-start sm:self-center shrink-0",
+                                plan.status === 'Selesai' ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                                plan.status === 'Berjalan' || plan.status === 'Aktif' ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                plan.status === 'Disesuaikan' ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                plan.status === 'Draf' ? "bg-amber-50 text-amber-700 border-amber-200" :
+                                "bg-gray-100 text-gray-600 border-gray-200"
+                              )}>
+                                Rencana: {plan.status || 'Belum Dimulai'}
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 text-[10px] font-black rounded-xl border border-dashed border-gray-200 bg-gray-50 text-gray-400 uppercase tracking-wider self-start sm:self-center shrink-0">
+                                Belum Ada Rencana Stimulasi
+                              </span>
+                            )}
                           </div>
-                        )}
 
-                        {/* 3. Pertimbangan/Catatan Guru */}
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
-                            Pertimbangan / Catatan Guru
-                          </label>
-                          <textarea
-                            value={aspectForm.teacherNotes || ''}
-                            onChange={(e) => updateAspectFormField('teacherNotes', e.target.value)}
-                            rows={2}
-                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
-                            placeholder="Tuliskan faktor pendukung, kendala yang dihadapi, atau alasan penyesuaian/penyelesaian rencana..."
-                          />
-                        </div>
+                          <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-gray-150">
+                            {/* LEFT COLUMN: CATATAN AAP (Otomatis, Hanya Baca) */}
+                            <div className="lg:col-span-5 p-6 md:p-8 space-y-6 bg-gray-50/20">
+                              <div className="flex items-center gap-1.5 border-b border-gray-100 pb-3">
+                                <FileText size={14} className="text-indigo-600" />
+                                <h5 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
+                                  CATATAN AAP (Hanya Baca)
+                                </h5>
+                              </div>
 
-                        {/* 4. Rekomendasi Sisa Periode */}
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
-                            Rekomendasi Stimulasi Sisa Periode Term <span className="text-rose-500">*</span>
-                          </label>
-                          <textarea
-                            value={aspectForm.recommendation || ''}
-                            onChange={(e) => updateAspectFormField('recommendation', e.target.value)}
-                            rows={2}
-                            className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
-                            placeholder="Berikan saran stimulasi praktis lanjutan untuk guru dan orang tua di sisa periode term ini..."
-                            required
-                          />
+                              {/* Section 1: Baseline AAP */}
+                              <div className="space-y-2">
+                                <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <CheckCircle2 size={12} className="text-indigo-600" /> Hasil Asesmen Awal (Baseline)
+                                </h5>
+                                <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-2 text-[11px]">
+                                  {currentAssessment ? (
+                                    <>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="inline-flex items-center gap-1 bg-indigo-50/50 border border-indigo-100 px-2 py-0.5 rounded-lg font-bold text-[10px] text-indigo-700 uppercase">
+                                          {aspectName}: <b>{baselineStage} ({aspData.percentage || 0}%)</b>
+                                        </span>
+                                      </div>
+                                      <p className="font-bold text-gray-900 mt-2">Deskripsi Perkembangan:</p>
+                                      <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{baselineAnalysis}</p>
+                                      <p className="font-bold text-gray-900 mt-2">Rekomendasi Stimulasi AAP:</p>
+                                      <p className="text-gray-600 leading-relaxed whitespace-pre-wrap">{recommendationTemplate}</p>
+                                    </>
+                                  ) : (
+                                    <p className="text-gray-400 italic">Belum ada data Asesmen Awal Pembelajaran (AAP).</p>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Section 2: Rencana Tindak Lanjut */}
+                              <div className="space-y-2">
+                                <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <ClipboardCheck size={12} className="text-indigo-600" /> Rencana Stimulasi Terkini
+                                </h5>
+                                <div className="bg-white border border-gray-150 rounded-2xl p-4 space-y-3 text-[11px] leading-relaxed">
+                                  {plan.hasPlan ? (
+                                    <>
+                                      <div>
+                                        <span className="font-bold text-gray-900">Target Perkembangan:</span>
+                                        <p className="text-gray-600 mt-0.5 font-medium">{plan.targetDevelopment || '-'}</p>
+                                      </div>
+                                      <div>
+                                        <span className="font-bold text-gray-900">Strategi & Aktivitas:</span>
+                                        <p className="text-gray-600 mt-0.5">{plan.stimulationStrategy || '-'}</p>
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
+                                        <div>
+                                          <span className="font-bold text-gray-900">Frekuensi:</span>
+                                          <p className="text-gray-600 font-medium">{plan.frequency || '-'}</p>
+                                        </div>
+                                        <div>
+                                          <span className="font-bold text-gray-900">Periode:</span>
+                                          <p className="text-gray-600 font-medium">
+                                            {plan.startDate || plan.endDate ? `${plan.startDate || '-'} s/d ${plan.endDate || '-'}` : '-'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="text-center py-2 text-gray-400 italic">
+                                      Belum ada rencana stimulasi dibuat untuk aspek ini.
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Section 3: Bukti Pelaksanaan */}
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                    <Paperclip size={12} className="text-indigo-600" /> Bukti Pelaksanaan ({aspectEvidences.length})
+                                  </h5>
+                                  {aspectEvidences.length > 3 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setAllEvidenceModalAspectId(aspectName)}
+                                      className="text-[9px] font-black text-indigo-600 uppercase tracking-wider hover:underline cursor-pointer"
+                                    >
+                                      Lihat Semua ({aspectEvidences.length})
+                                    </button>
+                                  )}
+                                </div>
+
+                                {aspectEvidences.length === 0 ? (
+                                  <div className="bg-amber-50/50 border border-amber-150 rounded-2xl p-4 text-center">
+                                    <p className="text-[10px] text-amber-700 font-extrabold leading-normal">
+                                      Belum ada bukti pelaksanaan terhubung.
+                                    </p>
+                                    <p className="text-[9px] text-amber-600/80 leading-normal mt-0.5">
+                                      Review tengah semester dapat tetap disimpan sebagai draf tanpa melampirkan bukti.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {aspectEvidences.slice(0, 3).map((ev: any) => (
+                                      <div key={ev.id} className="bg-white border border-gray-150 rounded-2xl p-3 space-y-1.5 text-[10px] leading-relaxed relative hover:border-gray-300 transition-colors">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="font-extrabold text-gray-800 line-clamp-1">{ev.cachedTitle}</span>
+                                          <span className="text-[8px] font-mono text-gray-400 shrink-0 uppercase">
+                                            {ev.evidenceDate ? new Date(ev.evidenceDate).toLocaleDateString('id-ID', {day: 'numeric', month: 'short'}) : ''}
+                                          </span>
+                                        </div>
+                                        {ev.teacherRelevanceNote && (
+                                          <p className="text-gray-500 italic bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                            " {ev.teacherRelevanceNote} "
+                                          </p>
+                                        )}
+                                        <div className="flex justify-end gap-1.5 pt-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenDetailView(ev)}
+                                            className="text-[8px] font-black uppercase text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 cursor-pointer"
+                                          >
+                                            Lihat Detail
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* RIGHT COLUMN: CATATAN MIDTERM (kosong, diisi guru) */}
+                            <div className="lg:col-span-7 p-6 md:p-8 space-y-6">
+                              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                                <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Edit3 size={12} className="text-indigo-600" /> CATATAN MIDTERM (Diisi Guru)
+                                </h5>
+                                {midtermReview?.reviewStatus === 'completed' && (
+                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-lg text-[9px] font-black uppercase">
+                                    Terkunci (Read Only)
+                                  </span>
+                                )}
+                              </div>
+
+                              <fieldset disabled={midtermReview?.reviewStatus === 'completed'} className="space-y-5 disabled:opacity-90">
+                                {/* 1. Ringkasan Perkembangan */}
+                                <div className="space-y-1.5">
+                                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                                    Ringkasan Perkembangan Anak hingga Midterm <span className="text-rose-500">*</span>
+                                  </label>
+                                  <textarea
+                                    value={aspectForm.summary || ''}
+                                    onChange={(e) => updateAspectFormField('summary', e.target.value)}
+                                    rows={3}
+                                    className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                                    placeholder="Deskripsikan kemajuan riil anak hingga pertengahan term berdasarkan capaian harian, observasi, dan bukti pelaksanaan..."
+                                    required
+                                  />
+                                </div>
+
+                                {/* 2. Rating & Keputusan */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* Progress Rating */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider flex flex-wrap items-center justify-between gap-2">
+                                      <span>Penilaian Perkembangan Midterm <span className="text-rose-500">*</span></span>
+                                      {(() => {
+                                        let bStage = baselineStage;
+                                        if (bStage === 'BT') bStage = 'BB';
+                                        if (bStage === 'MH') bStage = 'BSB';
+
+                                        let mStage = aspectForm.progressRating || 'MB';
+                                        if (mStage === 'BT') mStage = 'BB';
+                                        if (mStage === 'MH') mStage = 'BSB';
+
+                                        const scoreMap: Record<string, number> = {
+                                          'BB': 1,
+                                          'MB': 2,
+                                          'BSH': 3,
+                                          'BSB': 4
+                                        };
+
+                                        const bScore = scoreMap[bStage] || 2;
+                                        const mScore = scoreMap[mStage] || 2;
+
+                                        if (mScore > bScore) {
+                                          return (
+                                            <span className="text-emerald-600 font-extrabold text-[9px] uppercase tracking-wide bg-emerald-50 px-2 py-0.5 rounded border border-emerald-150">
+                                              {bStage} → {mStage} (naik)
+                                            </span>
+                                          );
+                                        } else if (mScore === bScore) {
+                                          return (
+                                            <span className="text-gray-500 font-extrabold text-[9px] uppercase tracking-wide bg-gray-50 px-2 py-0.5 rounded border border-gray-150">
+                                              {bStage} → {mStage} (tetap)
+                                            </span>
+                                          );
+                                        } else {
+                                          return (
+                                            <span className="text-rose-600 font-extrabold text-[9px] uppercase tracking-wide bg-rose-50 px-2 py-0.5 rounded border border-rose-150">
+                                              {bStage} → {mStage} (turun)
+                                            </span>
+                                          );
+                                        }
+                                      })()}
+                                    </label>
+                                    <select
+                                      value={aspectForm.progressRating || 'MB'}
+                                      onChange={(e) => updateAspectFormField('progressRating', e.target.value)}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                                    >
+                                      <option value="BB">Belum Berkembang (BB)</option>
+                                      <option value="MB">Mulai Berkembang (MB)</option>
+                                      <option value="BSH">Berkembang Sesuai Harapan (BSH)</option>
+                                      <option value="BSB">Berkembang Sangat Baik (BSB)</option>
+                                    </select>
+                                  </div>
+
+                                  {/* Follow up Decision */}
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                                      Keputusan Tindak Lanjut <span className="text-rose-500">*</span>
+                                    </label>
+                                    <select
+                                      value={aspectForm.followupDecision || 'Lanjutkan'}
+                                      onChange={(e) => updateAspectFormField('followupDecision', e.target.value)}
+                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                                    >
+                                      <option value="Lanjutkan">Lanjutkan Rencana</option>
+                                      <option value="Ubah Kegiatan">Ubah Kegiatan</option>
+                                      <option value="Naikkan Target">Naikkan Target</option>
+                                      <option value="Selesai">Selesai</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                {/* Interactive Decision Actions */}
+                                {aspectForm.followupDecision === 'Ubah Kegiatan' && (
+                                  <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-2 animate-fade-in text-[11px] text-amber-800">
+                                    <p className="font-bold">Keputusan: Ubah Kegiatan</p>
+                                    <p className="leading-relaxed">
+                                      Saat Anda menyimpan atau menyelesaikan evaluasi Midterm ini, rencana stimulasi aktif saat ini untuk aspek <b>"{aspectName}"</b> akan otomatis diarsipkan ke dalam riwayat (history) dan draf rencana stimulasi baru akan di-generate secara otomatis untuk Anda sesuaikan kembali.
+                                    </p>
+                                  </div>
+                                )}
+
+                                {aspectForm.followupDecision === 'Naikkan Target' && (
+                                  <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-4 space-y-2 animate-fade-in text-[11px] text-indigo-800">
+                                    <p className="font-bold">Keputusan: Naikkan Target</p>
+                                    <p className="leading-relaxed">
+                                      Anda memutuskan untuk menaikkan target perkembangan anak. Silakan sesuaikan target dan strategi stimulasi baru secara langsung di tab <b>"Rencana Tindak Lanjut"</b>.
+                                    </p>
+                                    <div className="flex justify-end mt-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActiveTab('followup');
+                                          setEditingAspectId(aspectName);
+                                          // Seed the edit states
+                                          setEditSummary(plan.aapSummary || baselineAnalysis);
+                                          setEditRecommendation(plan.aapRecommendation || recommendationTemplate);
+                                          setEditTargetDevelopment(plan.targetDevelopment || '');
+                                          setEditFrequency(plan.frequency || '');
+                                          setEditStatus('Berjalan');
+                                          setEditStimulationStrategy(plan.stimulationStrategy || '');
+                                          setEditTeacherNotes(plan.teacherNotes || '');
+                                          setEditStartDate(plan.startDate || '');
+                                          setEditEndDate(plan.endDate || '');
+                                          toast.info(`Membuka form rencana stimulasi aspek "${aspectName}" untuk menaikkan target.`);
+                                        }}
+                                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-lg text-[10px] uppercase tracking-wider transition-all shadow-sm cursor-pointer"
+                                      >
+                                        <Edit3 size={12} /> Buka & Edit Rencana
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {aspectForm.followupDecision === 'Selesai' && plan.status !== 'Selesai' && (
+                                  <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in">
+                                    <div className="space-y-1">
+                                      <p className="text-[11px] font-bold text-emerald-800">Selesaikan Rencana Stimulasi?</p>
+                                      <p className="text-[10px] text-emerald-600 leading-normal max-w-md">
+                                        Anda merekomendasikan penyelesaian rencana ini. Konfirmasikan penyelesaian rencana stimulasi agar status di Rencana Tindak Lanjut berganti menjadi "Selesai".
+                                      </p>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setShowCompletePlanConfirm({
+                                          aspectId: aspectName,
+                                          aspectName: aspectName
+                                        });
+                                      }}
+                                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] rounded-lg uppercase tracking-wider shadow-sm shrink-0 cursor-pointer self-end sm:self-center"
+                                    >
+                                      Selesaikan Sekarang
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* 3. Pertimbangan/Catatan Guru */}
+                                <div className="space-y-1.5">
+                                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                                    Pertimbangan / Catatan Guru
+                                  </label>
+                                  <textarea
+                                    value={aspectForm.teacherNotes || ''}
+                                    onChange={(e) => updateAspectFormField('teacherNotes', e.target.value)}
+                                    rows={2}
+                                    className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                                    placeholder="Tuliskan faktor pendukung, kendala yang dihadapi, atau alasan penyesuaian/penyelesaian rencana..."
+                                  />
+                                </div>
+
+                                {/* 4. Rekomendasi Sisa Periode */}
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">
+                                      Rekomendasi Stimulasi Sisa Periode Term <span className="text-rose-500">*</span>
+                                    </label>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const existingText = aspectForm.recommendation || '';
+                                        if (existingText.trim() && !window.confirm("Kolom rekomendasi sudah terisi. Apakah Anda yakin ingin menyalin rekomendasi AAP? Isi saat ini akan digantikan.")) {
+                                          return;
+                                        }
+                                        updateAspectFormField('recommendation', recommendationTemplate);
+                                        toast.success("Rekomendasi AAP berhasil disalin! ✨");
+                                      }}
+                                      className="text-[9px] font-black uppercase tracking-wider text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100/50 px-2 py-1 rounded-lg border border-indigo-100 transition-all cursor-pointer"
+                                    >
+                                      Salin rekomendasi AAP
+                                    </button>
+                                  </div>
+                                  <textarea
+                                    value={aspectForm.recommendation || ''}
+                                    onChange={(e) => updateAspectFormField('recommendation', e.target.value)}
+                                    rows={2}
+                                    className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                                    placeholder="Berikan saran stimulasi praktis lanjutan untuk guru dan orang tua di sisa periode term ini..."
+                                    required
+                                  />
+                                </div>
+                              </fieldset>
+                            </div>
+                          </div>
                         </div>
-                      </fieldset>
-                    </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -2943,9 +3510,9 @@ export default function AAPReport() {
                       onClick={() => {
                         // Check if required fields are filled
                         let allValid = true;
-                        KM_ASPECTS.forEach(aspect => {
-                          const form = midtermForm[aspect.id];
-                          if (!form?.summary?.trim() || !form?.recommendation?.trim() || (form?.followupDecision === 'Sesuaikan' && !form?.adjustmentStrategy?.trim())) {
+                        AAP_ASPECTS.forEach(aspectName => {
+                          const form = midtermForm[aspectName];
+                          if (!form?.summary?.trim() || !form?.recommendation?.trim()) {
                             allValid = false;
                           }
                         });
