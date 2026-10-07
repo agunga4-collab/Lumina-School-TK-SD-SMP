@@ -294,6 +294,7 @@ export default function AAPReport() {
   const [selectedClassId, setSelectedClassId] = React.useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = React.useState<string>('');
   const [assessments, setAssessments] = React.useState<Record<string, any>>({});
+  const currentAssessment = assessments[selectedStudentId];
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSavingConclusion, setIsSavingConclusion] = React.useState(false);
 
@@ -317,8 +318,6 @@ export default function AAPReport() {
   const [isLoadingPlans, setIsLoadingPlans] = React.useState(false);
   const [isSavingPlan, setIsSavingPlan] = React.useState<Record<string, boolean>>({});
   const [editingAspectId, setEditingAspectId] = React.useState<string | null>(null);
-
-  const currentAssessment = assessments[selectedStudentId];
 
   // Phase 2: Evidence of Implementation (Bukti Pelaksanaan) states
   const [connectedEvidences, setConnectedEvidences] = React.useState<any[]>([]);
