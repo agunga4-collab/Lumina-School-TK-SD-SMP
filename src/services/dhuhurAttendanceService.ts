@@ -18,6 +18,7 @@ export type NormalizedDhuhurEntry = {
     | "BERHALANGAN"
     | "IZIN"
     | "TIDAK_MENGIKUTI"
+    | "HAID"
     | "BELUM_DIISI"
     | "TIDAK_BERLAKU";
   schoolAttendanceStatus?: string | null;
@@ -52,6 +53,13 @@ export const normalizeDhuhurStatus = (raw: unknown): NormalizedDhuhurEntry['stat
     s === 'I'
   ) {
     return 'IZIN';
+  }
+  if (
+    s === 'HAID' ||
+    s === 'M' ||
+    s === 'MENSTRUASI'
+  ) {
+    return 'HAID';
   }
   if (
     s === 'TIDAK_MENGIKUTI' || 
@@ -207,6 +215,7 @@ export function calculateDhuhurRecap(entries: NormalizedDhuhurEntry[]) {
   let tidakMengikuti = 0;
   let belumDiisi = 0;
   let tidakBerlaku = 0;
+  let haid = 0;
 
   entries.forEach(entry => {
     let status = entry.status;
@@ -225,6 +234,10 @@ export function calculateDhuhurRecap(entries: NormalizedDhuhurEntry[]) {
         break;
       case 'IZIN':
         izin++;
+        totalRecorded++;
+        break;
+      case 'HAID':
+        haid++;
         totalRecorded++;
         break;
       case 'TIDAK_MENGIKUTI':
@@ -248,6 +261,7 @@ export function calculateDhuhurRecap(entries: NormalizedDhuhurEntry[]) {
     tidakMengikuti,
     belumDiisi,
     tidakBerlaku,
+    haid
   };
 }
 

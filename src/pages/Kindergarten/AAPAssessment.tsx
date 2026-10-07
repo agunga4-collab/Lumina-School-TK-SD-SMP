@@ -255,10 +255,19 @@ export default function AAPAssessment() {
   // Realtime scores aggregator & stats generator per student
   const calculateLiveScores = (studentId: string) => {
     const studentScores = editingScores[studentId] || {};
+    const savedAssessment = assessments[studentId];
+    
     const aspectsData = AAP_ASPECTS.map(aspect => {
-      const indicators = AAP_RUBRIC[ageRangeUsed]?.[aspect] || [];
+      // Find indicators from saved assessment if it has it
+      const savedAspect = savedAssessment?.aspects?.find((a: any) => a.aspectName === aspect);
+      const savedIndicators = savedAspect?.indicators || [];
+      
+      const indicators = savedIndicators.length > 0 
+        ? savedIndicators.map((i: any) => i.indicatorName)
+        : (AAP_RUBRIC[ageRangeUsed]?.[aspect] || []);
+
       const indicatorsWithScores = indicators.map(indName => {
-        const score = studentScores[indName] || null;
+        const score = studentScores[indName] !== undefined && studentScores[indName] !== null ? studentScores[indName] : null;
         return { indicatorName: indName, score };
       });
       
@@ -286,7 +295,7 @@ export default function AAPAssessment() {
     const overallPercentage = totalMax > 0 ? Math.round((totalRaw / totalMax) * 100) : 0;
     const overallStage = getStageFromPercentage(overallPercentage);
     const totalScored = aspectsData.reduce((sum, item) => sum + item.scoredCount, 0);
-    const totalExpected = flatIndicators.length;
+    const totalExpected = aspectsData.reduce((sum, item) => sum + item.indicators.length, 0);
     const isPartiallyScored = totalScored > 0;
     const isAllScored = totalScored === totalExpected;
 

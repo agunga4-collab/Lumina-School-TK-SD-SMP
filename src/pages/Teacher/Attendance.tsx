@@ -598,12 +598,16 @@ export default function Attendance() {
                 normalizedShalatStatus = 'T';
               } else if (shalatStatus === 'TIDAK_MENGIKUTI' || shalatStatus === 'ALPA') {
                 normalizedShalatStatus = 'A';
+              } else if (shalatStatus === 'HAID' || shalatStatus === 'M') {
+                normalizedShalatStatus = 'M';
               }
 
               let finalStatus = null;
               if (activeUnit === 'JUNIOR_HIGH') {
                 if (!schoolDayVal) {
                   finalStatus = 'TIDAK_BERLAKU';
+                } else if (normalizedShalatStatus === 'M') {
+                  finalStatus = 'M';
                 } else if (schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(schoolStatus)) {
                   finalStatus = 'A';
                 } else {
@@ -2093,6 +2097,9 @@ export default function Attendance() {
              <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto sm:justify-end lg:self-end">
                 <button 
                   onClick={() => setStudents(students.map(s => {
+                    if (s.status === 'M') {
+                      return s;
+                    }
                     if (attendanceType === 'DHUHUR') {
                       const isNonPresent = s.schoolStatus && ['SAKIT', 'IZIN', 'ALPA'].includes(s.schoolStatus);
                       return {

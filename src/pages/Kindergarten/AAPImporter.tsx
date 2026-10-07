@@ -38,6 +38,7 @@ interface ParsedRow {
     stimulationRecommendation: string | null;
   }[];
   validationError?: string;
+  validationWarning?: string;
   rowAction: 'IMPORT' | 'SKIP';
 }
 
@@ -67,6 +68,13 @@ export default function AAPImporter({
   const [isParsed, setIsParsed] = React.useState(false);
   const [overwriteSettings, setOverwriteSettings] = React.useState<Record<string, 'OVERWRITE' | 'SKIP'>>({});
   const [showConflictDialog, setShowConflictDialog] = React.useState(false);
+  const [detectedAspectsMeta, setDetectedAspectsMeta] = React.useState<{
+    aspectName: string;
+    indicatorCount: number;
+    labels: string[];
+    isMismatched: boolean;
+    mismatchReason?: string;
+  }[]>([]);
   
   // Detail Modal state
   const [selectedRowIdxForDetail, setSelectedRowIdxForDetail] = React.useState<number | null>(null);
@@ -230,6 +238,7 @@ export default function AAPImporter({
     setParsedRows([]);
     setIsParsed(false);
     setSelectedRowIdxForDetail(null);
+    setDetectedAspectsMeta([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -257,10 +266,22 @@ export default function AAPImporter({
         return;
       }
 
-      // 1. Detect header row
-      let headerRowIdx = -1;
-      let nameColIdx = 1; // Default is column B (index 1)
-      let noColIdx = 0;   // Default is column A (index 0)
+      // Helper to resolve aspect standard name
+      const getAspectFromHeader = (text: string): string | null => {
+        const t = String(text || '').toLowerCase().trim();
+        if (t.includes('motorik kasar') || t.includes('kasar')) return 'Motorik Kasar';
+        if (t.includes('motorik halus') || t.includes('halus')) return 'Motorik Halus';
+        if (t.includes('bahasa')) return 'Bahasa';
+        if (t.includes('kognitif')) return 'Kognitif';
+        if (t.includes('sosial') || t.includes('kemandirian')) return 'Sosial & Kemandirian';
+        return null;
+      };
+
+      // Detect headers and aspects
+      let aspectRowIdx = -1;
+      let indicatorRowIdx = -1;
+      let nameColIdx = 1; // Default column B
+      let noColIdx = 0;   // Default column A
 
       for (let r = 0; r < Math.min(rows.length, 15); r++) {
         const row = rows[r];
@@ -274,9 +295,8 @@ export default function AAPImporter({
         });
 
         if (hasHeaderMarkers) {
-          headerRowIdx = r;
+          indicatorRowIdx = r;
           
-          // Find the exact name column index and no column index
           row.forEach((cell: any, cIdx: number) => {
             if (cell === null || cell === undefined) return;
             const s = String(cell).toLowerCase().trim();
@@ -290,24 +310,185 @@ export default function AAPImporter({
         }
       }
 
-      if (headerRowIdx === -1) {
+      if (indicatorRowIdx === -1) {
         toast.error('Tidak menemukan baris Header tabel di dalam Excel (Kolom "No" atau "Nama" tidak terdeteksi di 15 baris pertama).');
         return;
       }
 
+      // Robustly detect aspectRowIdx by scanning which row contains the most cells matching our known aspects
+      let bestAspectRowIdx = -1;
+      let maxAspectCount = 0;
+      for (let r = 0; r < Math.min(rows.length, 15); r++) {
+        const row = rows[r];
+        if (!row) continue;
+        if (r === indicatorRowIdx) continue;
+        let count = 0;
+        row.forEach((cell: any) => {
+          if (cell && getAspectFromHeader(cell)) {
+            count++;
+          }
+        });
+        if (count > maxAspectCount) {
+          maxAspectCount = count;
+          bestAspectRowIdx = r;
+        }
+      }
+
+      aspectRowIdx = bestAspectRowIdx !== -1 ? bestAspectRowIdx : indicatorRowIdx;
+
+      // Map aspect column starts
+      const aspectHeaders: { colIdx: number; aspectName: string }[] = [];
+      const aspectRow = rows[aspectRowIdx];
+      aspectRow.forEach((cell: any, colIdx: number) => {
+        if (!cell) return;
+        const aspectName = getAspectFromHeader(cell);
+        if (aspectName) {
+          // Avoid duplicate aspect column headers
+          if (!aspectHeaders.some(h => h.aspectName === aspectName)) {
+            aspectHeaders.push({ colIdx, aspectName });
+          }
+        }
+      });
+
+      aspectHeaders.sort((a, b) => a.colIdx - b.colIdx);
+
+      interface AspectColumnMap {
+        aspectName: string;
+        startColIdx: number;
+        indicators: { colIdx: number; label: string }[];
+        analysisColIdx: number;
+        recommendationColIdx: number;
+      }
+
+      const aspectColumnMaps: AspectColumnMap[] = [];
+      const indicatorRow = rows[indicatorRowIdx];
+
+      aspectHeaders.forEach((aspectHeader, idx) => {
+        const startColIdx = aspectHeader.colIdx;
+        let analysisColIdx = -1;
+        let recommendationColIdx = -1;
+
+        // Scan from startColIdx to find "Analisis" or "Rekomendasi" or "Stimulasi" column of this aspect
+        for (let c = startColIdx; c < indicatorRow.length; c++) {
+          const cellVal = String(indicatorRow[c] || '').toLowerCase().trim();
+          // We look for 'analisis' or 'rekomendasi' or 'stimulasi' to determine closing columns
+          if (cellVal.includes('analisis') || cellVal.includes('rekomendasi') || cellVal.includes('stimulasi')) {
+            analysisColIdx = c;
+            if (c + 1 < indicatorRow.length) {
+              recommendationColIdx = c + 1;
+            }
+            break;
+          }
+        }
+
+        if (analysisColIdx === -1) {
+          analysisColIdx = startColIdx + 9;
+          recommendationColIdx = startColIdx + 10;
+        }
+
+        // Collect indicators inside the Excel
+        const indicators: { colIdx: number; label: string }[] = [];
+        for (let c = startColIdx; c < analysisColIdx; c++) {
+          const label = String(indicatorRow[c] || '').trim();
+          // Filter out other metadata columns if any
+          indicators.push({
+            colIdx: c,
+            label: label || `Indikator ${c - startColIdx + 1}`
+          });
+        }
+
+        aspectColumnMaps.push({
+          aspectName: aspectHeader.aspectName,
+          startColIdx,
+          indicators,
+          analysisColIdx,
+          recommendationColIdx
+        });
+      });
+
+      // Map all 5 standard aspects
+      const finalAspectColumnMaps: AspectColumnMap[] = [];
+      AAP_ASPECTS.forEach(aspect => {
+        const found = aspectColumnMaps.find(m => m.aspectName === aspect);
+        if (found) {
+          finalAspectColumnMaps.push(found);
+        } else {
+          // fallback
+          const activeIndicators = AAP_RUBRIC[ageRangeUsed]?.[aspect] || [];
+          finalAspectColumnMaps.push({
+            aspectName: aspect,
+            startColIdx: -1,
+            indicators: activeIndicators.map((lbl, iIdx) => ({ colIdx: -1, label: lbl })),
+            analysisColIdx: -1,
+            recommendationColIdx: -1
+          });
+        }
+      });
+
+      // Find BB/MB/BSH/BSB summary columns
+      let summaryColBB = -1;
+      let summaryColMB = -1;
+      let summaryColBSH = -1;
+      let summaryColBSB = -1;
+
+      indicatorRow.forEach((cell: any, cIdx: number) => {
+        if (!cell) return;
+        const s = String(cell).toUpperCase().trim();
+        if (s === 'BB' || s === 'JML BB' || s === 'JUMLAH BB' || s === 'TOTAL BB' || s === 'JML_BB') summaryColBB = cIdx;
+        else if (s === 'MB' || s === 'JML MB' || s === 'JUMLAH MB' || s === 'TOTAL MB' || s === 'JML_MB') summaryColMB = cIdx;
+        else if (s === 'BSH' || s === 'JML BSH' || s === 'JUMLAH BSH' || s === 'TOTAL BSH' || s === 'JML_BSH') summaryColBSH = cIdx;
+        else if (s === 'BSB' || s === 'JML BSB' || s === 'JUMLAH BSB' || s === 'TOTAL BSB' || s === 'JML_BSB') summaryColBSB = cIdx;
+      });
+
+      const getExcelNum = (val: any) => {
+        if (val === undefined || val === null || val === '') return 0;
+        const num = parseInt(String(val).trim(), 10);
+        return isNaN(num) ? 0 : num;
+      };
+
+      // Set preview metadata
+      const meta = finalAspectColumnMaps.map(aspectMap => {
+        const defaultRubric = AAP_RUBRIC[ageRangeUsed]?.[aspectMap.aspectName] || [];
+        const isMismatched = aspectMap.indicators.length !== defaultRubric.length || 
+          aspectMap.indicators.some((ind, idx) => ind.label !== defaultRubric[idx]);
+        
+        let mismatchReason = '';
+        if (isMismatched) {
+          if (aspectMap.indicators.length !== defaultRubric.length) {
+            mismatchReason = `Jumlah indikator berbeda (Excel: ${aspectMap.indicators.length}, Rubrik default: ${defaultRubric.length})`;
+          } else {
+            mismatchReason = `Teks indikator berbeda dengan rubrik default`;
+          }
+        }
+
+        return {
+          aspectName: aspectMap.aspectName,
+          indicatorCount: aspectMap.indicators.length,
+          labels: aspectMap.indicators.map(ind => ind.label),
+          isMismatched,
+          mismatchReason: mismatchReason || undefined
+        };
+      });
+
+      setDetectedAspectsMeta(meta);
+
       const tempRows: ParsedRow[] = [];
-      const studentDataRows = rows.slice(headerRowIdx + 1);
+      const studentDataRows = rows.slice(indicatorRowIdx + 1);
 
       studentDataRows.forEach((row, relativeRowIdx) => {
-        const actualExcelRowIndex = headerRowIdx + 1 + relativeRowIdx + 1; // 1-based row index in Excel
+        const actualExcelRowIndex = indicatorRowIdx + 1 + relativeRowIdx + 1; // 1-based row index in Excel
         if (!row || row.length === 0) return;
 
         const nameVal = row[nameColIdx];
         if (nameVal === undefined || nameVal === null) return;
 
-        const cleanNameStr = String(nameVal).toLowerCase().trim();
+        const nameStr = String(nameVal).trim();
+        if (nameStr === '' || nameStr === '0' || nameStr === '0.0') return; // Skip empty or '0' values
+
+        const cleanNameStr = nameStr.toLowerCase();
+        
+        // Skip header words or standard non-student texts
         if (
-          cleanNameStr === '' ||
           cleanNameStr === 'no' ||
           cleanNameStr === 'nama' ||
           cleanNameStr === 'nama siswa' ||
@@ -318,10 +499,16 @@ export default function AAPImporter({
           cleanNameStr.startsWith('aspek') ||
           AAP_ASPECTS.some(asp => cleanNameStr === asp.toLowerCase())
         ) {
-          return; // Skip non-student Rows
+          return;
         }
 
-        const name = String(nameVal).trim();
+        // Skip purely numeric names (like row numbering 1, 2, 3...)
+        const parsedNameInt = parseInt(nameStr, 10);
+        if (!isNaN(parsedNameInt)) {
+          return;
+        }
+
+        const name = nameStr;
 
         // Match roster student automatically
         let matchedStudentId = '';
@@ -337,44 +524,60 @@ export default function AAPImporter({
           matchedStudentId = matchedStudent.id;
         }
 
-        // Column check (aspect data blocks start after the Name column)
-        const aspectStartBase = nameColIdx + 1;
         let validationError = '';
-        const dataColsCount = row.length - aspectStartBase;
         
-        if (dataColsCount < 110) {
-          validationError = `Kolom kurang dari format resmi. Minimal dibutuhkan 110 kolom data setelah nama siswa (5 aspek × 22 kolom). Terdeteksi hanya ${dataColsCount} kolom.`;
-        }
-
-        const aspectsData = AAP_ASPECTS.map((aspect, aspectIdx) => {
-          const startColIdx = aspectStartBase + (aspectIdx * 22);
-          const activeIndicators = AAP_RUBRIC[ageRangeUsed]?.[aspect] || [];
-
-          // 20 indicator slots
-          const indicatorsPayload = activeIndicators.map((indName, indIdx) => {
-            const rawVal = row[startColIdx + indIdx];
+        const aspectsData = finalAspectColumnMaps.map(aspectMap => {
+          const indicatorsPayload = aspectMap.indicators.map(ind => {
+            const rawVal = ind.colIdx !== -1 ? row[ind.colIdx] : null;
             const score = convertScoreVal(rawVal);
             return {
-              indicatorName: indName,
+              indicatorName: ind.label,
               score
             };
           });
 
-          // Analisis at slot 20
-          const analysisRaw = row[startColIdx + 20];
+          const analysisRaw = aspectMap.analysisColIdx !== -1 ? row[aspectMap.analysisColIdx] : null;
           const analysis = (analysisRaw !== undefined && analysisRaw !== null && String(analysisRaw).trim() !== '') ? String(analysisRaw).trim() : null;
 
-          // Rekomendasi at slot 21
-          const recommendationRaw = row[startColIdx + 21];
+          const recommendationRaw = aspectMap.recommendationColIdx !== -1 ? row[aspectMap.recommendationColIdx] : null;
           const stimulationRecommendation = (recommendationRaw !== undefined && recommendationRaw !== null && String(recommendationRaw).trim() !== '') ? String(recommendationRaw).trim() : null;
 
           return {
-            aspectName: aspect,
+            aspectName: aspectMap.aspectName,
             indicators: indicatorsPayload,
             analysis,
             stimulationRecommendation
           };
         });
+
+        // Cross validation with BB/MB/BSH/BSB columns in Excel
+        let calculatedBB = 0;
+        let calculatedMB = 0;
+        let calculatedBSH = 0;
+        let calculatedBSB = 0;
+
+        aspectsData.forEach(asp => {
+          asp.indicators.forEach(ind => {
+            if (ind.score === 1) calculatedBB++;
+            else if (ind.score === 2) calculatedMB++;
+            else if (ind.score === 3) calculatedBSH++;
+            else if (ind.score === 4) calculatedBSB++;
+          });
+        });
+
+        const hasSummaryCols = summaryColBB !== -1 && summaryColMB !== -1 && summaryColBSH !== -1 && summaryColBSB !== -1;
+        let validationWarning = '';
+
+        if (hasSummaryCols) {
+          const excelBB = getExcelNum(row[summaryColBB]);
+          const excelMB = getExcelNum(row[summaryColMB]);
+          const excelBSH = getExcelNum(row[summaryColBSH]);
+          const excelBSB = getExcelNum(row[summaryColBSB]);
+
+          if (calculatedBB !== excelBB || calculatedMB !== excelMB || calculatedBSH !== excelBSH || calculatedBSB !== excelBSB) {
+            validationWarning = `Konfirmasi Excel (BB:${excelBB}, MB:${excelMB}, BSH:${excelBSH}, BSB:${excelBSB}) tidak cocok dengan hitung butir (BB:${calculatedBB}, MB:${calculatedMB}, BSH:${calculatedBSH}, BSB:${calculatedBSB})`;
+          }
+        }
 
         const isDuplicate = matchedStudentId ? !!existingAssessments[matchedStudentId] : false;
 
@@ -385,6 +588,7 @@ export default function AAPImporter({
           isDuplicate,
           aspectsData,
           validationError: validationError || undefined,
+          validationWarning: validationWarning || undefined,
           rowAction: 'IMPORT'
         });
       });
@@ -842,6 +1046,49 @@ export default function AAPImporter({
             </button>
           </div>
 
+          {/* Preview Struktur Aspek & Indikator dari Excel */}
+          <div className="bg-white border border-gray-150 rounded-3xl p-6 space-y-4 shadow-sm">
+            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+              <FileText size={16} className="text-indigo-600" /> Pratinjau Struktur Aspek & Indikator dari Excel
+            </h3>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Berikut adalah aspek dan jumlah indikator yang berhasil dibaca dari baris header Excel Anda secara dinamis.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {detectedAspectsMeta.map(asp => (
+                <div key={asp.aspectName} className={cn(
+                  "p-4 rounded-2xl border space-y-2.5",
+                  asp.isMismatched ? "bg-amber-50/30 border-amber-200" : "bg-gray-50/30 border-gray-150"
+                )}>
+                  <div className="flex flex-col gap-1 border-b border-gray-100 pb-2">
+                    <span className="text-[10px] font-black text-gray-900 uppercase truncate" title={asp.aspectName}>
+                      {asp.aspectName}
+                    </span>
+                    <span className={cn(
+                      "text-[9px] font-black px-2 py-0.5 rounded w-fit uppercase",
+                      asp.isMismatched ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
+                    )}>
+                      {asp.indicatorCount} Indikator
+                    </span>
+                  </div>
+                  {asp.isMismatched && (
+                    <div className="flex items-start gap-1 text-[9px] font-bold text-amber-800 bg-amber-100/50 p-2 rounded-xl">
+                      <AlertCircle size={10} className="shrink-0 mt-0.5" />
+                      <p>{asp.mismatchReason}</p>
+                    </div>
+                  )}
+                  <div className="max-h-[120px] overflow-y-auto space-y-1 text-[9px] font-medium text-gray-500">
+                    {asp.labels.map((lbl, lIdx) => (
+                      <div key={lIdx} className="truncate bg-white p-1 rounded border border-gray-100/80 leading-normal" title={lbl}>
+                        {lIdx + 1}. {lbl}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100 text-center">
@@ -946,6 +1193,12 @@ export default function AAPImporter({
                           )}
                           {row.validationError && (
                             <p className="text-[10px] font-medium text-rose-600 mt-1 leading-tight">{row.validationError}</p>
+                          )}
+                          {row.validationWarning && (
+                            <p className="text-[10px] font-bold text-amber-600 mt-1 leading-tight flex items-start gap-1">
+                              <AlertCircle size={10} className="shrink-0 mt-0.5" />
+                              <span>{row.validationWarning}</span>
+                            </p>
                           )}
                         </td>
 

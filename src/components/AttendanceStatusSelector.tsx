@@ -38,11 +38,12 @@ export default function AttendanceStatusSelector({
       { key: 'H', label: 'H', fullLabel: 'Hadir', colorClass: 'bg-green-600 text-white shadow-md', hoverClass: 'hover:bg-green-50 hover:text-green-500 text-gray-500' },
       { key: 'T', label: 'T', fullLabel: 'Terlambat', colorClass: 'bg-orange-500 text-white shadow-md', hoverClass: 'hover:bg-orange-50 hover:text-orange-500 text-gray-500' },
       { key: 'A', label: 'A', fullLabel: 'Absen', colorClass: 'bg-red-600 text-white shadow-md', hoverClass: 'hover:bg-red-50 hover:text-red-500 text-gray-500' },
+      { key: 'M', label: 'M', fullLabel: 'Haid/Menstruasi', colorClass: 'bg-purple-600 text-white shadow-md', hoverClass: 'hover:bg-purple-50 hover:text-purple-500 text-gray-500' },
     ];
 
     if (layout === 'mobile') {
       return (
-        <div className="grid grid-cols-3 gap-2 w-full" id="dhuhur-status-selector-mobile">
+        <div className="grid grid-cols-4 gap-2 w-full" id="dhuhur-status-selector-mobile">
           {dhuhurOptions.map((opt) => {
             const isActive = value === opt.key;
             return (
@@ -59,7 +60,8 @@ export default function AttendanceStatusSelector({
                     ? cn(opt.colorClass, "border-black/10 ring-4 ring-offset-1", 
                          opt.key === 'H' && "ring-green-100",
                          opt.key === 'T' && "ring-orange-100",
-                         opt.key === 'A' && "ring-red-100"
+                         opt.key === 'A' && "ring-red-100",
+                         opt.key === 'M' && "ring-purple-100"
                       ) 
                     : "bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-700",
                   disabled && "opacity-50 cursor-not-allowed"
