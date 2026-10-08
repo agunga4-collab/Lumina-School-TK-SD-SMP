@@ -31,7 +31,8 @@ import {
   CheckCircle2,
   CalendarDays,
   Play,
-  Eye
+  Eye,
+  Download
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -49,6 +50,9 @@ import {
   deleteLdssDraft,
   LdssSettings
 } from "../../services/ldssTemplateService";
+import { toast } from "sonner";
+import { ElementaryLdssPdfTemplate } from "../../components/Elementary/ElementaryLdssPdfTemplate";
+import { generateElementaryLdssPdfBlob, normalizeElementaryLdssFilename } from "../../lib/elementaryLdssReportPdf";
 import {
   ResponsiveContainer,
   LineChart,
@@ -264,9 +268,71 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
   const [checkedDomains, setCheckedDomains] = React.useState<Record<string, boolean>>({});
 
   // NEW: Class Analytics & Statistics States
-  const [subTab, setSubTab] = React.useState<"students" | "analytics">("students");
+  const [subTab, setSubTab] = React.useState<"students" | "analytics" | "reports">("students");
   const [templates, setTemplates] = React.useState<LdssTemplate[]>([]);
   const [analyticsPeriod, setAnalyticsPeriod] = React.useState<string>("");
+
+  // PDF Report Generation States
+  const [pdfStudent, setPdfStudent] = React.useState<Student | null>(null);
+  const [generatingPdfStudentId, setGeneratingPdfStudentId] = React.useState<string | null>(null);
+  const [isPdfTemplateReady, setIsPdfTemplateReady] = React.useState<boolean>(false);
+
+  const handleDownloadPdf = async (studentToPrint: Student) => {
+    if (generatingPdfStudentId) return;
+
+    const studentSessions = classSessions.filter((s) => s.studentId === studentToPrint.id);
+    const completedSessions = studentSessions.filter(
+      (s) => s.status?.toUpperCase() === "COMPLETED" || s.status === "completed"
+    );
+
+    if (completedSessions.length === 0) {
+      toast.error(`Siswa ${studentToPrint.name} belum memiliki hasil asesmen berstatus Selesai.`);
+      return;
+    }
+
+    try {
+      setGeneratingPdfStudentId(studentToPrint.id);
+      setPdfStudent(studentToPrint);
+      setIsPdfTemplateReady(false);
+
+      toast.info(`Memproses Rapor Hasil LDSS ${studentToPrint.name}... Mohon tunggu sebentar.`);
+
+      // Wait for template to render and become ready
+      let attempts = 0;
+      while (!isPdfTemplateReady && attempts < 30) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        attempts++;
+      }
+
+      // Small additional delay to ensure Recharts SVG is fully laid out
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const pdfContainer = document.getElementById("elementary-ldss-pdf-container");
+      const pageElements = Array.from(
+        pdfContainer?.querySelectorAll<HTMLElement>(".pdf-page") || []
+      );
+
+      if (!pageElements || pageElements.length === 0) {
+        throw new Error("Gagal menemukan elemen halaman PDF Rapor LDSS.");
+      }
+
+      const fileName = normalizeElementaryLdssFilename(
+        studentToPrint.name,
+        selectedClass?.name || "",
+        activeYear
+      );
+
+      await generateElementaryLdssPdfBlob(pageElements, fileName);
+      toast.success(`Rapor Hasil LDSS ${studentToPrint.name} berhasil diunduh!`);
+    } catch (err: any) {
+      console.error("Error generating LDSS PDF:", err);
+      toast.error(err?.message || "Gagal mengunduh Rapor LDSS.");
+    } finally {
+      setGeneratingPdfStudentId(null);
+      setPdfStudent(null);
+      setIsPdfTemplateReady(false);
+    }
+  };
 
   React.useEffect(() => {
     const loadTemplates = async () => {
@@ -950,9 +1016,206 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
                   <Activity size={14} />
                   <span>Analisis & Statistik Kelas</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setSubTab("reports")}
+                  className={`px-4 py-2 text-xs font-black rounded-xl cursor-pointer transition-all flex items-center gap-2 ${
+                    subTab === "reports"
+                      ? "bg-indigo-600 text-white shadow-sm font-black"
+                      : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 font-bold"
+                  }`}
+                >
+                  <FileText size={14} />
+                  <span>Hasil Rapor</span>
+                </button>
               </div>
 
-              {subTab === "students" ? (
+              {/* Off-screen hidden container for PDF generation */}
+              {pdfStudent && selectedClass && (
+                <div className="fixed -left-[9999px] -top-[9999px] opacity-100 pointer-events-none z-[-100]">
+                  <ElementaryLdssPdfTemplate
+                    student={pdfStudent}
+                    currentClass={selectedClass}
+                    academicYear={activeYear}
+                    sessions={classSessions.filter((s) => s.studentId === pdfStudent.id)}
+                    templates={templates}
+                    onReadyChange={(ready) => setIsPdfTemplateReady(ready)}
+                  />
+                </div>
+              )}
+
+              {subTab === "reports" ? (
+                <div className="space-y-6">
+                  {/* Table Card for Reports */}
+                  <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden text-left">
+                    <div className="px-6 py-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <h3 className="text-base font-black text-gray-950 tracking-tight flex items-center gap-2">
+                          <FileText className="text-indigo-600 shrink-0" size={18} />
+                          Hasil Rapor LDSS Kelas: {selectedClass.name}
+                        </h3>
+                        <p className="text-xs text-slate-400 font-bold">
+                          Unduh Rapor Hasil LDSS resmi per siswa dalam format PDF A4 profesional.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <Search className="absolute left-3 top-2.5 text-gray-400" size={14} />
+                          <input
+                            type="text"
+                            value={studentSearch}
+                            onChange={(e) => setStudentSearch(e.target.value)}
+                            placeholder="Cari siswa..."
+                            className="pl-8 pr-4 py-1.5 bg-slate-50 border border-gray-150 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {loadingSessions || loadingStudents ? (
+                      <div className="p-16 text-center flex flex-col items-center justify-center space-y-3">
+                        <Loader2 className="animate-spin text-indigo-600" size={32} />
+                        <p className="text-xs text-slate-400 font-bold">Memuat data rapor kelas...</p>
+                      </div>
+                    ) : filteredStudents.length === 0 ? (
+                      <div className="p-16 text-center text-slate-400 italic text-xs font-semibold">
+                        Tidak ada siswa ditemukan.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50 border-b border-gray-100 text-[10px] font-black text-gray-400 uppercase tracking-wider">
+                            <tr>
+                              <th className="py-3 px-4 w-12 text-center">No</th>
+                              <th className="py-3 px-4 min-w-[200px]">Nama Siswa</th>
+                              <th className="py-3 px-4 w-20 text-center">Usia</th>
+                              <th className="py-3 px-4 text-center">LDSS 1</th>
+                              <th className="py-3 px-4 text-center">LDSS 2</th>
+                              <th className="py-3 px-4 text-center">LDSS 3</th>
+                              <th className="py-3 px-4 text-center min-w-[140px]">Ketersediaan Rapor</th>
+                              <th className="py-3 px-4 text-center w-40">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {filteredStudents.map((student, idx) => {
+                              const computedAge = calculateStudentAge(student.birthDate);
+
+                              const s1 = classSessions.find(
+                                (s) => s.studentId === student.id && s.periodKey === "LDSS_1"
+                              );
+                              const s2 = classSessions.find(
+                                (s) => s.studentId === student.id && s.periodKey === "LDSS_2"
+                              );
+                              const s3 = classSessions.find(
+                                (s) => s.studentId === student.id && s.periodKey === "LDSS_3"
+                              );
+
+                              const allStudSessions = [s1, s2, s3].filter(Boolean) as LdssSessionAssessment[];
+                              const completedCount = allStudSessions.filter(
+                                (s) => s.status?.toUpperCase() === "COMPLETED" || s.status === "completed"
+                              ).length;
+
+                              const isPdfGenerating = generatingPdfStudentId === student.id;
+                              const canDownload = completedCount > 0;
+
+                              const renderPeriodBadge = (sess: LdssSessionAssessment | undefined) => {
+                                if (!sess) {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-100 text-slate-500 border border-slate-200 rounded-full text-[10px] font-bold">
+                                      Belum diisi
+                                    </span>
+                                  );
+                                }
+                                const isCompleted =
+                                  sess.status?.toUpperCase() === "COMPLETED" || sess.status === "completed";
+                                const percent = sess.scoringSummary?.percentCompleted || 0;
+
+                                if (isCompleted) {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-bold">
+                                      <CheckCircle2 size={10} className="text-emerald-600 shrink-0" />
+                                      Selesai ({percent}%)
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[10px] font-bold">
+                                    <Pencil size={10} className="text-amber-500 shrink-0" />
+                                    Draf ({percent}%)
+                                  </span>
+                                );
+                              };
+
+                              return (
+                                <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="py-3.5 px-4 text-center font-bold text-slate-400">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="py-3.5 px-4">
+                                    <span className="font-bold text-slate-900 block">{student.name}</span>
+                                    <span className="text-[10px] font-semibold text-slate-400">
+                                      NIS/NISN: {student.nis || student.nisn || "-"}
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center font-bold text-slate-600">
+                                    {computedAge} Th
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">{renderPeriodBadge(s1)}</td>
+                                  <td className="py-3.5 px-4 text-center">{renderPeriodBadge(s2)}</td>
+                                  <td className="py-3.5 px-4 text-center">{renderPeriodBadge(s3)}</td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    {canDownload ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-[10px] font-black">
+                                        {completedCount} Periode Selesai
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-400 border border-slate-200 rounded-xl text-[10px] font-bold">
+                                        Belum Ada Hasil Selesai
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    <button
+                                      type="button"
+                                      disabled={!canDownload || Boolean(generatingPdfStudentId)}
+                                      onClick={() => handleDownloadPdf(student)}
+                                      title={
+                                        !canDownload
+                                          ? "Siswa belum memiliki hasil asesmen yang Selesai."
+                                          : "Unduh Rapor LDSS PDF"
+                                      }
+                                      className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 w-full cursor-pointer ${
+                                        isPdfGenerating
+                                          ? "bg-indigo-100 text-indigo-700 border border-indigo-200 animate-pulse"
+                                          : canDownload
+                                          ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+                                          : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                                      }`}
+                                    >
+                                      {isPdfGenerating ? (
+                                        <>
+                                          <Loader2 size={13} className="animate-spin text-indigo-600" />
+                                          <span>Membuat PDF...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Download size={13} />
+                                          <span>Unduh PDF</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : subTab === "students" ? (
                 <div className="space-y-6">
                   {/* Table Card */}
                   <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden text-left">
