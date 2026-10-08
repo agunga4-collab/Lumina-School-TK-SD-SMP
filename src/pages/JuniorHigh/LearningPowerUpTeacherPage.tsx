@@ -6,7 +6,7 @@ import {
   AlertTriangle, Check, ShieldAlert, Plus, 
   Calendar, Search, Filter, Loader2, Info, 
   Eye, Edit, Trash2, Send, Save, ArrowRight, CornerDownLeft, FileText, CheckCircle2,
-  X, AlertCircle, Copy, CheckSquare2, RefreshCw
+  X, AlertCircle, Copy, CheckSquare2, RefreshCw, ChevronDown, ChevronUp, MoreVertical, RotateCcw
 } from 'lucide-react';
 import { useOutletContext } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
@@ -311,6 +311,45 @@ const formatDateRange = (startStr: string, endStr: string) => {
   }
 };
 
+// Helper for presentation grouping: "Pekan 2–8 Okt" from start and end dates
+const formatWeekHeaderIndonesian = (startStr: string, endStr: string) => {
+  if (!startStr) return 'Pekan Tidak Ditentukan';
+  const start = new Date(startStr);
+  const idMonthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
+  if (isNaN(start.getTime())) return 'Pekan ' + startStr;
+  
+  if (!endStr) {
+    return `Pekan ${start.getDate()} ${idMonthsShort[start.getMonth()]}`;
+  }
+  const end = new Date(endStr);
+  if (isNaN(end.getTime())) {
+    return `Pekan ${start.getDate()} ${idMonthsShort[start.getMonth()]}`;
+  }
+
+  const startDay = start.getDate();
+  const endDay = end.getDate();
+  const startMonth = start.getMonth();
+  const endMonth = end.getMonth();
+
+  if (startMonth === endMonth) {
+    return `Pekan ${startDay}–${endDay} ${idMonthsShort[startMonth]}`;
+  } else {
+    return `Pekan ${startDay} ${idMonthsShort[startMonth]} – ${endDay} ${idMonthsShort[endMonth]}`;
+  }
+};
+
+const standardizeIndonesianDateText = (text: string) => {
+  if (!text) return '';
+  return text
+    .replace(/\bOct\b/g, 'Okt')
+    .replace(/\bOctober\b/gi, 'Oktober')
+    .replace(/\bDec\b/g, 'Des')
+    .replace(/\bDecember\b/gi, 'Desember')
+    .replace(/\bMay\b/g, 'Mei')
+    .replace(/\bAug\b/g, 'Agt')
+    .replace(/\bAugust\b/gi, 'Agustus');
+};
+
 const formatVerificationTime = (timestamp: any) => {
   return formatLpuDateTime(timestamp, '');
 };
@@ -612,6 +651,23 @@ function LearningPowerUpTeacherPageContent() {
   const [filterProgress, setFilterProgress] = React.useState<'ALL' | 'ZERO' | 'PARTIAL' | 'ALL_DONE'>('ALL');
   const [quickFilterIncompleteOnly, setQuickFilterIncompleteOnly] = React.useState<boolean>(false);
 
+  // --- Manage Tasks View Presentation States (User Request 4) ---
+  const [manageSubjectFilter, setManageSubjectFilter] = React.useState<string>('ALL');
+  const [manageStatusFilter, setManageStatusFilter] = React.useState<string>('ALL');
+  const [ignoreClassFilterInManage, setIgnoreClassFilterInManage] = React.useState<boolean>(false);
+  const [visibleBatchesCount, setVisibleBatchesCount] = React.useState<number>(6);
+  const [collapsedWeeks, setCollapsedWeeks] = React.useState<Record<string, boolean>>({});
+  const [showFormPanel, setShowFormPanel] = React.useState<boolean>(false);
+  const [activeMenuCardId, setActiveMenuCardId] = React.useState<string | null>(null);
+  const [expandedLevels, setExpandedLevels] = React.useState<Record<string, boolean>>({});
+  const [collapsedLegacy, setCollapsedLegacy] = React.useState<boolean>(true);
+  const [duplicateSource, setDuplicateSource] = React.useState<{
+    subjectKey: string;
+    weekRangeText: string;
+    classesText: string;
+  } | null>(null);
+  const [confirmCloseFormModal, setConfirmCloseFormModal] = React.useState<boolean>(false);
+
   // --- Deletion States ---
   const [deletingBatch, setDeletingBatch] = React.useState<LearningPowerUpTaskBatch | null>(null);
   const [deletingBatchStats, setDeletingBatchStats] = React.useState<{
@@ -623,6 +679,37 @@ function LearningPowerUpTeacherPageContent() {
   } | null>(null);
   const [deleteSecondConfirmChecked, setDeleteSecondConfirmChecked] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
+
+  // --- Audit & Sync State ---
+  const [isAuditing, setIsAuditing] = React.useState<boolean>(false);
+  const [auditSummary, setAuditSummary] = React.useState<{
+    totalBatches: number;
+    targetStudents: number;
+    backfilled: number;
+    fixed: number;
+    verifiedPreserved: number;
+  } | null>(null);
+
+  // Keyboard accessibility: Close modals with Escape key
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (confirmCloseFormModal) {
+          setConfirmCloseFormModal(false);
+        } else if (deletingBatch && !isDeleting) {
+          setDeletingBatch(null);
+          setDeletingBatchStats(null);
+        } else if (cancellingBatch && !isCancelling) {
+          setCancellingBatch(null);
+          setCancellingBatchStats(null);
+        } else if (activeMenuCardId) {
+          setActiveMenuCardId(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [confirmCloseFormModal, deletingBatch, cancellingBatch, isDeleting, isCancelling, activeMenuCardId]);
 
   // Load Classes on mount
   React.useEffect(() => {
@@ -681,16 +768,6 @@ function LearningPowerUpTeacherPageContent() {
       loadClassesList();
     }
   }, [currentUser, activeYear]);
-
-  // Audit & Sync State
-  const [isAuditing, setIsAuditing] = React.useState<boolean>(false);
-  const [auditSummary, setAuditSummary] = React.useState<{
-    totalBatches: number;
-    targetStudents: number;
-    backfilled: number;
-    fixed: number;
-    verifiedPreserved: number;
-  } | null>(null);
 
   const logStatusAudit = (
     oldStatus: string,
@@ -2524,6 +2601,8 @@ function LearningPowerUpTeacherPageContent() {
       setNewSemester(batch.semester);
       setLevelTasks(batch.levelTasks);
       setChangeNote('');
+      setDuplicateSource(null);
+      setShowFormPanel(true);
 
       toast.success(
         batch.status === 'PUBLISHED'
@@ -3006,6 +3085,105 @@ function LearningPowerUpTeacherPageContent() {
     setEditingBatchStatus(null);
     setEditingBatchHasActivity(false);
     setChangeNote('');
+    setDuplicateSource(null);
+    setShowFormPanel(false);
+  };
+
+  const handleDuplicateBatch = (batch: LearningPowerUpTaskBatch) => {
+    // 1. Verify permissions for the subject
+    const isSuperOrHead = ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'].includes(currentUser.role);
+    const authorizedForSubject = isSuperOrHead || classes.some(c => resolveTeacherAuthorizedScope(currentUser, c, batch.subjectKey, true).isAuthorized);
+
+    if (!authorizedForSubject) {
+      toast.error(`Anda tidak memiliki hak akses mengajar untuk mata pelajaran ${CATEGORY_CONFIG[batch.subjectKey]?.label || batch.subjectKey}.`);
+      return;
+    }
+
+    // 2. Filter classes that the current teacher is authorized to teach for this subject
+    const sourceClassIds = (batch.targetClassIds || (batch as any).classIds || [(batch as any).classId]).filter(Boolean) as string[];
+    const validClassIds = sourceClassIds.filter(cid => {
+      const cls = classes.find(c => c.id === cid);
+      if (!cls) return false;
+      if (isSuperOrHead) return true;
+      return resolveTeacherAuthorizedScope(currentUser, cls, batch.subjectKey, true).isAuthorized;
+    });
+
+    if (validClassIds.length < sourceClassIds.length) {
+      const skippedCount = sourceClassIds.length - validClassIds.length;
+      toast.warning(`${skippedCount} kelas dari tugas asal tidak dapat dipilih karena Anda tidak memiliki wewenang pada kelas tersebut. Silakan pilih kelas target.`);
+    }
+
+    // 3. Compute +7 days for week start and week end
+    let nextStart = '';
+    let nextEnd = '';
+    let isPastDate = false;
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    if (batch.weekStartDate) {
+      const dStart = new Date(batch.weekStartDate);
+      if (!isNaN(dStart.getTime())) {
+        dStart.setDate(dStart.getDate() + 7);
+        nextStart = dStart.toISOString().split('T')[0];
+        if (nextStart < todayStr) {
+          isPastDate = true;
+        }
+      }
+    }
+    if (batch.weekEndDate) {
+      const dEnd = new Date(batch.weekEndDate);
+      if (!isNaN(dEnd.getTime())) {
+        dEnd.setDate(dEnd.getDate() + 7);
+        nextEnd = dEnd.toISOString().split('T')[0];
+      }
+    } else if (nextStart) {
+      const dEnd = new Date(nextStart);
+      dEnd.setDate(dEnd.getDate() + 6);
+      nextEnd = dEnd.toISOString().split('T')[0];
+    }
+
+    // 4. Deep copy level tasks
+    const copiedLevelTasks: Record<string, LpuLevelTask> = {};
+    if (batch.levelTasks) {
+      Object.entries(batch.levelTasks).forEach(([lvl, task]) => {
+        copiedLevelTasks[lvl] = {
+          title: task.title || '',
+          instructions: task.instructions || '',
+          points: task.points || 100,
+          rubric: task.rubric ? { ...task.rubric } : undefined
+        };
+      });
+    }
+
+    // 5. Fill into form in NEW TASK mode (not edit mode!)
+    setEditingBatchId(null);
+    setEditingBatchStatus(null);
+    setEditingBatchHasActivity(false);
+    setChangeNote('');
+
+    setNewSubject(batch.subjectKey);
+    setNewTargetClassIds(validClassIds);
+    setNewWeekStartDate(nextStart);
+    setNewWeekEndDate(nextEnd);
+    setNewWeekLabel(''); // Week label is emptied
+    setNewSemester(batch.semester || '1');
+    setLevelTasks(copiedLevelTasks);
+
+    const sourceClassesFormatted = sourceClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ');
+    const sourceSubjectName = CATEGORY_CONFIG[batch.subjectKey]?.label || batch.subjectKey;
+
+    setDuplicateSource({
+      subjectKey: sourceSubjectName,
+      weekRangeText: formatWeekHeaderIndonesian(batch.weekStartDate, batch.weekEndDate),
+      classesText: sourceClassesFormatted || '-'
+    });
+
+    setShowFormPanel(true);
+    toast.success("Tugas berhasil disalin ke formulir pembuatan tugas baru.");
+    if (isPastDate) {
+      toast.info("Perhatian: Tanggal pekan hasil salinan sudah lewat, silakan sesuaikan tanggal mulai dan selesai.");
+    }
+    window.scrollTo({ top: 300, behavior: 'smooth' });
   };
 
 
@@ -5495,552 +5673,1070 @@ function LearningPowerUpTeacherPageContent() {
               </button>
             </div>
 
-            {/* Main Form: Atur Tugas */}
-            <div className="bg-white rounded-[2rem] border border-slate-100 p-8 shadow-sm space-y-6 animate-fadeIn">
-              <div className="border-b border-slate-100 pb-4">
-                <h2 className="text-xl font-bold text-gray-900">
-                  {editingBatchId ? 'Edit Tugas LPU (Laju Pemahaman)' : 'Buat Tugas LPU Baru (Laju Pemahaman)'}
-                </h2>
-                <p className="text-xs font-semibold text-gray-400">Atur tugas berorientasi level kemampuan secara subject-first, multi-class, dan task-per-level.</p>
+            {/* Action Bar: Buat Tugas Baru Button */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-5 rounded-[2rem] border border-slate-100 shadow-xs">
+              <div>
+                <h3 className="text-base font-black text-gray-900 tracking-tight">Manajemen Penugasan LPU</h3>
+                <p className="text-xs font-semibold text-gray-400">Atur dan distribusikan tugas berorientasi level kemampuan secara subject-first & multi-class.</p>
               </div>
-
-              {/* Subject Dropdown Selector */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Subject Saya</label>
-                  <select
-                    value={newSubject}
-                    disabled={!!editingBatchId}
-                    onChange={(e) => {
-                      setNewSubject(e.target.value as LpuSubjectKey);
-                      setNewTargetClassIds([]); // Reset selected classes on subject change
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
-                  >
-                    <option value="">-- Pilih Subject --</option>
-                    {allSubjects.filter(sub => {
-                      if (['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'].includes(currentUser.role)) {
-                        return true;
-                      }
-                      return classes.some(c => resolveTeacherAuthorizedScope(currentUser, c, sub.key, true).isAuthorized);
-                    }).map(sub => (
-                      <option key={sub.key} value={sub.key}>
-                        {CATEGORY_CONFIG[sub.key]?.label || sub.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Semester Choice */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Semester</label>
-                  <select
-                    value={newSemester}
-                    disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
-                    onChange={(e) => setNewSemester(e.target.value as '1' | '2')}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
-                  >
-                    <option value="1">Semester 1</option>
-                    <option value="2">Semester 2</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Kelas Target (Multi-Select checkboxes) */}
-              {newSubject && (
-                <div className="space-y-2.5 p-4 bg-slate-50/50 border border-slate-200/50 rounded-2xl">
-                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">Kelas Target (Pilih satu atau lebih)</label>
-                  {authorizedClassesForSelectedSubject.length > 0 ? (
-                    <div className="flex flex-wrap gap-3">
-                      {authorizedClassesForSelectedSubject.map(cls => (
-                        <label
-                          key={cls.id}
-                          className={cn(
-                            "flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none",
-                            newTargetClassIds.includes(cls.id)
-                              ? "bg-violet-500 border-violet-500 text-white shadow-sm"
-                              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50",
-                            (editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity) && "opacity-60 cursor-not-allowed"
-                          )}
-                        >
-                          <input
-                            type="checkbox"
-                            className="hidden"
-                            checked={newTargetClassIds.includes(cls.id)}
-                            disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
-                            onChange={() => {
-                              if (newTargetClassIds.includes(cls.id)) {
-                                setNewTargetClassIds(prev => prev.filter(id => id !== cls.id));
-                              } else {
-                                setNewTargetClassIds(prev => [...prev, cls.id]);
-                              }
-                            }}
-                          />
-                          {cls.name}
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-rose-500 font-bold">Anda tidak memiliki hak akses/wewenang mengajar di kelas mana pun untuk mata pelajaran ini.</p>
-                  )}
-                </div>
-              )}
-
-              {/* Date Pickers & Week Label */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Mulai</label>
-                  <input
-                    type="date"
-                    required
-                    value={newWeekStartDate}
-                    disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
-                    onChange={(e) => {
-                      const start = e.target.value;
-                      setNewWeekStartDate(start);
-                      if (start) {
-                        const d = new Date(start);
-                        d.setDate(d.getDate() + 6);
-                        const end = d.toISOString().split('T')[0];
-                        setNewWeekEndDate(end);
-                        setNewWeekLabel(`Pekan (${formatDateShort(start)} - ${formatDateShort(end)})`);
-                      }
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Selesai</label>
-                  <input
-                    type="date"
-                    required
-                    value={newWeekEndDate}
-                    onChange={(e) => setNewWeekEndDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Label Pekan (Opsional)</label>
-                  <input
-                    type="text"
-                    placeholder="Misal: Pekan UTS"
-                    value={newWeekLabel}
-                    onChange={(e) => setNewWeekLabel(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
-                  />
-                </div>
-              </div>
-
-              {/* Tugas per Level & Roster Table */}
-              {newSubject && newTargetClassIds.length > 0 && (
-                <div className="space-y-6 border-t border-slate-100 pt-6">
-                  {loadingRosterLevels ? (
-                    <div className="flex flex-col items-center justify-center py-10 space-y-2">
-                      <Loader2 size={24} className="animate-spin text-slate-400" />
-                      <p className="text-xs text-slate-400 font-bold">Memuat level kemampuan roster...</p>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Tugas per Level input fields */}
-                      <div className="space-y-4">
-                        <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">Tugas per Level</h3>
-                        {Object.keys(levelTasks).length > 0 ? (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {Object.keys(levelTasks).map((levelKey) => (
-                              <div key={levelKey} className="p-5 bg-slate-50/60 border border-slate-200/50 rounded-[1.5rem] space-y-3 shadow-sm hover:border-slate-300 transition-all">
-                                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                                  <span className="text-[10px] font-black text-violet-700 bg-violet-50 border border-violet-100 px-3 py-1 rounded-full uppercase">
-                                    Level: {levelKey}
-                                  </span>
-                                  <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                                    {rosterLevels.filter(r => r.level === levelKey).length} Siswa
-                                  </span>
-                                </div>
-                                <div className="space-y-3">
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-slate-500 block">Judul Tugas</label>
-                                    <input
-                                      type="text"
-                                      placeholder={`Judul tugas untuk Level ${levelKey}`}
-                                      value={levelTasks[levelKey]?.title || ''}
-                                      onChange={(e) => {
-                                        const val = e.target.value;
-                                        setLevelTasks(prev => ({
-                                          ...prev,
-                                          [levelKey]: { ...prev[levelKey], title: val }
-                                        }));
-                                      }}
-                                      className="w-full bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl focus:outline-none font-bold"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-slate-500 block">Instruksi Tugas</label>
-                                    <textarea
-                                      rows={3}
-                                      placeholder={`Tulis langkah pengerjaan tugas level ${levelKey}...`}
-                                      value={levelTasks[levelKey]?.instructions || ''}
-                                      onChange={(e) => {
-                                        const val = e.target.value;
-                                        setLevelTasks(prev => ({
-                                          ...prev,
-                                          [levelKey]: { ...prev[levelKey], instructions: val }
-                                        }));
-                                      }}
-                                      className="w-full bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl focus:outline-none font-medium leading-relaxed"
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="p-8 bg-slate-50/50 border border-dashed border-slate-200 rounded-3xl text-center text-xs text-slate-400 font-bold">
-                            Tidak ada level kemampuan yang saat ini dimiliki oleh siswa di kelas-kelas yang dipilih.
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Read-only Roster Table */}
-                      <div className="border-t border-slate-100 pt-6 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">
-                            Daftar Siswa & Level Terpilih
-                          </h3>
-                          <span className="text-xs font-black text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                            {rosterLevels.length} Siswa
-                          </span>
-                        </div>
-                        
-                        <div className="max-h-72 overflow-y-auto border border-slate-100 rounded-[1.5rem] bg-white">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="bg-slate-50/80 text-slate-400 font-bold border-b border-slate-100 uppercase tracking-wider text-[10px]">
-                                <th className="py-3 px-5">Siswa</th>
-                                <th className="py-3 px-5">Kelas</th>
-                                <th className="py-3 px-5">Level Subject</th>
-                                <th className="py-3 px-5">Status Penerbitan</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                              {rosterLevels.map(({ student, className, level, resolved }, idx) => (
-                                <tr key={`${student.id}-${idx}`} className="hover:bg-slate-50/40">
-                                  <td className="py-3 px-5 font-bold text-gray-900">{student.name}</td>
-                                  <td className="py-3 px-5 text-gray-500 font-semibold">{className}</td>
-                                  <td className="py-3 px-5 font-black">
-                                    {resolved ? (
-                                      <span className="text-violet-700 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100 uppercase tracking-wider text-[10px]">
-                                        {level}
-                                      </span>
-                                    ) : (
-                                      <span className="text-rose-600 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-100 uppercase tracking-wider text-[10px]">
-                                        Belum Ada Level
-                                      </span>
-                                    )}
-                                  </td>
-                                  <td className="py-3 px-5 font-bold">
-                                    {resolved ? (
-                                      levelTasks[level]?.title?.trim() && levelTasks[level]?.instructions?.trim() ? (
-                                        <span className="text-[#109E58] flex items-center gap-1.5">
-                                          <CheckCircle2 size={14} /> Ready
-                                        </span>
-                                      ) : (
-                                        <span className="text-amber-600 flex items-center gap-1.5">
-                                          <AlertCircle size={14} /> No Level Task
-                                        </span>
-                                      )
-                                    ) : (
-                                      <span className="text-rose-500 flex items-center gap-1.5">
-                                        <X size={14} /> Skipped
-                                      </span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity && (
-                <div className="space-y-1.5 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
-                  <label className="text-[10px] font-black text-amber-950 uppercase tracking-wider block">
-                    Catatan Perubahan (Wajib)
-                  </label>
-                  <p className="text-[11px] text-amber-800 font-medium mb-2">
-                    Siswa akan melihat catatan ini untuk mengetahui apa saja bagian tugas yang telah Anda perbarui.
-                  </p>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: Mengubah instruksi tugas langkah ke-3 dan memperpanjang batas waktu pengumpulan."
-                    value={changeNote}
-                    onChange={(e) => setChangeNote(e.target.value)}
-                    className="w-full bg-white border border-amber-300 text-xs px-4 py-3 rounded-xl focus:outline-none font-bold placeholder-amber-900/40 text-amber-950"
-                  />
-                </div>
-              )}
-
-              {/* Actions for creating/editing */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-                {editingBatchId && (
-                  <button
-                    type="button"
-                    onClick={resetNewBatchForm}
-                    className="px-5 py-3 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all"
-                  >
-                    Batal Edit
-                  </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (showFormPanel) {
+                    const isDirty = Boolean(newSubject || newTargetClassIds.length > 0 || newWeekStartDate || newWeekEndDate || Object.keys(levelTasks).length > 0);
+                    if (isDirty) {
+                      setConfirmCloseFormModal(true);
+                      return;
+                    }
+                    setShowFormPanel(false);
+                  } else {
+                    resetNewBatchForm();
+                    setShowFormPanel(true);
+                  }
+                }}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shadow-xs",
+                  showFormPanel
+                    ? "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                    : "bg-[#109E58] hover:bg-[#0d854a] text-white"
                 )}
-                {editingBatchStatus === 'PUBLISHED' ? (
+              >
+                {showFormPanel ? (
                   <>
-                    <button
-                      type="button"
-                      onClick={handleSavePublishedChanges}
-                      disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
-                      className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
-                    >
-                      {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                      Simpan Perubahan
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePublish}
-                      disabled={isPublishing || loadingData}
-                      className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-                    >
-                      {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                      Terbitkan Tugas
-                    </button>
+                    <X size={15} />
+                    <span>Tutup Formulir</span>
                   </>
                 ) : (
                   <>
-                    <button
-                      type="button"
-                      onClick={() => handleSaveNewBatchDraft()}
-                      disabled={loadingData || isPublishing}
-                      className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-                    >
-                      {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                      Simpan Draft
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePublish}
-                      disabled={isPublishing || loadingData}
-                      className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-                    >
-                      {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                      Terbitkan Tugas
-                    </button>
+                    <Plus size={15} />
+                    <span>Buat Tugas Baru</span>
                   </>
                 )}
-              </div>
+              </button>
             </div>
 
-            {/* List of Created Task Batches */}
-            <div className="space-y-4">
-              <div className="border-b border-slate-100 pb-2">
-                <h3 className="text-md font-black text-gray-900">Daftar Tugas LPU</h3>
-                <p className="text-xs font-semibold text-gray-400">Daftar tugas berorientasi level kemampuan siswa.</p>
-              </div>
-
-              {taskBatches.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {taskBatches.map(batch => (
-                    <div key={batch.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between space-y-4">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className={cn(
-                            "text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider border",
-                            batch.status === 'PUBLISHED'
-                              ? "text-[#109E58] bg-[#109E58]/10 border-[#109E58]/20"
-                              : batch.status === 'CANCELLED'
-                              ? "text-rose-700 bg-rose-50 border-rose-200"
-                              : batch.status === 'ARCHIVED'
-                              ? "text-slate-500 bg-slate-50 border-slate-200"
-                              : "text-amber-700 bg-amber-50 border-amber-200"
-                          )}>
-                            {batch.status === 'PUBLISHED' ? 'Terbit (Published)' : batch.status === 'CANCELLED' ? 'Dibatalkan' : batch.status === 'ARCHIVED' ? 'Arsip' : 'Draft'}
-                          </span>
-                          
-                          <div className="flex gap-1 items-center">
-                            {(batch.status === 'DRAFT' || batch.status === 'PUBLISHED') && canEditBatch(batch) && (
-                              <button
-                                onClick={() => handleEditBatch(batch)}
-                                className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
-                                title={batch.status === 'PUBLISHED' ? "Edit Tugas Terbit" : "Edit Draft"}
-                              >
-                                <Edit size={16} />
-                              </button>
-                            )}
-                            {batch.status === 'DRAFT' && canEditBatch(batch) && (
-                              <button
-                                onClick={() => handleDeleteBatchClick(batch)}
-                                className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
-                                title="Hapus Draft"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            )}
-                            {batch.status === 'PUBLISHED' && canEditBatch(batch) && (
-                              <button
-                                onClick={() => handleCancelBatchClick(batch)}
-                                className="px-2.5 py-1 text-[10px] font-black text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all"
-                                title="Batalkan Tugas Ini"
-                              >
-                                Batalkan Tugas
-                              </button>
-                            )}
-                            {batch.status !== 'DRAFT' && canDeleteBatch(batch) && (
-                              <button
-                                onClick={() => handleDeleteBatchClick(batch)}
-                                className="px-2.5 py-1 text-[10px] font-black text-rose-700 bg-rose-100 hover:bg-rose-200 border border-rose-200 rounded-lg transition-all flex items-center gap-1"
-                                title="Hapus Tugas Permanen"
-                              >
-                                <Trash2 size={12} /> Hapus Tugas
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <h4 className="text-md font-black text-gray-900 tracking-tight leading-snug">
-                            {CATEGORY_CONFIG[batch.subjectKey]?.label || batch.subjectKey}
-                          </h4>
-                          <p className="text-[10px] text-gray-500 font-bold uppercase">
-                            {((batch.targetClassIds || (batch as any).classIds || [(batch as any).classId]).filter(Boolean) as string[]).map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
-                          </p>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase">
-                            {batch.weekLabel}
-                          </p>
-                        </div>
-
-                        {/* Configured levels with tasks */}
-                        <div className="pt-2 border-t border-slate-100 space-y-1.5">
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Tugas per Level:</span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {Object.keys(batch.levelTasks).map(lvl => (
-                              <span key={lvl} className="text-[9px] font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-100 uppercase" title={batch.levelTasks[lvl].title}>
-                                {lvl}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-
-                        {batch.status === 'CANCELLED' && (
-                          <div className="pt-2.5 border-t border-rose-100 bg-rose-50/40 p-3 rounded-2xl space-y-1">
-                            <span className="text-[10px] font-black text-rose-700 uppercase tracking-wider block">Detail Pembatalan:</span>
-                            <p className="text-xs text-rose-900 font-bold">
-                              Alasan: <span className="text-rose-700 font-semibold">{(batch as any).cancellationReason || '-'}</span>
-                            </p>
-                            {(batch as any).cancellationNote && (
-                              <p className="text-[11px] text-rose-800 italic bg-white/60 p-1.5 rounded-lg border border-rose-100/40">
-                                "{(batch as any).cancellationNote}"
-                              </p>
-                            )}
-                            <p className="text-[9px] text-gray-400 font-bold uppercase mt-1">
-                              Oleh: {(batch as any).cancelledBy || '-'} • {formatLpuDateTime((batch as any).cancelledAt)}
-                            </p>
-                          </div>
-                        )}
+            {/* Main Form: Atur Tugas (Collapsible / Modal Panel) */}
+            {showFormPanel && (
+              <div className="bg-white rounded-[2rem] border border-slate-200 p-6 md:p-8 shadow-md space-y-6 animate-fadeIn transition-all">
+                {/* Duplicate Source Banner if copied from existing batch */}
+                {duplicateSource && (
+                  <div className="p-4 bg-violet-50/80 border border-violet-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                    <div className="flex items-start sm:items-center gap-2.5">
+                      <Sparkles size={18} className="text-violet-600 shrink-0 mt-0.5 sm:mt-0" />
+                      <div>
+                        <p className="font-bold text-violet-950">
+                          Menyalin dari: <span className="font-black text-violet-900">{duplicateSource.subjectKey}</span> • {duplicateSource.weekRangeText} • Kelas: {duplicateSource.classesText}
+                        </p>
+                        <p className="text-[11px] font-semibold text-violet-700 mt-0.5">
+                          Ini tugas baru, tugas asal tidak berubah. Silakan sesuaikan tanggal dan isi tugas sebelum menyimpan.
+                        </p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-12 text-center max-w-xl mx-auto space-y-4">
-                  <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 mx-auto">
-                    <FileText size={32} />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        resetNewBatchForm();
+                        setShowFormPanel(true);
+                        toast.info("Formulir dikosongkan. Memulai dari draf kosong.");
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-violet-100 text-violet-700 font-black rounded-lg border border-violet-200 uppercase tracking-wider text-[10px] shrink-0 transition-all flex items-center gap-1.5"
+                    >
+                      <RotateCcw size={12} />
+                      <span>Mulai dari kosong</span>
+                    </button>
                   </div>
-                  <div className="space-y-1">
-                    <h3 className="text-lg font-black text-gray-900">Belum Ada Tugas LPU Baru</h3>
-                    <p className="text-sm text-gray-500 font-semibold leading-relaxed">
-                      Gunakan form di atas untuk membuat draf atau menerbitkan tugas per level LPU yang baru.
+                )}
+
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-900">
+                      {editingBatchId ? 'Edit Tugas LPU (Laju Pemahaman)' : (duplicateSource ? 'Buat Tugas LPU (Salinan Tugas Lama)' : 'Buat Tugas LPU Baru (Laju Pemahaman)')}
+                    </h2>
+                    <p className="text-xs font-semibold text-gray-400">Atur tugas berorientasi level kemampuan secara subject-first, multi-class, dan task-per-level.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const isDirty = Boolean(newSubject || newTargetClassIds.length > 0 || newWeekStartDate || newWeekEndDate || Object.keys(levelTasks).length > 0);
+                      if (isDirty) {
+                        setConfirmCloseFormModal(true);
+                      } else {
+                        setShowFormPanel(false);
+                      }
+                    }}
+                    className="p-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-all"
+                    title="Tutup Formulir"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                {/* Subject Dropdown Selector */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Subject Saya</label>
+                    <select
+                      value={newSubject}
+                      disabled={!!editingBatchId}
+                      onChange={(e) => {
+                        setNewSubject(e.target.value as LpuSubjectKey);
+                        setNewTargetClassIds([]); // Reset selected classes on subject change
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
+                    >
+                      <option value="">-- Pilih Subject --</option>
+                      {allSubjects.filter(sub => {
+                        if (['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR'].includes(currentUser.role)) {
+                          return true;
+                        }
+                        return classes.some(c => resolveTeacherAuthorizedScope(currentUser, c, sub.key, true).isAuthorized);
+                      }).map(sub => (
+                        <option key={sub.key} value={sub.key}>
+                          {CATEGORY_CONFIG[sub.key]?.label || sub.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Semester Choice */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Semester</label>
+                    <select
+                      value={newSemester}
+                      disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
+                      onChange={(e) => setNewSemester(e.target.value as '1' | '2')}
+                      className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
+                    >
+                      <option value="1">Semester 1</option>
+                      <option value="2">Semester 2</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Kelas Target (Multi-Select checkboxes) */}
+                {newSubject && (
+                  <div className="space-y-2.5 p-4 bg-slate-50/50 border border-slate-200/50 rounded-2xl">
+                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-wider block">Kelas Target (Pilih satu atau lebih)</label>
+                    {authorizedClassesForSelectedSubject.length > 0 ? (
+                      <div className="flex flex-wrap gap-3">
+                        {authorizedClassesForSelectedSubject.map(cls => (
+                          <label
+                            key={cls.id}
+                            className={cn(
+                              "flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none",
+                              newTargetClassIds.includes(cls.id)
+                                ? "bg-violet-500 border-violet-500 text-white shadow-sm"
+                                : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50",
+                              (editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity) && "opacity-60 cursor-not-allowed"
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              className="hidden"
+                              checked={newTargetClassIds.includes(cls.id)}
+                              disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
+                              onChange={() => {
+                                if (newTargetClassIds.includes(cls.id)) {
+                                  setNewTargetClassIds(prev => prev.filter(id => id !== cls.id));
+                                } else {
+                                  setNewTargetClassIds(prev => [...prev, cls.id]);
+                                }
+                              }}
+                            />
+                            {cls.name}
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-rose-500 font-bold">Anda tidak memiliki hak akses/wewenang mengajar di kelas mana pun untuk mata pelajaran ini.</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Date Pickers & Week Label */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Mulai</label>
+                    <input
+                      type="date"
+                      required
+                      value={newWeekStartDate}
+                      disabled={editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity}
+                      onChange={(e) => {
+                        const start = e.target.value;
+                        setNewWeekStartDate(start);
+                        if (start) {
+                          const d = new Date(start);
+                          d.setDate(d.getDate() + 6);
+                          const end = d.toISOString().split('T')[0];
+                          setNewWeekEndDate(end);
+                          setNewWeekLabel(`Pekan (${formatDateShort(start)} - ${formatDateShort(end)})`);
+                        }
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold disabled:opacity-60"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Tanggal Selesai</label>
+                    <input
+                      type="date"
+                      required
+                      value={newWeekEndDate}
+                      onChange={(e) => setNewWeekEndDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">Label Pekan (Opsional)</label>
+                    <input
+                      type="text"
+                      placeholder="Misal: Pekan UTS"
+                      value={newWeekLabel}
+                      onChange={(e) => setNewWeekLabel(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 text-sm px-4 py-3 rounded-xl focus:outline-none font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Tugas per Level & Roster Table */}
+                {newSubject && newTargetClassIds.length > 0 && (
+                  <div className="space-y-6 border-t border-slate-100 pt-6">
+                    {loadingRosterLevels ? (
+                      <div className="flex flex-col items-center justify-center py-10 space-y-2">
+                        <Loader2 size={24} className="animate-spin text-slate-400" />
+                        <p className="text-xs text-slate-400 font-bold">Memuat level kemampuan roster...</p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Tugas per Level input fields */}
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">Tugas per Level</h3>
+                          {Object.keys(levelTasks).length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                              {Object.keys(levelTasks).map((levelKey) => (
+                                <div key={levelKey} className="p-5 bg-slate-50/60 border border-slate-200/50 rounded-[1.5rem] space-y-3 shadow-sm hover:border-slate-300 transition-all">
+                                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                                    <span className="text-[10px] font-black text-violet-700 bg-violet-50 border border-violet-100 px-3 py-1 rounded-full uppercase">
+                                      Level: {levelKey}
+                                    </span>
+                                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                      {rosterLevels.filter(r => r.level === levelKey).length} Siswa
+                                    </span>
+                                  </div>
+                                  <div className="space-y-3">
+                                    <div className="space-y-1">
+                                      <label className="text-[10px] font-bold text-slate-500 block">Judul Tugas</label>
+                                      <input
+                                        type="text"
+                                        placeholder={`Judul tugas untuk Level ${levelKey}`}
+                                        value={levelTasks[levelKey]?.title || ''}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setLevelTasks(prev => ({
+                                            ...prev,
+                                            [levelKey]: { ...prev[levelKey], title: val }
+                                          }));
+                                        }}
+                                        className="w-full bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl focus:outline-none font-bold"
+                                      />
+                                    </div>
+                                    <div className="space-y-1">
+                                      <label className="text-[10px] font-bold text-slate-500 block">Instruksi Tugas</label>
+                                      <textarea
+                                        rows={3}
+                                        placeholder={`Tulis langkah pengerjaan tugas level ${levelKey}...`}
+                                        value={levelTasks[levelKey]?.instructions || ''}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setLevelTasks(prev => ({
+                                            ...prev,
+                                            [levelKey]: { ...prev[levelKey], instructions: val }
+                                          }));
+                                        }}
+                                        className="w-full bg-white border border-slate-200 text-xs px-3.5 py-2.5 rounded-xl focus:outline-none font-medium leading-relaxed"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="p-8 bg-slate-50/50 border border-dashed border-slate-200 rounded-3xl text-center text-xs text-slate-400 font-bold">
+                              Tidak ada level kemampuan yang saat ini dimiliki oleh siswa di kelas-kelas yang dipilih.
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Read-only Roster Table */}
+                        <div className="border-t border-slate-100 pt-6 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">
+                              Daftar Siswa & Level Terpilih
+                            </h3>
+                            <span className="text-xs font-black text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                              {rosterLevels.length} Siswa
+                            </span>
+                          </div>
+                          
+                          <div className="max-h-72 overflow-y-auto border border-slate-100 rounded-[1.5rem] bg-white">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-slate-50/80 text-slate-400 font-bold border-b border-slate-100 uppercase tracking-wider text-[10px]">
+                                  <th className="py-3 px-5">Siswa</th>
+                                  <th className="py-3 px-5">Kelas</th>
+                                  <th className="py-3 px-5">Level Subject</th>
+                                  <th className="py-3 px-5">Status Penerbitan</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {rosterLevels.map(({ student, className, level, resolved }, idx) => (
+                                  <tr key={`${student.id}-${idx}`} className="hover:bg-slate-50/40">
+                                    <td className="py-3 px-5 font-bold text-gray-900">{student.name}</td>
+                                    <td className="py-3 px-5 text-gray-500 font-semibold">{className}</td>
+                                    <td className="py-3 px-5 font-black">
+                                      {resolved ? (
+                                        <span className="text-violet-700 bg-violet-50 px-2.5 py-1 rounded-full border border-violet-100 uppercase tracking-wider text-[10px]">
+                                          {level}
+                                        </span>
+                                      ) : (
+                                        <span className="text-rose-600 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-100 uppercase tracking-wider text-[10px]">
+                                          Belum Ada Level
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-3 px-5 font-bold">
+                                      {resolved ? (
+                                        levelTasks[level]?.title?.trim() && levelTasks[level]?.instructions?.trim() ? (
+                                          <span className="text-[#109E58] flex items-center gap-1.5">
+                                            <CheckCircle2 size={14} /> Ready
+                                          </span>
+                                        ) : (
+                                          <span className="text-amber-600 flex items-center gap-1.5">
+                                            <AlertCircle size={14} /> No Level Task
+                                          </span>
+                                        )
+                                      ) : (
+                                        <span className="text-rose-500 flex items-center gap-1.5">
+                                          <X size={14} /> Skipped
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {editingBatchStatus === 'PUBLISHED' && editingBatchHasActivity && (
+                  <div className="space-y-1.5 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
+                    <label className="text-[10px] font-black text-amber-950 uppercase tracking-wider block">
+                      Catatan Perubahan (Wajib)
+                    </label>
+                    <p className="text-[11px] text-amber-800 font-medium mb-2">
+                      Siswa akan melihat catatan ini untuk mengetahui apa saja bagian tugas yang telah Anda perbarui.
+                    </p>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Contoh: Mengubah instruksi tugas langkah ke-3 dan memperpanjang batas waktu pengumpulan."
+                      value={changeNote}
+                      onChange={(e) => setChangeNote(e.target.value)}
+                      className="w-full bg-white border border-amber-300 text-xs px-4 py-3 rounded-xl focus:outline-none font-bold placeholder-amber-900/40 text-amber-950"
+                    />
+                  </div>
+                )}
+
+                {/* Actions for creating/editing */}
+                <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                  {editingBatchId ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        resetNewBatchForm();
+                        setShowFormPanel(false);
+                      }}
+                      className="px-5 py-3 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all"
+                    >
+                      Batal Edit
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const isDirty = Boolean(newSubject || newTargetClassIds.length > 0 || newWeekStartDate || newWeekEndDate || Object.keys(levelTasks).length > 0);
+                        if (isDirty) {
+                          setConfirmCloseFormModal(true);
+                        } else {
+                          setShowFormPanel(false);
+                        }
+                      }}
+                      className="px-5 py-3 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all"
+                    >
+                      Batal
+                    </button>
+                  )}
+                  {editingBatchStatus === 'PUBLISHED' ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await handleSavePublishedChanges();
+                          setShowFormPanel(false);
+                        }}
+                        disabled={loadingData || !newSubject || newTargetClassIds.length === 0}
+                        className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                        Simpan Perubahan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await handlePublish();
+                          setShowFormPanel(false);
+                        }}
+                        disabled={isPublishing || loadingData}
+                        className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                      >
+                        {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                        Terbitkan Tugas
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await handleSaveNewBatchDraft();
+                          setShowFormPanel(false);
+                        }}
+                        disabled={loadingData || isPublishing}
+                        className="px-5 py-3 border border-[#109E58] text-[#109E58] hover:bg-[#109E58]/5 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                      >
+                        {loadingData ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                        Simpan Draft
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await handlePublish();
+                          setShowFormPanel(false);
+                        }}
+                        disabled={isPublishing || loadingData}
+                        className="px-5 py-3 bg-[#109E58] hover:bg-[#0d854a] text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                      >
+                        {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                        Terbitkan Tugas
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* List of Created Task Batches with Local Presentation Filters & Week Grouping */}
+            {(() => {
+              // --- Local Presentation Filtering ---
+              const filteredBatches = taskBatches.filter(batch => {
+                // 1. Class filter: match selectedClassId unless ALL or ignored
+                if (!ignoreClassFilterInManage && selectedClassId && selectedClassId !== 'ALL') {
+                  const bClassIds = (batch.targetClassIds || (batch as any).classIds || [(batch as any).classId]).filter(Boolean) as string[];
+                  const classMatches = bClassIds.some(cid => cid === selectedClassId || cid.toLowerCase() === selectedClassId.toLowerCase());
+                  if (!classMatches) return false;
+                }
+
+                // 2. Subject filter
+                if (manageSubjectFilter !== 'ALL') {
+                  if (batch.subjectKey !== manageSubjectFilter) return false;
+                }
+
+                // 3. Status filter
+                if (manageStatusFilter !== 'ALL') {
+                  if (batch.status !== manageStatusFilter) return false;
+                }
+
+                return true;
+              });
+
+              // Sort batches: newest weekStartDate first, then createdAt
+              const sortedBatches = [...filteredBatches].sort((a, b) => {
+                const dateA = a.weekStartDate ? new Date(a.weekStartDate).getTime() : 0;
+                const dateB = b.weekStartDate ? new Date(b.weekStartDate).getTime() : 0;
+                if (dateB !== dateA) return dateB - dateA;
+                const createdA = safeToDate(a.createdAt).getTime();
+                const createdB = safeToDate(b.createdAt).getTime();
+                return createdB - createdA;
+              });
+
+              // Pagination: take visibleBatchesCount
+              const pagedBatches = sortedBatches.slice(0, visibleBatchesCount);
+
+              // Group by week
+              interface WeekGroup {
+                weekKey: string;
+                weekHeader: string;
+                weekStartDate: string;
+                batches: LearningPowerUpTaskBatch[];
+              }
+              const weekGroupsMap = new Map<string, WeekGroup>();
+              pagedBatches.forEach(batch => {
+                const weekKey = `${batch.weekStartDate || 'undated'}_${batch.weekEndDate || ''}`;
+                if (!weekGroupsMap.has(weekKey)) {
+                  weekGroupsMap.set(weekKey, {
+                    weekKey,
+                    weekHeader: formatWeekHeaderIndonesian(batch.weekStartDate, batch.weekEndDate),
+                    weekStartDate: batch.weekStartDate || '',
+                    batches: []
+                  });
+                }
+                weekGroupsMap.get(weekKey)!.batches.push(batch);
+              });
+              const weekGroups = Array.from(weekGroupsMap.values());
+
+              // Standard level ordering helper
+              const getStandardLevelOrder = (subject: string): string[] => {
+                if (subject === 'numerasi') {
+                  return ['Trailhead', 'Ascent', 'Ridge'];
+                }
+                if (subject === 'mengaji') {
+                  return ['Iqra 1', 'Iqra 2', 'Iqra 3', 'Iqra 4', 'Iqra 5', 'Iqra 6', 'Alquran', 'Tahsin / Tajwid'];
+                }
+                if (subject === 'english') {
+                  return ['Emergent', 'Early', 'Transitional', 'Fluent'];
+                }
+                return ['Level 1', 'Level 2', 'Level 3', 'Level 4'];
+              };
+
+              const sortLevelsStandard = (levels: string[], subject: string): string[] => {
+                const stdOrder = getStandardLevelOrder(subject);
+                return [...levels].sort((a, b) => {
+                  const idxA = stdOrder.findIndex(l => l.toLowerCase() === a.toLowerCase());
+                  const idxB = stdOrder.findIndex(l => l.toLowerCase() === b.toLowerCase());
+                  if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                  if (idxA !== -1) return -1;
+                  if (idxB !== -1) return 1;
+                  return a.localeCompare(b);
+                });
+              };
+
+              // Subject badge styling
+              const getSubjectBadgeStyle = (subject: string) => {
+                switch (subject) {
+                  case 'numerasi':
+                    return 'bg-amber-50 text-amber-700 border-amber-200';
+                  case 'bahasaIndonesia':
+                    return 'bg-blue-50 text-blue-700 border-blue-200';
+                  case 'english':
+                    return 'bg-violet-50 text-violet-700 border-violet-200';
+                  case 'mengaji':
+                    return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                  default:
+                    return 'bg-slate-50 text-slate-700 border-slate-200';
+                }
+              };
+
+              return (
+                <div className="space-y-6">
+                  {/* Filter Toolbar (Presentation Only) */}
+                  <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-xs space-y-4">
+                    <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-100 pb-3">
+                      <div>
+                        <h3 className="text-md font-black text-gray-900">Daftar Tugas LPU</h3>
+                        <p className="text-xs font-semibold text-gray-400">
+                          {sortedBatches.length} tugas ditemukan • Dikelompokkan per pekan
+                        </p>
+                      </div>
+
+                      {/* Class Filter Sync Checkbox */}
+                      {selectedClassId && selectedClassId !== 'ALL' && (
+                        <label className="flex items-center gap-2 text-xs font-bold text-gray-600 cursor-pointer bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 select-none transition-all">
+                          <input
+                            type="checkbox"
+                            checked={ignoreClassFilterInManage}
+                            onChange={(e) => setIgnoreClassFilterInManage(e.target.checked)}
+                            className="rounded border-slate-300 text-[#109E58] focus:ring-[#109E58]"
+                          />
+                          <span>Tampilkan semua kelas (abaikan filter {classes.find(c => c.id === selectedClassId)?.name})</span>
+                        </label>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      {/* Subject Chips */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-1">Subject:</span>
+                        <button
+                          type="button"
+                          onClick={() => setManageSubjectFilter('ALL')}
+                          className={cn(
+                            "px-3 py-1 rounded-full text-xs font-black transition-all cursor-pointer",
+                            manageSubjectFilter === 'ALL'
+                              ? "bg-slate-900 text-white shadow-xs"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          )}
+                        >
+                          Semua
+                        </button>
+                        {allSubjects.map(sub => (
+                          <button
+                            key={sub.key}
+                            type="button"
+                            onClick={() => setManageSubjectFilter(sub.key)}
+                            className={cn(
+                              "px-3 py-1 rounded-full text-xs font-black transition-all cursor-pointer border",
+                              manageSubjectFilter === sub.key
+                                ? "bg-[#109E58] text-white border-[#109E58] shadow-xs"
+                                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                            )}
+                          >
+                            {CATEGORY_CONFIG[sub.key]?.label || sub.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Status Selector */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Status:</span>
+                        <select
+                          value={manageStatusFilter}
+                          onChange={(e) => setManageStatusFilter(e.target.value)}
+                          className="bg-slate-50 border border-slate-200 text-xs font-bold px-3 py-1.5 rounded-xl focus:outline-none"
+                        >
+                          <option value="ALL">Semua Status</option>
+                          <option value="PUBLISHED">Terbit</option>
+                          <option value="DRAFT">Draf</option>
+                          <option value="CANCELLED">Dibatalkan</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Render Accordion per Week */}
+                  {sortedBatches.length === 0 ? (
+                    <div className="bg-slate-50 border border-slate-100 rounded-[2rem] p-12 text-center max-w-xl mx-auto space-y-4">
+                      <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-400 mx-auto">
+                        <FileText size={32} />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="text-lg font-black text-gray-900">Tidak ada tugas yang sesuai filter</h3>
+                        <p className="text-sm text-gray-500 font-semibold leading-relaxed">
+                          Cobalah mengubah pilihan mata pelajaran, status, atau opsi filter kelas.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManageSubjectFilter('ALL');
+                          setManageStatusFilter('ALL');
+                          setIgnoreClassFilterInManage(true);
+                        }}
+                        className="px-4 py-2 bg-slate-900 hover:bg-black text-white text-xs font-black rounded-xl uppercase tracking-wider transition-all inline-flex items-center gap-2"
+                      >
+                        <RotateCcw size={14} />
+                        <span>Reset filter</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {weekGroups.map((group, groupIdx) => {
+                        // Newest week (groupIdx === 0) is open by default unless explicitly toggled
+                        const isCollapsed = collapsedWeeks[group.weekKey] !== undefined
+                          ? collapsedWeeks[group.weekKey]
+                          : groupIdx > 0;
+
+                        return (
+                          <div key={group.weekKey} className="bg-white rounded-[2rem] border border-slate-100 shadow-xs overflow-hidden">
+                            {/* Week Accordion Header */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCollapsedWeeks(prev => ({
+                                  ...prev,
+                                  [group.weekKey]: !isCollapsed
+                                }));
+                              }}
+                              className="w-full px-6 py-4 bg-slate-50/70 hover:bg-slate-100/70 border-b border-slate-100 flex items-center justify-between transition-all cursor-pointer text-left"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-[#109E58] flex items-center justify-center font-bold">
+                                  <Calendar size={16} />
+                                </div>
+                                <div>
+                                  <h4 className="text-sm font-black text-gray-900">
+                                    {group.weekHeader}
+                                  </h4>
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                    {group.batches.length} Tugas Mata Pelajaran
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 text-gray-400">
+                                <span className="text-xs font-bold text-slate-500">
+                                  {isCollapsed ? 'Buka' : 'Lipat'}
+                                </span>
+                                {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+                              </div>
+                            </button>
+
+                            {/* Week Batches Cards Grid */}
+                            {!isCollapsed && (
+                              <div className="p-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                                  {group.batches.map(batch => {
+                                    const sourceClassIds = (batch.targetClassIds || (batch as any).classIds || [(batch as any).classId]).filter(Boolean) as string[];
+                                    const classNames = sourceClassIds.map(cid => classes.find(c => c.id === cid)?.name || cid);
+                                    const summarizedClasses = classNames.length > 2
+                                      ? `${classNames.slice(0, 2).join(', ')} +${classNames.length - 2}`
+                                      : classNames.join(', ');
+
+                                    const levelKeys = Object.keys(batch.levelTasks || {});
+                                    const sortedLevelKeys = sortLevelsStandard(levelKeys, batch.subjectKey);
+                                    const isLevelsOpen = expandedLevels[batch.id];
+                                    const isMenuOpen = activeMenuCardId === batch.id;
+
+                                    return (
+                                      <div
+                                        key={batch.id}
+                                        className="bg-white border border-slate-200/80 hover:border-slate-300 rounded-[1.75rem] p-5 shadow-xs flex flex-col justify-between space-y-4 transition-all relative"
+                                      >
+                                        <div className="space-y-3">
+                                          {/* Card Top: Subject Badge & Status Badge & Actions */}
+                                          <div className="flex items-start justify-between gap-2">
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              {/* Subject Badge */}
+                                              <span className={cn(
+                                                "text-[10px] font-black px-2.5 py-0.5 rounded-full border uppercase tracking-wider",
+                                                getSubjectBadgeStyle(batch.subjectKey)
+                                              )}>
+                                                {CATEGORY_CONFIG[batch.subjectKey]?.label || batch.subjectKey}
+                                              </span>
+
+                                              {/* Status Badge */}
+                                              <span className={cn(
+                                                "text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider border",
+                                                batch.status === 'PUBLISHED'
+                                                  ? "text-[#109E58] bg-[#109E58]/10 border-[#109E58]/20"
+                                                  : batch.status === 'CANCELLED'
+                                                  ? "text-rose-700 bg-rose-50 border-rose-200"
+                                                  : batch.status === 'ARCHIVED'
+                                                  ? "text-slate-500 bg-slate-50 border-slate-200"
+                                                  : "text-amber-700 bg-amber-50 border-amber-200"
+                                              )}>
+                                                {batch.status === 'PUBLISHED' ? 'Terbit' : batch.status === 'CANCELLED' ? 'Dibatalkan' : batch.status === 'ARCHIVED' ? 'Arsip' : 'Draf'}
+                                              </span>
+                                            </div>
+
+                                            {/* Primary Actions: Edit & 3-Dot Menu */}
+                                            <div className="flex items-center gap-1">
+                                              {/* Edit Button (Primary) */}
+                                              {(batch.status === 'DRAFT' || batch.status === 'PUBLISHED') && canEditBatch(batch) && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleEditBatch(batch)}
+                                                  className="p-1.5 hover:bg-slate-100 text-gray-500 hover:text-[#109E58] rounded-lg transition-all cursor-pointer"
+                                                  title="Edit Tugas"
+                                                >
+                                                  <Edit size={15} />
+                                                </button>
+                                              )}
+
+                                              {/* 3-Dot Menu Dropdown */}
+                                              <div className="relative">
+                                                <button
+                                                  type="button"
+                                                  aria-haspopup="true"
+                                                  aria-expanded={isMenuOpen}
+                                                  onClick={() => setActiveMenuCardId(isMenuOpen ? null : batch.id)}
+                                                  className="p-1.5 hover:bg-slate-100 text-gray-500 hover:text-gray-900 rounded-lg transition-all cursor-pointer"
+                                                  title="Menu Opsi"
+                                                >
+                                                  <MoreVertical size={16} />
+                                                </button>
+
+                                                {isMenuOpen && (
+                                                  <>
+                                                    <div
+                                                      className="fixed inset-0 z-30"
+                                                      onClick={() => setActiveMenuCardId(null)}
+                                                    />
+                                                    <div className="absolute right-0 top-8 w-44 bg-white border border-slate-200 rounded-xl shadow-lg z-40 py-1 text-xs divide-y divide-slate-100 animate-fadeIn">
+                                                      {/* Duplikat Action (Available for all statuses) */}
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          setActiveMenuCardId(null);
+                                                          handleDuplicateBatch(batch);
+                                                        }}
+                                                        className="w-full text-left px-3.5 py-2 font-bold text-slate-700 hover:bg-violet-50 hover:text-violet-700 flex items-center gap-2 cursor-pointer transition-all"
+                                                      >
+                                                        <Copy size={13} className="text-violet-500" />
+                                                        <span>Duplikat Tugas</span>
+                                                      </button>
+
+                                                      {/* Batalkan Action */}
+                                                      {batch.status === 'PUBLISHED' && canEditBatch(batch) && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                            setActiveMenuCardId(null);
+                                                            handleCancelBatchClick(batch);
+                                                          }}
+                                                          className="w-full text-left px-3.5 py-2 font-bold text-rose-600 hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-all"
+                                                        >
+                                                          <AlertTriangle size={13} className="text-rose-500" />
+                                                          <span>Batalkan Tugas</span>
+                                                        </button>
+                                                      )}
+
+                                                      {/* Hapus Action */}
+                                                      {batch.status === 'DRAFT' && canEditBatch(batch) && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                            setActiveMenuCardId(null);
+                                                            handleDeleteBatchClick(batch);
+                                                          }}
+                                                          className="w-full text-left px-3.5 py-2 font-bold text-rose-600 hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-all"
+                                                        >
+                                                          <Trash2 size={13} className="text-rose-500" />
+                                                          <span>Hapus Draft</span>
+                                                        </button>
+                                                      )}
+                                                      {batch.status !== 'DRAFT' && canDeleteBatch(batch) && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                            setActiveMenuCardId(null);
+                                                            handleDeleteBatchClick(batch);
+                                                          }}
+                                                          className="w-full text-left px-3.5 py-2 font-bold text-rose-700 hover:bg-rose-50 flex items-center gap-2 cursor-pointer transition-all"
+                                                        >
+                                                          <Trash2 size={13} className="text-rose-600" />
+                                                          <span>Hapus Permanen</span>
+                                                        </button>
+                                                      )}
+                                                    </div>
+                                                  </>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          {/* Classes & Optional Week Label */}
+                                          <div className="space-y-1">
+                                            {/* Summarized Classes with full tooltip / click toggle */}
+                                            <div
+                                              className="group relative cursor-help"
+                                              title={classNames.join(', ')}
+                                            >
+                                              <p className="text-xs text-gray-800 font-bold">
+                                                {summarizedClasses || 'Semua Kelas'}
+                                              </p>
+                                              {classNames.length > 2 && (
+                                                <div className="hidden group-hover:block absolute left-0 top-5 bg-slate-900 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg shadow-lg z-20 whitespace-nowrap">
+                                                  {classNames.join(', ')}
+                                                </div>
+                                              )}
+                                            </div>
+
+                                            {/* Week Label (if present) standardized to Indonesian date */}
+                                            {batch.weekLabel && (
+                                              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                                                {standardizeIndonesianDateText(batch.weekLabel)}
+                                              </p>
+                                            )}
+                                          </div>
+
+                                          {/* Levels Summarized ("N level" with expandable drawer) */}
+                                          <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                                                {sortedLevelKeys.length} Level
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() => setExpandedLevels(prev => ({ ...prev, [batch.id]: !isLevelsOpen }))}
+                                                className="text-[10px] font-bold text-violet-700 hover:text-violet-900 flex items-center gap-1 cursor-pointer"
+                                              >
+                                                <span>{isLevelsOpen ? 'Ringkas' : 'Lihat Detail'}</span>
+                                                {isLevelsOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                              </button>
+                                            </div>
+
+                                            {/* Collapsed or Expanded Levels */}
+                                            {isLevelsOpen ? (
+                                              <div className="space-y-2 pt-1">
+                                                {sortedLevelKeys.map(lvl => (
+                                                  <div key={lvl} className="p-2 bg-slate-50 rounded-xl border border-slate-100 text-[11px]">
+                                                    <span className="font-black text-violet-700 uppercase tracking-wide block">
+                                                      {lvl}
+                                                    </span>
+                                                    <p className="font-bold text-gray-800 truncate" title={batch.levelTasks[lvl]?.title}>
+                                                      {batch.levelTasks[lvl]?.title || '-'}
+                                                    </p>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <div className="flex flex-wrap gap-1">
+                                                {sortedLevelKeys.map(lvl => (
+                                                  <span
+                                                    key={lvl}
+                                                    className="text-[9px] font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-100 uppercase"
+                                                    title={batch.levelTasks[lvl]?.title}
+                                                  >
+                                                    {lvl}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+
+                                          {/* Detail Pembatalan (if cancelled) */}
+                                          {batch.status === 'CANCELLED' && (
+                                            <div className="pt-2 border-t border-rose-100 bg-rose-50/50 p-2.5 rounded-xl space-y-1 text-xs">
+                                              <span className="text-[9px] font-black text-rose-700 uppercase tracking-wider block">
+                                                Alasan Batal: {(batch as any).cancellationReason || '-'}
+                                              </span>
+                                              {(batch as any).cancellationNote && (
+                                                <p className="text-[10px] text-rose-800 italic">
+                                                  "{(batch as any).cancellationNote}"
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Load More Button */}
+                      {sortedBatches.length > visibleBatchesCount && (
+                        <div className="text-center pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setVisibleBatchesCount(prev => prev + 6)}
+                            className="px-6 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-xs cursor-pointer inline-flex items-center gap-2"
+                          >
+                            <span>Muat lebih banyak</span>
+                            <ChevronDown size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Arsip (Legacy) — Collapsible Section at Bottom */}
+            {packages.length > 0 && (
+              <div className="bg-white rounded-[2rem] border border-slate-100 shadow-xs overflow-hidden mt-8">
+                <button
+                  type="button"
+                  onClick={() => setCollapsedLegacy(prev => !prev)}
+                  className="w-full px-6 py-4 bg-slate-50/70 hover:bg-slate-100/70 border-b border-slate-100 flex items-center justify-between transition-all cursor-pointer text-left"
+                >
+                  <div>
+                    <h3 className="text-sm font-black text-slate-700 uppercase tracking-wider">
+                      Arsip (Legacy)
+                    </h3>
+                    <p className="text-xs font-semibold text-slate-400">
+                      Paket tugas lama sebelum transisi LPU multi-class berorientasi level ({packages.length} paket).
                     </p>
                   </div>
-                </div>
-              )}
-            </div>
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <span className="text-xs font-bold text-slate-500">
+                      {collapsedLegacy ? 'Buka' : 'Lipat'}
+                    </span>
+                    {collapsedLegacy ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+                  </div>
+                </button>
 
-            {/* Legacy Packages (Tugas Lama) */}
-            {packages.length > 0 && (
-              <div className="space-y-4 border-t border-slate-100 pt-8">
-                <div className="pb-2">
-                  <h3 className="text-md font-black text-slate-400 uppercase tracking-wider">Daftar Paket Tugas Kelas (Legacy / Lama)</h3>
-                  <p className="text-xs font-semibold text-slate-400">Paket tugas lama sebelum transisi LPU multi-class berorientasi level.</p>
-                </div>
+                {!collapsedLegacy && (
+                  <div className="p-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {packages.map(pkg => (
+                        <div key={pkg.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between space-y-4 opacity-75 hover:opacity-100 transition-all">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                                SMP JUNIOR HIGH (LEGACY)
+                              </span>
+                              <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditPackage(pkg)}
+                                  className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
+                                  title="Edit Tugas Lama"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePackage(pkg.id)}
+                                  className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
+                                  title="Hapus Tugas Lama"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {packages.map(pkg => (
-                    <div key={pkg.id} className="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm flex flex-col justify-between space-y-4 opacity-75 hover:opacity-100 transition-all">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-black text-gray-500 bg-gray-100 border border-gray-200 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                            SMP JUNIOR HIGH (LEGACY)
-                          </span>
-                          <div className="flex gap-1">
-                            <button
-                              onClick={() => handleEditPackage(pkg)}
-                              className="p-1.5 hover:bg-slate-50 text-gray-500 hover:text-[#109E58] rounded-lg transition-all"
-                              title="Edit Tugas Lama"
-                            >
-                              <Edit size={16} />
-                            </button>
-                            <button
-                              onClick={() => handleDeletePackage(pkg.id)}
-                              className="p-1.5 hover:bg-rose-50 text-gray-500 hover:text-rose-600 rounded-lg transition-all"
-                              title="Hapus Tugas Lama"
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            <div className="space-y-1">
+                              <h4 className="text-md font-black text-gray-900 tracking-tight leading-snug">
+                                {formatDateRange(pkg.weekStartDate, pkg.weekEndDate)}
+                              </h4>
+                              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                                Mulai: {formatDateFull(pkg.weekStartDate)}
+                              </p>
+                            </div>
+
+                            <div className="space-y-2 pt-2 border-t border-slate-100">
+                              {pkg.tasks.bahasaIndonesia && (
+                                <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                                  <BookOpen size={14} className="text-blue-500" />
+                                  <span>Bahasa Indonesia</span>
+                                </div>
+                              )}
+                              {pkg.tasks.english && (
+                                <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                                  <Languages size={14} className="text-violet-500" />
+                                  <span>English</span>
+                                </div>
+                              )}
+                              {pkg.tasks.mengaji && (
+                                <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                                  <BookMarked size={14} className="text-emerald-500" />
+                                  <span>Mengaji</span>
+                                </div>
+                              )}
+                              {pkg.tasks.numerasi && (
+                                <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                                  <Calculator size={14} className="text-amber-500" />
+                                  <span>Numerasi</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
-
-                        <div className="space-y-1">
-                          <h4 className="text-md font-black text-gray-900 tracking-tight leading-snug">
-                            {formatDateRange(pkg.weekStartDate, pkg.weekEndDate)}
-                          </h4>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
-                            Mulai: {formatDateFull(pkg.weekStartDate)}
-                          </p>
-                        </div>
-
-                        <div className="space-y-2 pt-2 border-t border-slate-100">
-                          {pkg.tasks.bahasaIndonesia && (
-                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                              <BookOpen size={14} className="text-blue-500" />
-                              <span>Bahasa Indonesia</span>
-                            </div>
-                          )}
-                          {pkg.tasks.english && (
-                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                              <Languages size={14} className="text-violet-500" />
-                              <span>English</span>
-                            </div>
-                          )}
-                          {pkg.tasks.mengaji && (
-                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                              <BookMarked size={14} className="text-emerald-500" />
-                              <span>Mengaji</span>
-                            </div>
-                          )}
-                          {pkg.tasks.numerasi && (
-                            <div className="flex items-center gap-2 text-xs font-semibold text-gray-600">
-                              <Calculator size={14} className="text-amber-500" />
-                              <span>Numerasi</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -6719,9 +7415,19 @@ function LearningPowerUpTeacherPageContent() {
                 <h3 className="text-xl font-black text-gray-900 tracking-tight leading-snug">
                   Batalkan Tugas {CATEGORY_CONFIG[cancellingBatch.subjectKey]?.label || cancellingBatch.subjectKey}?
                 </h3>
-                <p className="text-xs text-gray-500 font-semibold leading-relaxed">
-                  Periode: {cancellingBatch.weekLabel}
-                </p>
+                <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl space-y-2 text-xs font-semibold text-slate-700">
+                  <div>
+                    Subject: <strong className="font-bold text-gray-950">{CATEGORY_CONFIG[cancellingBatch.subjectKey]?.label || cancellingBatch.subjectKey}</strong>
+                  </div>
+                  <div>
+                    Kelas Terkena: <strong className="font-bold text-gray-950">
+                      {((cancellingBatch.targetClassIds || (cancellingBatch as any).classIds || [(cancellingBatch as any).classId]).filter(Boolean) as string[]).map(cid => classes.find(c => c.id === cid)?.name || cid).join(', ')}
+                    </strong>
+                  </div>
+                  <div>
+                    Pekan: <strong className="font-bold text-gray-950">{cancellingBatch.weekLabel || formatWeekHeaderIndonesian(cancellingBatch.weekStartDate, cancellingBatch.weekEndDate)}</strong>
+                  </div>
+                </div>
               </div>
 
               {/* Preflight Statistics */}
@@ -6811,6 +7517,50 @@ function LearningPowerUpTeacherPageContent() {
                   ) : (
                     "Ya, Batalkan Tugas"
                   )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* CONFIRM CLOSE FORM MODAL IF UNSAVED CHANGES */}
+      <AnimatePresence>
+        {confirmCloseFormModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" id="unsaved-close-overlay">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full p-6 space-y-5 border border-slate-100"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                <AlertTriangle size={24} />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-black text-gray-900 tracking-tight">Tutup Formulir?</h3>
+                <p className="text-xs text-gray-500 font-semibold leading-relaxed">
+                  Perubahan atau isian data tugas yang belum Anda simpan akan hilang jika formulir ini ditutup.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmCloseFormModal(false)}
+                  className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase tracking-wider rounded-xl transition-all"
+                >
+                  Lanjut Mengedit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmCloseFormModal(false);
+                    resetNewBatchForm();
+                    setShowFormPanel(false);
+                  }}
+                  className="py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-sm"
+                >
+                  Ya, Tutup & Buang
                 </button>
               </div>
             </motion.div>

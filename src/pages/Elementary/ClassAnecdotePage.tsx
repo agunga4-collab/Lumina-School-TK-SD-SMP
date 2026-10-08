@@ -81,6 +81,38 @@ const getInitials = (name: string) => {
   return (parts[0][0] + (parts[1]?.[0] || "")).toUpperCase();
 };
 
+const formatTimestamp = (ts: any): string => {
+  if (!ts) return "";
+  let date: Date;
+  if (typeof ts.toDate === "function") {
+    date = ts.toDate();
+  } else if (ts instanceof Date) {
+    date = ts;
+  } else if (typeof ts === "number") {
+    date = new Date(ts);
+  } else if (typeof ts === "string") {
+    date = new Date(ts);
+  } else {
+    return "";
+  }
+
+  const day = date.getDate();
+  const months = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agt", "Sep", "Okt", "Nov", "Des"];
+  const month = months[date.getMonth()];
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+
+  return `${day} ${month} ${year}, ${hours}.${minutes}`;
+};
+
+const isTimestampDifferent = (ts1: any, ts2: any): boolean => {
+  if (!ts1 || !ts2) return false;
+  const time1 = typeof ts1.toMillis === "function" ? ts1.toMillis() : new Date(ts1).getTime();
+  const time2 = typeof ts2.toMillis === "function" ? ts2.toMillis() : new Date(ts2).getTime();
+  return Math.abs(time1 - time2) >= 1000;
+};
+
 interface AnecdoteRow {
   rowId: string; // Document ID from Firestore, or temporary draft ID
   studentId: string;
@@ -92,6 +124,7 @@ interface AnecdoteRow {
   isDraft: boolean;
   status: "UNSAVED" | "SAVING" | "SAVED" | "FAILED";
   createdAt?: Timestamp;
+  updatedAt?: Timestamp;
   createdBy?: {
     uid: string;
     name: string;
@@ -104,6 +137,7 @@ interface AnecdoteRow {
     anecdote: string;
     followUp: string;
     createdAt?: Timestamp;
+    updatedAt?: Timestamp;
     createdBy?: {
       uid: string;
       name: string;
@@ -308,6 +342,7 @@ export default function ClassAnecdotePage() {
               isDraft: false,
               status: isModified ? "UNSAVED" : "SAVED",
               createdAt: saved.createdAt,
+              updatedAt: saved.updatedAt,
               createdBy: saved.createdBy,
               originalData: {
                 time: saved.time || "",
@@ -315,6 +350,7 @@ export default function ClassAnecdotePage() {
                 anecdote: saved.anecdote || "",
                 followUp: saved.followUp || "",
                 createdAt: saved.createdAt,
+                updatedAt: saved.updatedAt,
                 createdBy: saved.createdBy,
               },
             });
@@ -656,19 +692,22 @@ export default function ClassAnecdotePage() {
       setRows((prev) =>
         prev.map((r) => {
           if (r.rowId === rowId) {
+            const resolvedCreatedAt = r.createdAt || Timestamp.now();
             return {
               ...r,
               rowId: finalDocId,
               isDraft: false,
               status: "SAVED",
-              createdAt: r.createdAt || Timestamp.now(),
+              createdAt: resolvedCreatedAt,
+              updatedAt: Timestamp.now(),
               createdBy: payload.createdBy,
               originalData: {
                 time: payload.time,
                 activityContext: payload.activityContext,
                 anecdote: payload.anecdote,
                 followUp: payload.followUp || "",
-                createdAt: r.createdAt || Timestamp.now(),
+                createdAt: resolvedCreatedAt,
+                updatedAt: Timestamp.now(),
                 createdBy: payload.createdBy,
               },
             };
@@ -759,19 +798,22 @@ export default function ClassAnecdotePage() {
         setRows((prev) =>
           prev.map((row) => {
             if (row.rowId === r.rowId) {
+              const resolvedCreatedAt = r.createdAt || Timestamp.now();
               return {
                 ...row,
                 rowId: finalDocId,
                 isDraft: false,
                 status: "SAVED",
-                createdAt: r.createdAt || Timestamp.now(),
+                createdAt: resolvedCreatedAt,
+                updatedAt: Timestamp.now(),
                 createdBy: payload.createdBy,
                 originalData: {
                   time: payload.time,
                   activityContext: payload.activityContext,
                   anecdote: payload.anecdote,
                   followUp: payload.followUp || "",
-                  createdAt: r.createdAt || Timestamp.now(),
+                  createdAt: resolvedCreatedAt,
+                  updatedAt: Timestamp.now(),
                   createdBy: payload.createdBy,
                 },
               };
@@ -952,6 +994,7 @@ export default function ClassAnecdotePage() {
 
       await setDoc(docRef, payload);
 
+      const existingCreatedAt = rows.find(r => r.rowId === finalDocId)?.createdAt || Timestamp.now();
       const updatedRow: AnecdoteRow = {
         rowId: finalDocId,
         studentId: modalStudentId,
@@ -962,14 +1005,16 @@ export default function ClassAnecdotePage() {
         followUp: payload.followUp || "",
         isDraft: false,
         status: "SAVED",
-        createdAt: Timestamp.now(),
+        createdAt: (isEditingNote && !isDraftRow) ? existingCreatedAt : Timestamp.now(),
+        updatedAt: Timestamp.now(),
         createdBy: payload.createdBy,
         originalData: {
           time: payload.time,
           activityContext: payload.activityContext,
           anecdote: payload.anecdote,
           followUp: payload.followUp || "",
-          createdAt: Timestamp.now(),
+          createdAt: (isEditingNote && !isDraftRow) ? existingCreatedAt : Timestamp.now(),
+          updatedAt: Timestamp.now(),
           createdBy: payload.createdBy,
         }
       };
@@ -1262,11 +1307,6 @@ export default function ClassAnecdotePage() {
                                           {note.time}
                                         </span>
                                         {renderStatusBadge(note.status)}
-                                        {note.createdBy?.name && (
-                                          <span className="text-xs text-slate-500 font-medium">
-                                            Oleh: {note.createdBy.name}
-                                          </span>
-                                        )}
                                       </div>
                                       
                                       <div className="flex items-center gap-1.5">
@@ -1332,6 +1372,24 @@ export default function ClassAnecdotePage() {
                                           </p>
                                         </div>
                                       )}
+
+                                      {/* metadata line */}
+                                      {(() => {
+                                        const createdByName = note.createdBy?.name || "-";
+                                        const createdAtStr = note.createdAt ? formatTimestamp(note.createdAt) : "";
+                                        let infoText = `Dicatat oleh: ${createdByName}`;
+                                        if (createdAtStr) {
+                                          infoText += ` • ${createdAtStr}`;
+                                        }
+                                        if (note.updatedAt && note.createdAt && isTimestampDifferent(note.createdAt, note.updatedAt)) {
+                                          infoText += ` (diubah ${formatTimestamp(note.updatedAt)})`;
+                                        }
+                                        return (
+                                          <div className="text-[11px] text-slate-400 font-medium pt-1.5 border-t border-slate-100/60 flex items-center gap-1.5">
+                                            <span>{infoText}</span>
+                                          </div>
+                                        );
+                                      })()}
                                     </div>
                                   </div>
                                 );
@@ -1423,11 +1481,6 @@ export default function ClassAnecdotePage() {
                                     {note.time}
                                   </span>
                                   {renderStatusBadge(note.status)}
-                                  {note.createdBy?.name && (
-                                    <span className="text-[11px] text-slate-500 font-medium">
-                                      Oleh: {note.createdBy.name}
-                                    </span>
-                                  )}
                                 </div>
 
                                 <div className="flex items-center gap-1">
@@ -1493,6 +1546,24 @@ export default function ClassAnecdotePage() {
                                     </span>
                                   </div>
                                 )}
+
+                                {/* metadata line */}
+                                {(() => {
+                                  const createdByName = note.createdBy?.name || "-";
+                                  const createdAtStr = note.createdAt ? formatTimestamp(note.createdAt) : "";
+                                  let infoText = `Dicatat oleh: ${createdByName}`;
+                                  if (createdAtStr) {
+                                    infoText += ` • ${createdAtStr}`;
+                                  }
+                                  if (note.updatedAt && note.createdAt && isTimestampDifferent(note.createdAt, note.updatedAt)) {
+                                    infoText += ` (diubah ${formatTimestamp(note.updatedAt)})`;
+                                  }
+                                  return (
+                                    <div className="text-[10px] text-slate-400 font-medium pt-1 border-t border-slate-100/60 flex items-center gap-1">
+                                      <span>{infoText}</span>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
                           );
