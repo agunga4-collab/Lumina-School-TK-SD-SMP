@@ -32,7 +32,8 @@ import {
   CalendarDays,
   Play,
   Eye,
-  Download
+  Download,
+  BarChart2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -52,6 +53,7 @@ import {
 } from "../../services/ldssTemplateService";
 import { toast } from "sonner";
 import { ElementaryLdssPdfTemplate } from "../../components/Elementary/ElementaryLdssPdfTemplate";
+import { ElementaryLdssReportModal } from "../../components/Elementary/ElementaryLdssReportModal";
 import { generateElementaryLdssPdfBlob, normalizeElementaryLdssFilename } from "../../lib/elementaryLdssReportPdf";
 import {
   ResponsiveContainer,
@@ -272,10 +274,11 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
   const [templates, setTemplates] = React.useState<LdssTemplate[]>([]);
   const [analyticsPeriod, setAnalyticsPeriod] = React.useState<string>("");
 
-  // PDF Report Generation States
+  // PDF Report & Graph Modal States
   const [pdfStudent, setPdfStudent] = React.useState<Student | null>(null);
   const [generatingPdfStudentId, setGeneratingPdfStudentId] = React.useState<string | null>(null);
   const [isPdfTemplateReady, setIsPdfTemplateReady] = React.useState<boolean>(false);
+  const [selectedGraphStudent, setSelectedGraphStudent] = React.useState<Student | null>(null);
 
   const handleDownloadPdf = async (studentToPrint: Student) => {
     if (generatingPdfStudentId) return;
@@ -1044,6 +1047,20 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
                 </div>
               )}
 
+               {/* Interactive Modal for LDSS Student Graph */}
+              {selectedGraphStudent && selectedClass && (
+                <ElementaryLdssReportModal
+                  student={selectedGraphStudent}
+                  currentClass={selectedClass}
+                  academicYear={activeYear}
+                  sessions={classSessions.filter((s) => s.studentId === selectedGraphStudent.id)}
+                  templates={templates}
+                  onClose={() => setSelectedGraphStudent(null)}
+                  onDownloadPdf={() => handleDownloadPdf(selectedGraphStudent)}
+                  isPdfGenerating={generatingPdfStudentId === selectedGraphStudent.id}
+                />
+              )}
+
               {subTab === "reports" ? (
                 <div className="space-y-6">
                   {/* Table Card for Reports */}
@@ -1094,7 +1111,7 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
                               <th className="py-3 px-4 text-center">LDSS 2</th>
                               <th className="py-3 px-4 text-center">LDSS 3</th>
                               <th className="py-3 px-4 text-center min-w-[140px]">Ketersediaan Rapor</th>
-                              <th className="py-3 px-4 text-center w-40">Aksi</th>
+                              <th className="py-3 px-4 text-center min-w-[210px]">Aksi</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
@@ -1176,35 +1193,55 @@ function LdssSelectionPanel({ activeYear }: LdssSelectionPanelProps) {
                                     )}
                                   </td>
                                   <td className="py-3.5 px-4 text-center">
-                                    <button
-                                      type="button"
-                                      disabled={!canDownload || Boolean(generatingPdfStudentId)}
-                                      onClick={() => handleDownloadPdf(student)}
-                                      title={
-                                        !canDownload
-                                          ? "Siswa belum memiliki hasil asesmen yang Selesai."
-                                          : "Unduh Rapor LDSS PDF"
-                                      }
-                                      className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 w-full cursor-pointer ${
-                                        isPdfGenerating
-                                          ? "bg-indigo-100 text-indigo-700 border border-indigo-200 animate-pulse"
-                                          : canDownload
-                                          ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
-                                          : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
-                                      }`}
-                                    >
-                                      {isPdfGenerating ? (
-                                        <>
-                                          <Loader2 size={13} className="animate-spin text-indigo-600" />
-                                          <span>Membuat PDF...</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Download size={13} />
-                                          <span>Unduh PDF</span>
-                                        </>
-                                      )}
-                                    </button>
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={!canDownload}
+                                        onClick={() => setSelectedGraphStudent(student)}
+                                        title={
+                                          !canDownload
+                                            ? "Belum ada hasil selesai"
+                                            : "Lihat Grafik Hasil LDSS"
+                                        }
+                                        className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0 ${
+                                          canDownload
+                                            ? "bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-250 shadow-xs"
+                                            : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                                        }`}
+                                      >
+                                        <BarChart2 size={13} />
+                                        <span>Lihat Grafik</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={!canDownload || Boolean(generatingPdfStudentId)}
+                                        onClick={() => handleDownloadPdf(student)}
+                                        title={
+                                          !canDownload
+                                            ? "Belum ada hasil selesai"
+                                            : "Unduh Rapor LDSS PDF"
+                                        }
+                                        className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0 ${
+                                          isPdfGenerating
+                                            ? "bg-indigo-100 text-indigo-700 border border-indigo-200 animate-pulse"
+                                            : canDownload
+                                            ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+                                            : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                                        }`}
+                                      >
+                                        {isPdfGenerating ? (
+                                          <>
+                                            <Loader2 size={13} className="animate-spin text-indigo-600" />
+                                            <span>Membuat...</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Download size={13} />
+                                            <span>Unduh PDF</span>
+                                          </>
+                                        )}
+                                      </button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
