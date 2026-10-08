@@ -92,12 +92,24 @@ interface AnecdoteRow {
   isDraft: boolean;
   status: "UNSAVED" | "SAVING" | "SAVED" | "FAILED";
   createdAt?: Timestamp;
+  createdBy?: {
+    uid: string;
+    name: string;
+    email?: string;
+    role: string;
+  };
   originalData?: {
     time: string;
     activityContext: string;
     anecdote: string;
     followUp: string;
     createdAt?: Timestamp;
+    createdBy?: {
+      uid: string;
+      name: string;
+      email?: string;
+      role: string;
+    };
   };
 }
 
@@ -208,8 +220,8 @@ export default function ClassAnecdotePage() {
           (c) => c.unitId === "ELEMENTARY" && c.status !== "archived" && c.academicYear === activeYear
         );
 
-        if (!isSuperAdmin && !isElementaryHead) {
-          // Standard teachers only see their assigned classes
+        if (!isSuperAdmin && !isElementaryHead && !isElementaryTeacher) {
+          // Standard teachers only see their assigned classes (except Elementary teachers who see all)
           filtered = filtered.filter((c) => isTeacherAssignedToClass(c, profile.uid));
         }
 
@@ -296,12 +308,14 @@ export default function ClassAnecdotePage() {
               isDraft: false,
               status: isModified ? "UNSAVED" : "SAVED",
               createdAt: saved.createdAt,
+              createdBy: saved.createdBy,
               originalData: {
                 time: saved.time || "",
                 activityContext: saved.activityContext || "",
                 anecdote: saved.anecdote || "",
                 followUp: saved.followUp || "",
                 createdAt: saved.createdAt,
+                createdBy: saved.createdBy,
               },
             });
           });
@@ -629,7 +643,8 @@ export default function ClassAnecdotePage() {
         followUp: row.followUp.trim() || null,
         createdBy: {
           uid: profile.uid,
-          name: profile.displayName || profile.email,
+          name: profile.displayName || profile.email || "",
+          email: profile.email || "",
           role: profile.role,
         },
         createdAt: isDraftRow ? serverTimestamp() : (row.createdAt || serverTimestamp()),
@@ -647,12 +662,14 @@ export default function ClassAnecdotePage() {
               isDraft: false,
               status: "SAVED",
               createdAt: r.createdAt || Timestamp.now(),
+              createdBy: payload.createdBy,
               originalData: {
                 time: payload.time,
                 activityContext: payload.activityContext,
                 anecdote: payload.anecdote,
                 followUp: payload.followUp || "",
                 createdAt: r.createdAt || Timestamp.now(),
+                createdBy: payload.createdBy,
               },
             };
           }
@@ -728,7 +745,8 @@ export default function ClassAnecdotePage() {
           followUp: r.followUp.trim() || null,
           createdBy: {
             uid: profile!.uid,
-            name: profile!.displayName || profile!.email,
+            name: profile!.displayName || profile!.email || "",
+            email: profile!.email || "",
             role: profile!.role,
           },
           createdAt: isDraftRow ? serverTimestamp() : (r.createdAt || serverTimestamp()),
@@ -747,12 +765,14 @@ export default function ClassAnecdotePage() {
                 isDraft: false,
                 status: "SAVED",
                 createdAt: r.createdAt || Timestamp.now(),
+                createdBy: payload.createdBy,
                 originalData: {
                   time: payload.time,
                   activityContext: payload.activityContext,
                   anecdote: payload.anecdote,
                   followUp: payload.followUp || "",
                   createdAt: r.createdAt || Timestamp.now(),
+                  createdBy: payload.createdBy,
                 },
               };
             }
@@ -922,7 +942,8 @@ export default function ClassAnecdotePage() {
         followUp: modalFollowUp.trim() || null,
         createdBy: {
           uid: profile.uid,
-          name: profile.displayName || profile.email,
+          name: profile.displayName || profile.email || "",
+          email: profile.email || "",
           role: profile.role,
         },
         createdAt: (isEditingNote && !isDraftRow) ? (rows.find(r => r.rowId === finalDocId)?.createdAt || serverTimestamp()) : serverTimestamp(),
@@ -942,12 +963,14 @@ export default function ClassAnecdotePage() {
         isDraft: false,
         status: "SAVED",
         createdAt: Timestamp.now(),
+        createdBy: payload.createdBy,
         originalData: {
           time: payload.time,
           activityContext: payload.activityContext,
           anecdote: payload.anecdote,
           followUp: payload.followUp || "",
           createdAt: Timestamp.now(),
+          createdBy: payload.createdBy,
         }
       };
 
@@ -1233,16 +1256,21 @@ export default function ClassAnecdotePage() {
                                     id={`desktop-note-card-${note.rowId}`}
                                   >
                                     <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex flex-wrap items-center gap-2">
                                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full">
                                           <Clock size={12} className="text-indigo-500" />
                                           {note.time}
                                         </span>
                                         {renderStatusBadge(note.status)}
+                                        {note.createdBy?.name && (
+                                          <span className="text-xs text-slate-500 font-medium">
+                                            Oleh: {note.createdBy.name}
+                                          </span>
+                                        )}
                                       </div>
                                       
                                       <div className="flex items-center gap-1.5">
-                                        {canWrite && (
+                                        {canWrite && (note.isDraft || !note.createdBy?.uid || note.createdBy.uid === profile.uid || isSuperAdmin) && (
                                           <>
                                             <button
                                               onClick={() => openEditNoteModal(note)}
@@ -1389,16 +1417,21 @@ export default function ClassAnecdotePage() {
                               id={`mobile-note-card-${note.rowId}`}
                             >
                               <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full">
                                     <Clock size={10} />
                                     {note.time}
                                   </span>
                                   {renderStatusBadge(note.status)}
+                                  {note.createdBy?.name && (
+                                    <span className="text-[11px] text-slate-500 font-medium">
+                                      Oleh: {note.createdBy.name}
+                                    </span>
+                                  )}
                                 </div>
 
                                 <div className="flex items-center gap-1">
-                                  {canWrite && (
+                                  {canWrite && (note.isDraft || !note.createdBy?.uid || note.createdBy.uid === profile.uid || isSuperAdmin) && (
                                     <>
                                       <button
                                         onClick={() => openEditNoteModal(note)}

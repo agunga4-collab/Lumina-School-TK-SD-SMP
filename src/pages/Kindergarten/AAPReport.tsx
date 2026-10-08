@@ -367,6 +367,7 @@ export default function AAPReport() {
     recommendation: string;
   }>>({});
   const [overallTeacherSummary, setOverallTeacherSummary] = React.useState('');
+  const [validationErrors, setValidationErrors] = React.useState<Record<string, { summary?: boolean; progressRating?: boolean; followupDecision?: boolean; recommendation?: boolean }>>({});
 
   // Phase 4: End of Term states
   const [endOfTermReport, setEndOfTermReport] = React.useState<any>(null);
@@ -1427,6 +1428,45 @@ export default function AAPReport() {
       return;
     }
     if (isSavingMidterm) return; // Prevent double submit
+
+    // Validation check for required fields (marked with *)
+    const errors: Record<string, { summary?: boolean; progressRating?: boolean; followupDecision?: boolean; recommendation?: boolean }> = {};
+    let hasError = false;
+
+    for (const aspectName of AAP_ASPECTS) {
+      const form = midtermForm[aspectName] || {};
+      const errorsForAspect: { summary?: boolean; progressRating?: boolean; followupDecision?: boolean; recommendation?: boolean } = {};
+
+      if (!form.summary?.trim()) {
+        errorsForAspect.summary = true;
+        hasError = true;
+      }
+      if (!form.progressRating) {
+        errorsForAspect.progressRating = true;
+        hasError = true;
+      }
+      if (!form.followupDecision) {
+        errorsForAspect.followupDecision = true;
+        hasError = true;
+      }
+      if (!form.recommendation?.trim()) {
+        errorsForAspect.recommendation = true;
+        hasError = true;
+      }
+
+      if (Object.keys(errorsForAspect).length > 0) {
+        errors[aspectName] = errorsForAspect;
+      }
+    }
+
+    if (hasError) {
+      setValidationErrors(errors);
+      toast.error("Harap lengkapi semua kolom wajib (bertanda bintang *) untuk setiap aspek sebelum menyimpan.");
+      return;
+    }
+
+    // Clear errors on success
+    setValidationErrors({});
 
     setIsSavingMidterm(true);
     try {
@@ -3038,8 +3078,8 @@ export default function AAPReport() {
                       const plan = followupPlans[aspectName] || {};
                       const aspectForm = midtermForm[aspectName] || {
                         summary: '',
-                        progressRating: 'MB',
-                        followupDecision: 'Lanjutkan',
+                        progressRating: '',
+                        followupDecision: '',
                         teacherNotes: '',
                         recommendation: '',
                         adjustmentStrategy: ''
@@ -3053,6 +3093,20 @@ export default function AAPReport() {
                             [field]: value
                           }
                         }));
+
+                        // Dynamically clear validation error
+                        setValidationErrors(prev => {
+                          if (!prev[aspectName] || !prev[aspectName][field as 'summary' | 'progressRating' | 'followupDecision' | 'recommendation']) return prev;
+                          const next = { ...prev };
+                          const aspectErrors = { ...next[aspectName] };
+                          delete aspectErrors[field as 'summary' | 'progressRating' | 'followupDecision' | 'recommendation'];
+                          if (Object.keys(aspectErrors).length === 0) {
+                            delete next[aspectName];
+                          } else {
+                            next[aspectName] = aspectErrors;
+                          }
+                          return next;
+                        });
                       };
 
                       // Retrieve connected evidences for this aspect's plan
@@ -3156,10 +3210,16 @@ export default function AAPReport() {
                                     value={aspectForm.summary || ''}
                                     onChange={(e) => updateAspectFormField('summary', e.target.value)}
                                     rows={3}
-                                    className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                                    className={cn(
+                                      "w-full text-xs font-bold text-gray-800 bg-white border rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal transition-all",
+                                      validationErrors[aspectName]?.summary ? "border-rose-500 ring-2 ring-rose-500/10 focus:ring-rose-500/20" : "border-gray-150"
+                                    )}
                                     placeholder="Deskripsikan kemajuan riil anak hingga pertengahan term berdasarkan capaian harian, observasi, dan bukti pelaksanaan..."
                                     required
                                   />
+                                  {validationErrors[aspectName]?.summary && (
+                                    <p className="text-[10px] text-rose-600 font-extrabold uppercase mt-1">Ringkasan Perkembangan wajib diisi.</p>
+                                  )}
                                 </div>
 
                                 {/* 2. Rating & Keputusan */}
@@ -3212,7 +3272,10 @@ export default function AAPReport() {
                                     <select
                                       value={aspectForm.progressRating || ''}
                                       onChange={(e) => updateAspectFormField('progressRating', e.target.value)}
-                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                                      className={cn(
+                                        "w-full text-xs font-bold text-gray-800 bg-white border rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer transition-all",
+                                        validationErrors[aspectName]?.progressRating ? "border-rose-500 ring-2 ring-rose-500/10 focus:ring-rose-500/20" : "border-gray-150"
+                                      )}
                                     >
                                       <option value="">Pilih penilaian...</option>
                                       <option value="BB">Belum Berkembang (BB)</option>
@@ -3220,6 +3283,9 @@ export default function AAPReport() {
                                       <option value="BSH">Berkembang Sesuai Harapan (BSH)</option>
                                       <option value="BSB">Berkembang Sangat Baik (BSB)</option>
                                     </select>
+                                    {validationErrors[aspectName]?.progressRating && (
+                                      <p className="text-[10px] text-rose-600 font-extrabold uppercase mt-1">Penilaian wajib dipilih.</p>
+                                    )}
                                   </div>
 
                                   {/* Follow up Decision */}
@@ -3230,7 +3296,10 @@ export default function AAPReport() {
                                     <select
                                       value={aspectForm.followupDecision || ''}
                                       onChange={(e) => updateAspectFormField('followupDecision', e.target.value)}
-                                      className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                                      className={cn(
+                                        "w-full text-xs font-bold text-gray-800 bg-white border rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer transition-all",
+                                        validationErrors[aspectName]?.followupDecision ? "border-rose-500 ring-2 ring-rose-500/10 focus:ring-rose-500/20" : "border-gray-150"
+                                      )}
                                     >
                                       <option value="">Pilih keputusan...</option>
                                       <option value="Lanjutkan">Lanjutkan Rencana</option>
@@ -3238,6 +3307,9 @@ export default function AAPReport() {
                                       <option value="Naikkan Target">Naikkan Target</option>
                                       <option value="Selesai">Selesai</option>
                                     </select>
+                                    {validationErrors[aspectName]?.followupDecision && (
+                                      <p className="text-[10px] text-rose-600 font-extrabold uppercase mt-1">Keputusan wajib dipilih.</p>
+                                    )}
                                   </div>
                                 </div>
 
@@ -3345,10 +3417,16 @@ export default function AAPReport() {
                                     value={aspectForm.recommendation || ''}
                                     onChange={(e) => updateAspectFormField('recommendation', e.target.value)}
                                     rows={2}
-                                    className="w-full text-xs font-bold text-gray-800 bg-white border border-gray-150 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal"
+                                    className={cn(
+                                      "w-full text-xs font-bold text-gray-800 bg-white border rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 leading-relaxed placeholder:font-normal transition-all",
+                                      validationErrors[aspectName]?.recommendation ? "border-rose-500 ring-2 ring-rose-500/10 focus:ring-rose-500/20" : "border-gray-150"
+                                    )}
                                     placeholder="Berikan saran stimulasi praktis lanjutan untuk guru dan orang tua di sisa periode term ini..."
                                     required
                                   />
+                                  {validationErrors[aspectName]?.recommendation && (
+                                    <p className="text-[10px] text-rose-600 font-extrabold uppercase mt-1">Rekomendasi wajib diisi.</p>
+                                  )}
                                 </div>
                               </fieldset>
                             </div>

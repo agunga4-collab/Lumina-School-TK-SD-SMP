@@ -1944,14 +1944,14 @@ service cloud.firestore {
         isAdmin() ||
         (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
         isSecretaryElemClassAccess(incoming().classId) ||
-        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(incoming().classId))
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
       ) && isValidClassAnecdote(incoming());
       
       allow update: if isActive() && (
         isAdmin() ||
         (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
         isSecretaryElemClassAccess(incoming().classId) ||
-        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(incoming().classId))
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL'))
       ) && isValidClassAnecdoteUpdate(incoming())
         && incoming().studentId == existing().studentId
         && incoming().classId == existing().classId
@@ -1963,7 +1963,7 @@ service cloud.firestore {
         isAdmin() ||
         (currentUser().role == 'HEAD_UNIT' && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL')) ||
         isSecretaryElemClassAccess(existing().classId) ||
-        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && isTeacherAssignedToClass(existing().classId))
+        (isTeacher() && (currentUser().unitId == 'ELEMENTARY' || currentUser().unitId == 'ALL') && existing().createdBy.uid == request.auth.uid)
       );
     }
 

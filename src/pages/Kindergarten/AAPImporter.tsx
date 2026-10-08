@@ -375,19 +375,19 @@ export default function AAPImporter({
           ? aspectHeaders[i+1].colIdx - 1
           : summaryStartColIdx - 1;
 
-        // Dynamic scanner to find 'Analisis' and 'Rekomendasi' column indices in this block
+        // Scan backwards from endColIdx to find 'Analisis Perkembangan' and 'Rekomendasi Stimulasi'
         let analysisColIdx = -1;
         let recommendationColIdx = -1;
 
-        for (let c = startColIdx; c <= endColIdx; c++) {
+        for (let c = endColIdx; c >= startColIdx; c--) {
           const detailVal = indicatorRow[c];
           if (detailVal === null || detailVal === undefined) continue;
           const detailStr = String(detailVal).trim().toLowerCase();
 
-          if (detailStr.includes('analisis') || detailStr.includes('analysis') || detailStr.includes('perkembangan')) {
-            analysisColIdx = c;
-          } else if (detailStr.includes('rekomendasi') || detailStr.includes('recommendation') || detailStr.includes('stimulasi')) {
+          if (recommendationColIdx === -1 && (detailStr.includes('rekomendasi') || detailStr.includes('stimulasi'))) {
             recommendationColIdx = c;
+          } else if (analysisColIdx === -1 && (detailStr.includes('analisis') || detailStr.includes('perkembangan'))) {
+            analysisColIdx = c;
           }
         }
 
@@ -406,27 +406,20 @@ export default function AAPImporter({
           const detailVal = indicatorRow[c];
           const cellStr = detailVal !== null && detailVal !== undefined ? String(detailVal).trim() : '';
 
+          // Skip empty cells
+          if (cellStr === '') continue;
+
           // Skip unused slot numbers like "11", "12" ... "20"
-          const isNum = !isNaN(Number(cellStr)) && cellStr !== '';
+          const isNum = !isNaN(Number(cellStr));
           if (isNum) continue;
 
-          // Skip empty columns unless it is the first column of the block
-          if (cellStr === '' && c !== startColIdx) {
+          // Also skip if it is somehow misidentified as analysis or recommendation
+          const lowerStr = cellStr.toLowerCase();
+          if (lowerStr.includes('analisis') || lowerStr.includes('rekomendasi') || lowerStr.includes('stimulasi') || lowerStr.includes('perkembangan')) {
             continue;
           }
 
-          let label = cellStr;
-          if (label === '') {
-            // Fallback to Row 3 aspect name if exists
-            const aspectCell = aspectRow[c];
-            if (aspectCell !== undefined && aspectCell !== null && String(aspectCell).trim() !== '') {
-              label = String(aspectCell).trim();
-            } else {
-              label = `Indikator ${c - startColIdx + 1}`;
-            }
-          }
-
-          indicators.push({ colIdx: c, label });
+          indicators.push({ colIdx: c, label: cellStr });
         }
 
         aspectColumnMaps.push({
