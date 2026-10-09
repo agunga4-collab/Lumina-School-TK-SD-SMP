@@ -1474,7 +1474,6 @@ export function PdfViewerModal({ report, onClose, currentUser }: PdfViewerModalP
               const now = Date.now();
               const updatePayload = {
                 deliveryStatus: deliveryStatusVal,
-                isOpened: true, // as requested: isOpened = true
                 firstOpenedAt: report.firstOpenedAt || report.firstViewedAt || now,
                 firstViewedAt: report.firstViewedAt || report.firstOpenedAt || now,
                 lastOpenedAt: now,
