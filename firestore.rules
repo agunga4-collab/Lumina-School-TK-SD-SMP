@@ -1575,6 +1575,71 @@ service cloud.firestore {
       allow delete: if isActive() && isAdmin();
     }
 
+    // Junior High Assessment Book Rules (Fase 1)
+    match /jh_ab_los/{loId} {
+      allow read: if isActive() && isJuniorHighStaff();
+      allow create: if isActive() && (
+        isAdmin() ||
+        userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(request.resource.data.classId))
+      );
+      allow update: if isActive() && (
+        isAdmin() ||
+        userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(resource.data.classId))
+      ) &&
+      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'title', 'code', 'order', 'isActive', 'updatedAt'
+      ]);
+      allow delete: if isActive() && isAdmin();
+    }
+
+    match /jh_ab_formative_entries/{entryId} {
+      allow read: if isActive() && isJuniorHighStaff();
+      allow create: if isActive() &&
+        request.resource.data.teacherId == request.auth.uid &&
+        (
+          isAdmin() ||
+          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(request.resource.data.classId))
+        ) &&
+        request.resource.data.comprehensionLevel in ['B', 'D', 'A'];
+      allow update: if isActive() &&
+        request.resource.data.comprehensionLevel in ['B', 'D', 'A'] &&
+        (
+          resource.data.teacherId == request.auth.uid ||
+          isAdmin() ||
+          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR']
+        ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'comprehensionLevel', 'formativeTask', 'nextAction', 'notes',
+          'date', 'updatedAt', 'correctedAt', 'correctedBy', 'correctedByName', 'correctionReason'
+        ]);
+      allow delete: if isActive() && isAdmin();
+    }
+
+    match /jh_ab_summative_entries/{entryId} {
+      allow read: if isActive() && isJuniorHighStaff();
+      allow create: if isActive() &&
+        (
+          isAdmin() ||
+          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(request.resource.data.classId))
+        ) &&
+        request.resource.data.summativeScore in ['B', 'D', 'A'];
+      allow update: if isActive() &&
+        (
+          isAdmin() ||
+          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(resource.data.classId))
+        ) &&
+        request.resource.data.summativeScore in ['B', 'D', 'A'] &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'summativeTask', 'summativeScore', 'notes', 'date', 'updatedAt', 'updatedBy', 'updatedByName'
+        ]);
+      allow delete: if isActive() && isAdmin();
+    }
+
     match /elem_midterm_master_goals/{goalId} {
       allow read, write: if isElementaryStaff();
     }

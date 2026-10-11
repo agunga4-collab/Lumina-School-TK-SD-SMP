@@ -1008,6 +1008,7 @@ export interface ReportConfig {
   principalNIY?: string;
   principalSignatureUrl?: string | null;
   principalSignatureStoragePath?: string | null;
+  assessmentBookOptions?: import('./types/assessmentBook').AssessmentBookOptions;
 }
 
 export interface StudentReport {
@@ -1501,6 +1502,12 @@ export interface LearningGoal {
   createdAt: number;
   updatedAt: number;
   backupSummary?: LGBackupSummary;
+  version?: number;
+  proposedFromAssessmentBook?: boolean;
+  parentGoalId?: string;
+  status?: LGStatus;
+  reviewStatus?: LGReviewStatus;
+  notes?: string;
 }
 
 // --- New Learning Goals (LG) Module Types ---
@@ -2463,6 +2470,8 @@ export interface LearningPowerUpAssignment {
   updatedAt: any; // Firestore Timestamp
   changeNote?: string;
 }
+
+export * from './types/assessmentBook';
 
 
 

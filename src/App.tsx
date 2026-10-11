@@ -127,6 +127,7 @@ import MonthlyReportTemplatePage from './pages/JuniorHigh/MonthlyReportTemplateP
 import MonthlyReportPdfPage from './pages/JuniorHigh/MonthlyReportPdfPage';
 import MonthlyReportPdfLinkPage from './pages/JuniorHigh/MonthlyReportPdfLinkPage';
 import MidtermReportPage from './pages/JuniorHigh/Midterm/MidtermReportPage';
+import JuniorHighAssessmentBookPage from './pages/JuniorHigh/AssessmentBook/JuniorHighAssessmentBookPage';
 import MidtermSnReportPage from './pages/JuniorHigh/MidtermSN/MidtermSnReportPage';
 import OtherReportPage from './pages/JuniorHigh/OtherReportPage';
 import ElementaryMidtermReportPage from './pages/Elementary/Midterm/ElementaryMidtermReportPage';
@@ -583,6 +584,11 @@ export default function App() {
             <Route path="monthly-report-pdf-link" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MonthlyReportPdfLinkPage />
+              </RoleGuard>
+            } />
+            <Route path="assessment-book" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <JuniorHighAssessmentBookPage />
               </RoleGuard>
             } />
             <Route path="midterm" element={

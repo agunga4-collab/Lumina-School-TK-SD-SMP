@@ -813,7 +813,7 @@ export function Layout() {
                   {isMenuVisible(currentUnit, 'lxd') && (
                     <NavItem to="/academic/lxd" icon={<BookOpen size={18} />} label="LXD" />
                   )}
-                  {isMenuVisible(currentUnit, 'lxd') && (currentUser.role === 'HEAD_UNIT' || currentUser.role === 'SUPER_ADMIN') && (
+                  {isMenuVisible(currentUnit, 'lxd') && (currentUser.role === 'HEAD_UNIT' || currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'HEAD_JUNIOR') && (
                     <NavItem 
                       to="/academic/lxd/approval-queue" 
                       icon={<ClipboardList size={18} />} 
@@ -823,6 +823,9 @@ export function Layout() {
                   )}
                   {isMenuVisible(currentUnit, 'gradebook') && (
                     <NavItem to="/academic/buku-nilai" icon={<BarChart3 size={18} />} label="Buku Nilai" />
+                  )}
+                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'PRINCIPAL', 'VICE_PRINCIPAL'].includes(currentUser.role) && (
+                    <NavItem to="/junior-high/assessment-book" icon={<BookOpen size={18} />} label="Assessment Book" />
                   )}
                   {isMenuVisible(currentUnit, 'reportCards') && (
                     <NavItem to="/academic/rapor" icon={<FileText size={18} />} label="Rapor" />

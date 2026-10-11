@@ -1349,7 +1349,7 @@ export async function getReportConfig(unitId: string): Promise<ReportConfig | nu
 
 export async function updateReportConfig(unitId: string, config: ReportConfig): Promise<void> {
   try {
-    await setDoc(doc(db, 'reportConfig', unitId), config);
+    await setDoc(doc(db, 'reportConfig', unitId), config, { merge: true });
   } catch (err: any) {
     handleFirestoreError(err, 'update', `reportConfig/${unitId}`);
   }
