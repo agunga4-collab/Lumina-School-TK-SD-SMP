@@ -5,6 +5,7 @@ import { proposeNewLG, updateTeacherOwnLG } from '../../../../services/juniorHig
 import { LearningGoal } from '../../../../types';
 import { toast } from 'sonner';
 import { cn } from '../../../../lib/utils';
+import { getJHSubjectLabel } from '../../../../constants/juniorHighSubjectCatalog';
 
 interface Props {
   isOpen: boolean;
@@ -142,7 +143,7 @@ export function ProposeLGModal({
                   ? `Ajukan Versi Baru (v${(parentLG?.version || 1) + 1})`
                   : 'Usulkan Learning Goal (LG) Baru'}
               </h2>
-              <p className="text-xs text-gray-500">Unit Junior High • {subject} (Grade {grade})</p>
+              <p className="text-xs text-gray-500">Unit Junior High • {getJHSubjectLabel(subject)} (Grade {grade})</p>
             </div>
           </div>
           <button

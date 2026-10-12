@@ -58,22 +58,12 @@ import { BulkFormativeModal } from './components/BulkFormativeModal';
 import { AssessmentBookSettingsModal } from './components/AssessmentBookSettingsModal';
 import { exportJuniorHighAssessmentBookExcel } from '../../../utils/exportJuniorHighAssessmentBookExcel';
 import { toast } from 'sonner';
+import {
+  JH_SUBJECT_CATALOG,
+  getJHSubjectLabel
+} from '../../../constants/juniorHighSubjectCatalog';
 
-const DEFAULT_JH_SUBJECTS = [
-  'Bahasa Indonesia',
-  'Science',
-  'Mathematics',
-  'English',
-  'Social Studies and Civics',
-  'Islamic Studies',
-  'Quran Recitation',
-  'Household & Urban Gardening',
-  'Kewirausahaan',
-  'Performing Arts',
-  'Art & Makerspace',
-  'Physical Education',
-  'Digital Literacy'
-];
+const DEFAULT_JH_SUBJECTS = JH_SUBJECT_CATALOG.map(s => s.label);
 
 export default function JuniorHighAssessmentBookPage() {
   const { currentUser, profile } = useAuth();
@@ -206,7 +196,13 @@ export default function JuniorHighAssessmentBookPage() {
   const isOwnUnusedLG = useMemo(() => {
     if (!activeLG) return false;
     const uid = effectiveUser?.uid || effectiveUser?.id;
-    const isOwner = activeLG.createdBy === uid;
+    const email = effectiveUser?.email;
+    const isOwner = Boolean(
+      activeLG.createdBy && (
+        activeLG.createdBy === uid ||
+        activeLG.createdBy === email
+      )
+    );
     const hasAssessments = los.length > 0 || formativeEntries.length > 0 || summativeEntries.length > 0;
     return isOwner && !hasAssessments;
   }, [activeLG, effectiveUser, los, formativeEntries, summativeEntries]);
@@ -549,7 +545,7 @@ export default function JuniorHighAssessmentBookPage() {
                 <option value="">Tidak ada mata pelajaran yang ditugaskan</option>
               ) : (
                 availableSubjects.map(subj => (
-                  <option key={subj} value={subj}>{subj}</option>
+                  <option key={subj} value={subj}>{getJHSubjectLabel(subj)}</option>
                 ))
               )}
             </select>
@@ -624,7 +620,7 @@ export default function JuniorHighAssessmentBookPage() {
                 ) : (
                   learningGoals.map(g => (
                     <option key={g.id} value={g.id}>
-                      [{g.code || 'LG'}] {g.goalText?.slice(0, 90)}{g.goalText?.length > 90 ? '...' : ''}
+                      [{g.code || 'LG'}] {getJHSubjectLabel(g.subject)} • {g.goalText?.slice(0, 80)}{g.goalText?.length > 80 ? '...' : ''}
                     </option>
                   ))
                 )}
@@ -671,7 +667,7 @@ export default function JuniorHighAssessmentBookPage() {
             <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-center gap-2">
               <AlertCircle size={16} className="text-amber-600 shrink-0" />
               <span>
-                Tidak ditemukan Learning Goal untuk mata pelajaran {selectedSubject} pada tingkat kelas ini.
+                Tidak ditemukan Learning Goal untuk mata pelajaran {getJHSubjectLabel(selectedSubject)} pada tingkat kelas ini.
                 {!isReadOnly && <> Silakan klik tombol <span className="font-bold">"Usulkan LG Baru"</span> di atas.</>}
               </span>
             </div>

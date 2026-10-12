@@ -20,6 +20,7 @@ import {
   LearningGoal,
   ReportConfig
 } from '../types';
+import { isSameJHSubject, getJHSubjectLegacyValue } from '../constants/juniorHighSubjectCatalog';
 
 /**
  * Returns today's date formatted as YYYY-MM-DD in Western Indonesia Time (WIB, UTC+7).
@@ -112,12 +113,29 @@ export async function getJuniorHighLGs(grade?: string, subject?: string, academi
     if (grade) {
       q = query(q, where('grade', '==', grade));
     }
-    if (subject) {
-      q = query(q, where('subject', '==', subject));
-    }
+    // Ganti where('subject', '==', subject) dengan pemfilteran normalisasi di sisi klien
     const snap = await getDocs(q);
-    const goals = snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningGoal));
-    // Filter active and (published OR proposed by assessment book)
+    let goals = snap.docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        ...data,
+        // Kompatibilitas data LG lama yang tidak memiliki status maupun reviewStatus
+        status: data.status || 'PUBLISHED',
+        reviewStatus: data.reviewStatus || 'SUDAH_SESUAI',
+        isActive: data.isActive !== false
+      } as LearningGoal;
+    });
+
+    if (subject) {
+      goals = goals.filter(g => isSameJHSubject(g.subject, subject));
+    }
+
+    if (academicYear) {
+      goals = goals.filter(g => !g.academicYear || g.academicYear === academicYear);
+    }
+
+    // Filter aktif dan tidak diarsipkan
     return goals.filter(g => g.isActive !== false && g.status !== 'ARCHIVED');
   } catch (err) {
     console.error('Error fetching Junior High LGs:', err);
@@ -144,7 +162,7 @@ export async function proposeNewLG(params: {
     code: params.code,
     unitId: 'JUNIOR_HIGH',
     grade: params.grade,
-    subject: params.subject,
+    subject: getJHSubjectLegacyValue(params.subject),
     strand: params.strand || 'General',
     goalText: params.goalText,
     academicYear: params.academicYear,
