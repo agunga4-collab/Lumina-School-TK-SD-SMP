@@ -11,6 +11,7 @@ import {
   Cell 
 } from 'recharts';
 import type { Student, Class, LdssTemplate, LdssSessionAssessment, LdssAge } from '../../types';
+import { getLdssScoreColor } from '../../lib/elementaryLdssReportPdf';
 
 interface ElementaryLdssPdfTemplateProps {
   student: Student;
@@ -237,8 +238,8 @@ export const ElementaryLdssPdfTemplate: React.FC<ElementaryLdssPdfTemplateProps>
       {/* PAGE 1: IDENTITAS SISWA & GAMBARAN UMUM CAPAIAN DOMAIN                   */}
       {/* ========================================================================= */}
       <div 
-        className="pdf-page bg-white w-[794px] h-[1123px] min-w-[794px] min-h-[1123px] mx-auto p-8 flex flex-col justify-between shadow-lg relative box-border overflow-hidden"
-        style={{ width: '794px', height: '1123px' }}
+        className="pdf-page bg-white w-[794px] h-[1123px] min-w-[794px] min-h-[1123px] mx-auto p-8 flex flex-col justify-between shadow-lg relative box-border overflow-visible"
+        style={{ width: '794px', height: '1123px', minHeight: '1123px', boxSizing: 'border-box' }}
       >
         <div className="space-y-6">
           {/* Header */}
@@ -309,41 +310,53 @@ export const ElementaryLdssPdfTemplate: React.FC<ElementaryLdssPdfTemplateProps>
             </div>
           </div>
 
-          {/* Metric Summary Cards */}
+          {/* Metric Summary Cards with explicit HEX colors */}
           <div className="grid grid-cols-4 gap-3 text-center">
-            <div className="bg-indigo-50/70 border border-indigo-100 p-3 rounded-2xl">
-              <p className="text-[9px] font-black text-indigo-400 uppercase tracking-wider">Kelengkapan</p>
-              <p className="text-xl font-black text-indigo-700 mt-0.5">
+            <div 
+              className="border p-3 rounded-2xl"
+              style={{ backgroundColor: '#eef2ff', borderColor: '#c7d2fe', borderStyle: 'solid', borderWidth: '1px' }}
+            >
+              <p className="text-[9px] font-black uppercase tracking-wider" style={{ color: '#6366f1' }}>Kelengkapan</p>
+              <p className="text-xl font-black mt-0.5" style={{ color: '#4338ca' }}>
                 {latestSession?.scoringSummary?.percentCompleted ?? 100}%
               </p>
             </div>
-            <div className="bg-emerald-50/70 border border-emerald-100 p-3 rounded-2xl">
-              <p className="text-[9px] font-black text-emerald-400 uppercase tracking-wider">Rata-Rata Skor</p>
-              <p className="text-xl font-black text-emerald-700 mt-0.5">
+            <div 
+              className="border p-3 rounded-2xl"
+              style={{ backgroundColor: '#ecfdf5', borderColor: '#a7f3d0', borderStyle: 'solid', borderWidth: '1px' }}
+            >
+              <p className="text-[9px] font-black uppercase tracking-wider" style={{ color: '#10b981' }}>Rata-Rata Skor</p>
+              <p className="text-xl font-black mt-0.5" style={{ color: '#047857' }}>
                 {latestSession?.scoringSummary?.averageScore ?? '-'} / 3.0
               </p>
             </div>
-            <div className="bg-slate-50 border border-slate-200 p-3 rounded-2xl">
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider">Skor 3 / Sangat Baik</p>
-              <p className="text-xl font-black text-slate-800 mt-0.5">
+            <div 
+              className="border p-3 rounded-2xl"
+              style={{ backgroundColor: '#f8fafc', borderColor: '#e2e8f0', borderStyle: 'solid', borderWidth: '1px' }}
+            >
+              <p className="text-[9px] font-black uppercase tracking-wider" style={{ color: '#64748b' }}>Skor 3 / Sangat Baik</p>
+              <p className="text-xl font-black mt-0.5" style={{ color: '#1e293b' }}>
                 {latestSession?.scoringSummary?.score3Count ?? 0}
               </p>
             </div>
-            <div className="bg-amber-50/70 border border-amber-100 p-3 rounded-2xl">
-              <p className="text-[9px] font-black text-amber-500 uppercase tracking-wider">Skor 0-1 / Perlu Bimbingan</p>
-              <p className="text-xl font-black text-amber-700 mt-0.5">
+            <div 
+              className="border p-3 rounded-2xl"
+              style={{ backgroundColor: '#fffbeb', borderColor: '#fde68a', borderStyle: 'solid', borderWidth: '1px' }}
+            >
+              <p className="text-[9px] font-black uppercase tracking-wider" style={{ color: '#f59e0b' }}>Skor 0-1 / Perlu Bimbingan</p>
+              <p className="text-xl font-black mt-0.5" style={{ color: '#b45309' }}>
                 {(latestSession?.scoringSummary?.score0Count || 0) + (latestSession?.scoringSummary?.score1Count || 0)}
               </p>
             </div>
           </div>
 
           {/* Overview Domain Bar Chart */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+          <div className="bg-white border rounded-2xl p-5 space-y-3" style={{ borderColor: '#e2e8f0', backgroundColor: '#ffffff' }}>
+            <div className="flex items-center justify-between border-b pb-2" style={{ borderBottomColor: '#f1f5f9' }}>
+              <h3 className="text-xs font-black uppercase tracking-wider" style={{ color: '#1e293b' }}>
                 Gambaran Capaian Seluruh Domain ({latestSession?.periodLabel || 'Periode Terbaru'})
               </h3>
-              <span className="text-[10px] font-bold text-slate-400">Skala 0 - 100%</span>
+              <span className="text-[10px] font-bold" style={{ color: '#94a3b8' }}>Skala 0 - 100%</span>
             </div>
 
             <div className="h-[460px] w-full pt-2 flex items-center justify-center">
@@ -367,12 +380,16 @@ export const ElementaryLdssPdfTemplate: React.FC<ElementaryLdssPdfTemplateProps>
                   contentStyle={{ borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }}
                 />
                 <Bar dataKey="score" radius={[0, 6, 6, 0]} barSize={16} isAnimationActive={false}>
-                  {overviewChartData.map((entry, index) => (
-                    <Cell 
-                      key={`cell-${index}`} 
-                      fill={entry.score >= 75 ? '#10b981' : entry.score >= 50 ? '#6366f1' : '#f59e0b'} 
-                    />
-                  ))}
+                  {overviewChartData.map((entry, index) => {
+                    const colorInfo = getLdssScoreColor(entry.hasData ? entry.score : null);
+                    const fillHex = entry.hasData ? colorInfo.hex : 'transparent';
+                    return (
+                      <Cell 
+                        key={`cell-${index}`} 
+                        fill={fillHex} 
+                      />
+                    );
+                  })}
                 </Bar>
               </BarChart>
             </div>
@@ -394,26 +411,29 @@ export const ElementaryLdssPdfTemplate: React.FC<ElementaryLdssPdfTemplateProps>
         return (
           <div 
             key={`card-page-${pageIndex}`}
-            className="pdf-page bg-white w-[794px] h-[1123px] min-w-[794px] min-h-[1123px] mx-auto p-8 flex flex-col justify-between shadow-lg relative box-border overflow-hidden"
-            style={{ width: '794px', height: '1123px' }}
+            className="pdf-page bg-white w-[794px] h-[1123px] min-w-[794px] min-h-[1123px] mx-auto p-8 flex flex-col justify-between shadow-lg relative box-border overflow-visible"
+            style={{ width: '794px', height: '1123px', minHeight: '1123px', boxSizing: 'border-box' }}
           >
-            <div className="space-y-5">
+            <div className="space-y-4">
               {/* Header */}
-              <div className="flex items-center justify-between border-b-2 border-indigo-600 pb-3">
+              <div className="flex items-center justify-between border-b-2 pb-3" style={{ borderBottomColor: '#4f46e5' }}>
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-black text-sm">
+                  <div 
+                    className="w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm"
+                    style={{ backgroundColor: '#4f46e5', color: '#ffffff' }}
+                  >
                     L
                   </div>
                   <div>
-                    <h2 className="text-sm font-black tracking-wider text-slate-900 uppercase">
+                    <h2 className="text-sm font-black tracking-wider uppercase" style={{ color: '#0f172a' }}>
                       RAPOR HASIL LDSS — DETAIL GRAFIK TREN DOMAIN
                     </h2>
-                    <p className="text-[10px] font-bold text-indigo-600">
+                    <p className="text-[10px] font-bold" style={{ color: '#4f46e5' }}>
                       {student.name} • Kelas {currentClass.name}
                     </p>
                   </div>
                 </div>
-                <span className="text-[10px] font-bold text-slate-400">
+                <span className="text-[10px] font-bold" style={{ color: '#94a3b8' }}>
                   Halaman {pageNum} dari {totalPages}
                 </span>
               </div>
@@ -427,43 +447,70 @@ export const ElementaryLdssPdfTemplate: React.FC<ElementaryLdssPdfTemplateProps>
                     { name: 'LDSS 3', val: dt.p3 },
                   ];
 
+                  const latestColor = getLdssScoreColor(dt.latestScore);
+                  const p1Color = getLdssScoreColor(dt.p1);
+                  const p2Color = getLdssScoreColor(dt.p2);
+                  const p3Color = getLdssScoreColor(dt.p3);
+
                   return (
                     <div 
                       key={dt.id}
-                      className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2 shadow-2xs flex flex-col justify-between h-[280px]"
+                      className="bg-white border rounded-2xl p-4 shadow-2xs flex flex-col justify-between"
+                      style={{
+                        borderColor: '#e2e8f0',
+                        backgroundColor: '#ffffff',
+                        minHeight: '265px',
+                        height: 'auto',
+                        overflow: 'visible',
+                        pageBreakInside: 'avoid',
+                        breakInside: 'avoid',
+                        boxSizing: 'border-box'
+                      }}
                     >
-                      <div className="space-y-1">
+                      <div style={{ overflow: 'visible' }}>
                         <div className="flex items-start justify-between gap-2">
-                          <h4 className="text-xs font-black text-slate-900 leading-snug line-clamp-2">
+                          <h4 
+                            className="text-xs font-black leading-normal"
+                            style={{
+                              fontSize: '12px',
+                              lineHeight: '1.4',
+                              fontWeight: 900,
+                              color: '#0f172a',
+                              overflow: 'visible',
+                              wordBreak: 'break-word',
+                              margin: 0,
+                              paddingTop: '2px',
+                              paddingBottom: '2px'
+                            }}
+                          >
                             {dt.name}
                           </h4>
                           {dt.deltaText && (
                             <span 
-                              className={`text-[9px] font-black px-2 py-0.5 rounded-full border whitespace-nowrap ${
-                                dt.deltaType === 'up'
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                  : dt.deltaType === 'down'
-                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                  : 'bg-slate-100 text-slate-600 border-slate-200'
-                              }`}
+                              className="text-[9px] font-black px-2 py-0.5 rounded-full border whitespace-nowrap"
+                              style={{
+                                backgroundColor: dt.deltaType === 'up' ? '#ecfdf5' : dt.deltaType === 'down' ? '#fff1f2' : '#f8fafc',
+                                color: dt.deltaType === 'up' ? '#047857' : dt.deltaType === 'down' ? '#be123c' : '#475569',
+                                borderColor: dt.deltaType === 'up' ? '#a7f3d0' : dt.deltaType === 'down' ? '#fecdd3' : '#e2e8f0'
+                              }}
                             >
                               {dt.deltaText}
                             </span>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-3 text-[10px] font-bold text-slate-500 pt-0.5">
-                          <span>Terbaru: <strong className="text-indigo-600 font-black">{dt.latestScore !== null ? `${dt.latestScore}%` : 'Belum diisi'}</strong></span>
+                        <div className="flex items-center gap-3 text-[10px] font-bold pt-1" style={{ color: '#64748b' }}>
+                          <span>Terbaru: <strong style={{ color: latestColor.hex, fontWeight: 900 }}>{dt.latestScore !== null ? `${dt.latestScore}%` : 'Belum diisi'}</strong></span>
                         </div>
                       </div>
 
                       {/* Line Chart Trend across LDSS 1 -> 3 */}
-                      <div className="h-[170px] w-full pt-1 flex items-center justify-center">
+                      <div style={{ height: '148px', width: '100%', overflow: 'visible', display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: '2px' }}>
                         <LineChart
                           width={325}
-                          height={165}
+                          height={144}
                           data={chartData}
-                          margin={{ top: 15, right: 15, left: -25, bottom: 0 }}
+                          margin={{ top: 12, right: 15, left: -25, bottom: 0 }}
                         >
                           <CartesianGrid strokeDasharray="2 2" stroke="#f1f5f9" />
                           <XAxis dataKey="name" tick={{ fontSize: 9, fontWeight: 'bold', fill: '#64748b' }} axisLine={false} tickLine={false} />
@@ -480,11 +527,27 @@ export const ElementaryLdssPdfTemplate: React.FC<ElementaryLdssPdfTemplateProps>
                         </LineChart>
                       </div>
 
-                      {/* Period Pill Badges below chart */}
-                      <div className="flex items-center justify-between text-[9px] font-bold pt-1 border-t border-slate-100 text-slate-500">
-                        <span>L1: {dt.p1 !== null ? `${dt.p1}%` : 'Belum'}</span>
-                        <span>L2: {dt.p2 !== null ? `${dt.p2}%` : 'Belum'}</span>
-                        <span>L3: {dt.p3 !== null ? `${dt.p3}%` : 'Belum'}</span>
+                      {/* Period Pill Badges below chart with explicit HEX styling */}
+                      <div 
+                        className="flex items-center justify-between text-[10px] font-bold border-t"
+                        style={{
+                          borderTopColor: '#f1f5f9',
+                          borderTopWidth: '1px',
+                          borderTopStyle: 'solid',
+                          paddingTop: '6px',
+                          paddingBottom: '2px',
+                          overflow: 'visible'
+                        }}
+                      >
+                        <span style={{ color: p1Color.textHex, backgroundColor: p1Color.bgHex, padding: '2px 6px', borderRadius: '6px', border: `1px solid ${p1Color.borderHex}` }}>
+                          L1: {dt.p1 !== null ? `${dt.p1}%` : 'Belum'}
+                        </span>
+                        <span style={{ color: p2Color.textHex, backgroundColor: p2Color.bgHex, padding: '2px 6px', borderRadius: '6px', border: `1px solid ${p2Color.borderHex}` }}>
+                          L2: {dt.p2 !== null ? `${dt.p2}%` : 'Belum'}
+                        </span>
+                        <span style={{ color: p3Color.textHex, backgroundColor: p3Color.bgHex, padding: '2px 6px', borderRadius: '6px', border: `1px solid ${p3Color.borderHex}` }}>
+                          L3: {dt.p3 !== null ? `${dt.p3}%` : 'Belum'}
+                        </span>
                       </div>
                     </div>
                   );
@@ -511,8 +574,8 @@ export const ElementaryLdssPdfTemplate: React.FC<ElementaryLdssPdfTemplateProps>
       {/* FINAL PAGE: KESIMPULAN & CATATAN PERKEMBANGAN UMUM                       */}
       {/* ========================================================================= */}
       <div 
-        className="pdf-page bg-white w-[794px] h-[1123px] min-w-[794px] min-h-[1123px] mx-auto p-8 flex flex-col justify-between shadow-lg relative box-border overflow-hidden"
-        style={{ width: '794px', height: '1123px' }}
+        className="pdf-page bg-white w-[794px] h-[1123px] min-w-[794px] min-h-[1123px] mx-auto p-8 flex flex-col justify-between shadow-lg relative box-border overflow-visible"
+        style={{ width: '794px', height: '1123px', minHeight: '1123px', boxSizing: 'border-box' }}
       >
         <div className="space-y-6">
           {/* Header */}

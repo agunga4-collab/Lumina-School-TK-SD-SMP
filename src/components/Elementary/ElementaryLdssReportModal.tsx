@@ -31,6 +31,7 @@ import type {
   LdssSessionAssessment,
   LdssAge,
 } from "../../types";
+import { getLdssScoreColor } from "../../lib/elementaryLdssReportPdf";
 
 interface ElementaryLdssReportModalProps {
   student: Student;
@@ -391,12 +392,8 @@ export const ElementaryLdssReportModal: React.FC<ElementaryLdssReportModalProps>
                     />
                     <Bar dataKey="score" radius={[0, 6, 6, 0]} barSize={18}>
                       {overviewChartData.map((entry, idx) => {
-                        let fill = "#6366f1"; // blue/indigo default
-                        if (!entry.hasData) fill = "#cbd5e1";
-                        else if (entry.score >= 80) fill = "#10b981"; // emerald
-                        else if (entry.score >= 60) fill = "#6366f1"; // blue
-                        else if (entry.score >= 40) fill = "#f59e0b"; // amber
-                        else fill = "#f43f5e"; // rose
+                        const colorInfo = getLdssScoreColor(entry.hasData ? entry.score : null);
+                        const fill = entry.hasData ? colorInfo.hex : "transparent";
                         return <Cell key={`cell-${idx}`} fill={fill} />;
                       })}
                     </Bar>
