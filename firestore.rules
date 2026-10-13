@@ -2270,5 +2270,48 @@ service cloud.firestore {
         isJuniorHighTeacher()
       );
     }
+
+    match /jh_so_weekly_reports/{reportId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaff() ||
+        (isStudent() && resource != null && (
+          isOwnStudentData(resource.data.studentId) ||
+          (
+            exists(/databases/$(database)/documents/jh_so_memberships/$(resource.data.groupId + '_' + getStudentNis())) &&
+            get(/databases/$(database)/documents/jh_so_memberships/$(resource.data.groupId + '_' + getStudentNis())).data.canAssignTasks == true
+          )
+        ))
+      );
+
+      allow create: if isActive() && isStudent() &&
+        isOwnStudentData(incoming().studentId) &&
+        reportId == (incoming().groupId + '_' + incoming().studentId + '_' + incoming().weekStart) &&
+        exists(/databases/$(database)/documents/jh_so_memberships/$(incoming().groupId + '_' + incoming().studentId)) &&
+        incoming().status in ['DRAFT', 'SUBMITTED'] &&
+        incoming().doneText is string && incoming().doneText.size() <= 1500 &&
+        incoming().nextText is string && incoming().nextText.size() <= 1500 &&
+        (!('feedbackText' in incoming()) || incoming().feedbackText == null) &&
+        (!('readAt' in incoming()) || incoming().readAt == null);
+
+      allow update: if isActive() && (
+        (
+          isStudent() &&
+          isOwnStudentData(existing().studentId) &&
+          (!('readAt' in existing()) || existing().readAt == null || existing().readAt == '') &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['doneText', 'nextText', 'status', 'submittedAt', 'isLate', 'updatedAt']) &&
+          incoming().status in ['DRAFT', 'SUBMITTED'] &&
+          incoming().doneText is string && incoming().doneText.size() <= 1500 &&
+          incoming().nextText is string && incoming().nextText.size() <= 1500
+        ) ||
+        (
+          (isAdmin() || (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) || isJuniorHighTeacher()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['feedbackText', 'feedbackBy', 'feedbackByName', 'feedbackAt', 'readAt', 'readBy', 'readByName', 'updatedAt']) &&
+          (!('feedbackText' in incoming()) || incoming().feedbackText == null || (incoming().feedbackText is string && incoming().feedbackText.size() <= 300))
+        )
+      );
+
+      allow delete: if isActive() && isAdmin();
+    }
   }
 }

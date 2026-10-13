@@ -52,6 +52,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
     if (group.programType === 'SWJ') return 'Anggota Tim';
     return 'Peserta Lomba';
   });
+  const [canAssignTasks, setCanAssignTasks] = useState<boolean>(false);
   const [notes, setNotes] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
@@ -212,6 +213,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           classId: selectedStudent.classId || '',
           className: resolvedClassName,
           roleTitle: roleTitle.trim(),
+          canAssignTasks: canAssignTasks,
           joinedAt: new Date().toLocaleDateString('id-ID', {
             timeZone: 'Asia/Jakarta',
             year: 'numeric',
@@ -445,7 +447,13 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
               <input
                 type="text"
                 value={roleTitle}
-                onChange={e => setRoleTitle(e.target.value)}
+                onChange={e => {
+                  const val = e.target.value;
+                  setRoleTitle(val);
+                  if (val.trim() === 'Captain Team') {
+                    setCanAssignTasks(true);
+                  }
+                }}
                 placeholder="Misal: Anggota, Koordinator, dsb."
                 className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
               />
@@ -456,7 +464,12 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
                   <button
                     key={role}
                     type="button"
-                    onClick={() => setRoleTitle(role)}
+                    onClick={() => {
+                      setRoleTitle(role);
+                      if (role === 'Captain Team') {
+                        setCanAssignTasks(true);
+                      }
+                    }}
                     className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
                       roleTitle === role
                         ? 'bg-blue-600 text-white border-blue-600 font-semibold'
@@ -466,6 +479,20 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
                     {role}
                   </button>
                 ))}
+              </div>
+
+              {/* Kotak centang hak akses Captain */}
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  type="checkbox"
+                  id="canAssignTasks"
+                  checked={canAssignTasks}
+                  onChange={e => setCanAssignTasks(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                />
+                <label htmlFor="canAssignTasks" className="text-xs font-semibold text-gray-700 cursor-pointer select-none">
+                  Captain (boleh membagi tugas dan membaca laporan tim)
+                </label>
               </div>
             </div>
 

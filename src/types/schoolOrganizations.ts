@@ -186,6 +186,7 @@ export interface SOMembership {
   classId: string;
   className: string;
   roleTitle: string; // e.g. Presiden, Captain Team, Anggota, Koordinator Siswa, Peserta Lomba
+  canAssignTasks?: boolean; // Captain task assignment and team report reading permission
   joinedAt: string;
   status: 'ACTIVE' | 'INACTIVE';
   notes?: string;
@@ -193,4 +194,32 @@ export interface SOMembership {
   createdBy: string;
   updatedAt: string;
   updatedBy: string;
+}
+
+export interface SOWeeklyReport {
+  id: string; // `${groupId}_${studentId}_${weekStart}`
+  groupId: string;
+  groupName: string;
+  programType: 'OSIS' | 'SWJ';
+  academicYear: string;
+  studentId: string; // NIS
+  studentName: string;
+  classId: string;
+  className: string;
+  weekStart: string; // YYYY-MM-DD (Senin)
+  weekEnd: string; // YYYY-MM-DD (Minggu)
+  doneText: string; // max 1500 chars
+  nextText: string; // max 1500 chars
+  status: 'DRAFT' | 'SUBMITTED';
+  submittedAt?: string | null;
+  isLate: boolean;
+  createdAt: string;
+  updatedAt: string;
+  feedbackText?: string | null; // max 300 chars
+  feedbackBy?: string | null;
+  feedbackByName?: string | null;
+  feedbackAt?: string | null;
+  readAt?: string | null;
+  readBy?: string | null;
+  readByName?: string | null;
 }
