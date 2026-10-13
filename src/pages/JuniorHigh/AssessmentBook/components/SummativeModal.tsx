@@ -76,6 +76,10 @@ export function SummativeModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!subjectId || !subjectId.trim()) {
+      toast.warning('Mata pelajaran tidak boleh kosong');
+      return;
+    }
     if (!task) {
       toast.warning('Pilih bentuk tugas sumatif');
       return;

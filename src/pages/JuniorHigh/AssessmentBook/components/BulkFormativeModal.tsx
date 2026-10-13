@@ -91,6 +91,10 @@ export function BulkFormativeModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!subjectId || !subjectId.trim()) {
+      toast.warning('Mata pelajaran tidak boleh kosong');
+      return;
+    }
     if (selectedStudentIds.length === 0) {
       toast.warning('Pilih minimal 1 siswa');
       return;

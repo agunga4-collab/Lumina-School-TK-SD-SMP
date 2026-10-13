@@ -83,7 +83,7 @@ export default function JuniorHighAssessmentBookPage() {
   });
   const [selectedSemester, setSelectedSemester] = useState<string>('1');
   const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [selectedSubject, setSelectedSubject] = useState<string>('Bahasa Indonesia');
+  const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedLGId, setSelectedLGId] = useState<string>('');
 
   // View tab
@@ -158,38 +158,20 @@ export default function JuniorHighAssessmentBookPage() {
     return learningGoals.find(g => g.id === selectedLGId) || null;
   }, [learningGoals, selectedLGId]);
 
-  // Requirement C & Item 3: Pembatasan guru untuk mata pelajaran
+  // Daftar mapel: tampilkan SEMUA mapel katalog Junior High untuk guru tanpa pembatasan penugasan
   const availableSubjects = useMemo(() => {
-    if (!selectedClass) {
-      return (isSuperAdmin || isHeadUnit || isReadOnly) ? DEFAULT_JH_SUBJECTS : [];
-    }
-    if (isSuperAdmin || isHeadUnit || isReadOnly) {
-      return DEFAULT_JH_SUBJECTS;
-    }
-
-    const uid = effectiveUser?.uid || effectiveUser?.id;
-    const classAssignedSubjects = (selectedClass.teacherAssignments || [])
-      .filter(a => a.userId === uid)
-      .map(a => (a as any).subject || (a as any).subjectId)
-      .filter(Boolean);
-
-    const userSubjects = effectiveUser?.assignedSubjects || effectiveUser?.subjects || [];
-    const merged = Array.from(new Set([...classAssignedSubjects, ...userSubjects])).filter(Boolean);
-    if (merged.length > 0) {
-      return merged;
-    }
-    // Untuk TEACHER dan HOMEROOM_TEACHER tanpa penugasan: kembalikan [] (JANGAN fallback ke DEFAULT_JH_SUBJECTS)
-    return [];
-  }, [selectedClass, isSuperAdmin, isHeadUnit, isReadOnly, effectiveUser]);
+    return DEFAULT_JH_SUBJECTS;
+  }, []);
 
   // Sync selectedSubject with available subjects
+  // Bila hanya ada satu mapel, pilih otomatis.
   useEffect(() => {
-    if (availableSubjects.length > 0) {
+    if (availableSubjects.length === 1) {
+      setSelectedSubject(availableSubjects[0]);
+    } else if (availableSubjects.length > 0 && selectedSubject) {
       if (!availableSubjects.includes(selectedSubject)) {
         setSelectedSubject(availableSubjects[0]);
       }
-    } else {
-      setSelectedSubject('');
     }
   }, [availableSubjects, selectedSubject]);
 
@@ -200,7 +182,7 @@ export default function JuniorHighAssessmentBookPage() {
     const isOwner = Boolean(
       activeLG.createdBy && (
         activeLG.createdBy === uid ||
-        activeLG.createdBy === email
+        (email && typeof activeLG.createdBy === 'string' && activeLG.createdBy.toLowerCase() === email.toLowerCase())
       )
     );
     const hasAssessments = los.length > 0 || formativeEntries.length > 0 || summativeEntries.length > 0;
@@ -222,26 +204,14 @@ export default function JuniorHighAssessmentBookPage() {
         setOptions(opts);
 
         const raw = Array.isArray(allClasses) ? allClasses : [];
-        let jhClasses = raw.filter(c => {
+        // Untuk TEACHER dan HOMEROOM_TEACHER: pemilih kelas menampilkan SEMUA kelas Junior High pada tahun ajaran terpilih
+        // (sama seperti Super Admin/Head Unit); hapus pemfilteran kelas berdasarkan penugasan guru.
+        const jhClasses = raw.filter(c => {
           if (!c) return false;
           const isJH = c.unitId === 'JUNIOR_HIGH';
           const isYr = c.academicYear === selectedYear;
           return isJH && isYr && c.status !== 'archived';
         });
-
-        // Requirement C: Pembatasan guru untuk kelas
-        // Untuk TEACHER/HOMEROOM_TEACHER, pemilih kelas hanya berisi yang ditugaskan padanya
-        // (teacherAssignments, assignedTeacherIds, homeroomTeacherId). Super Admin dan Head Unit melihat semua.
-        if (isTeacher && !isSuperAdmin && !isHeadUnit) {
-          const uid = effectiveUser?.uid || effectiveUser?.id;
-          jhClasses = jhClasses.filter(c => {
-            const isHomeroom = c.homeroomTeacherId === uid;
-            const inHomeroomIds = Array.isArray(c.homeroomTeacherIds) && c.homeroomTeacherIds.includes(uid);
-            const inAssignedTeacherIds = Array.isArray(c.assignedTeacherIds) && c.assignedTeacherIds.includes(uid);
-            const inAssignments = Array.isArray(c.teacherAssignments) && c.teacherAssignments.some(a => a.userId === uid);
-            return isHomeroom || inHomeroomIds || inAssignedTeacherIds || inAssignments;
-          });
-        }
 
         setClassesList(jhClasses);
         if (jhClasses.length > 0) {
@@ -260,7 +230,7 @@ export default function JuniorHighAssessmentBookPage() {
     return () => {
       isCancelled = true;
     };
-  }, [selectedYear, isTeacher, isSuperAdmin, isHeadUnit, effectiveUser?.uid]);
+  }, [selectedYear]);
 
   // Load Students for selected class
   useEffect(() => {
@@ -292,6 +262,11 @@ export default function JuniorHighAssessmentBookPage() {
 
   // Load Learning Goals for selected subject & grade
   const loadLearningGoals = useCallback(async () => {
+    if (!selectedSubject) {
+      setLearningGoals([]);
+      setSelectedLGId('');
+      return;
+    }
     try {
       const lgs = await getJuniorHighLGs(gradeNumberStr, selectedSubject, selectedYear);
       setLearningGoals(lgs);
@@ -386,6 +361,10 @@ export default function JuniorHighAssessmentBookPage() {
 
   // Export Excel
   const handleExportExcel = () => {
+    if (!selectedSubject) {
+      toast.warning('Pilih mata pelajaran terlebih dahulu');
+      return;
+    }
     if (!activeLG) {
       toast.warning('Pilih Learning Goal terlebih dahulu');
       return;
@@ -521,7 +500,7 @@ export default function JuniorHighAssessmentBookPage() {
               className="w-full text-xs px-3 py-2 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 font-medium disabled:opacity-50"
             >
               {classesList.length === 0 ? (
-                <option value="">Tidak ada kelas JH ditugaskan</option>
+                <option value="">Tidak ada kelas JH</option>
               ) : (
                 classesList.map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
@@ -538,27 +517,15 @@ export default function JuniorHighAssessmentBookPage() {
             <select
               value={selectedSubject}
               onChange={e => setSelectedSubject(e.target.value)}
-              disabled={availableSubjects.length === 0}
-              className="w-full text-xs px-3 py-2 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 font-medium disabled:opacity-50"
+              className="w-full text-xs px-3 py-2 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 font-medium"
             >
-              {availableSubjects.length === 0 ? (
-                <option value="">Tidak ada mata pelajaran yang ditugaskan</option>
-              ) : (
-                availableSubjects.map(subj => (
-                  <option key={subj} value={subj}>{getJHSubjectLabel(subj)}</option>
-                ))
-              )}
+              <option value="">Pilih Mata Pelajaran</option>
+              {availableSubjects.map(subj => (
+                <option key={subj} value={subj}>{getJHSubjectLabel(subj)}</option>
+              ))}
             </select>
           </div>
         </div>
-
-        {/* Banner peringatan jika guru tidak memiliki penugasan mapel pada kelas terpilih */}
-        {isTeacher && !isSuperAdmin && !isHeadUnit && availableSubjects.length === 0 && (
-          <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-xs text-amber-800">
-            <AlertCircle size={16} className="text-amber-600 shrink-0" />
-            <span className="font-medium">Belum ada penugasan mapel untuk kelas ini. Hubungi admin.</span>
-          </div>
-        )}
 
         {/* Learning Goal Selector & Active LG Card */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-xs p-4 space-y-3">
@@ -577,7 +544,7 @@ export default function JuniorHighAssessmentBookPage() {
               </div>
             </div>
 
-            {!isReadOnly && (
+            {!isReadOnly && selectedSubject && (
               <div className="flex items-center gap-2">
                 {activeLG && isOwnUnusedLG && (
                   <button
@@ -607,70 +574,79 @@ export default function JuniorHighAssessmentBookPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-            <div className="md:col-span-2">
-              <select
-                value={selectedLGId}
-                onChange={e => setSelectedLGId(e.target.value)}
-                disabled={learningGoals.length === 0}
-                className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 font-medium disabled:opacity-50"
-              >
-                {learningGoals.length === 0 ? (
-                  <option value="">Belum ada Learning Goal untuk mapel/grade ini</option>
-                ) : (
-                  learningGoals.map(g => (
-                    <option key={g.id} value={g.id}>
-                      [{g.code || 'LG'}] {getJHSubjectLabel(g.subject)} • {g.goalText?.slice(0, 80)}{g.goalText?.length > 80 ? '...' : ''}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-
-            <div className="md:col-span-1 flex items-center justify-end">
-              {activeLG ? (
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-gray-500">Status:</span>
-                  <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
-                    activeLG.status === 'DRAFT'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-emerald-100 text-emerald-800'
-                  }`}>
-                    {activeLG.status === 'DRAFT'
-                      ? activeLG.reviewStatus === 'SUDAH_SESUAI'
-                        ? 'Sudah Sesuai'
-                        : 'Menunggu Persetujuan'
-                      : 'Aktif / Published'}
-                  </span>
-                  {activeLG.strand && (
-                    <span className="px-2 py-0.5 rounded-md font-medium text-[10px] bg-gray-100 text-gray-700">
-                      {activeLG.strand}
-                    </span>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Active LG Highlight Banner */}
-          {activeLG ? (
-            <div className="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 flex items-start gap-2.5 text-xs text-blue-950">
-              <span className="font-extrabold bg-blue-600 text-white px-1.5 py-0.5 rounded text-[10px] shrink-0 mt-0.5">
-                {activeLG.code || 'LG'}
-              </span>
-              <div className="leading-relaxed">
-                <span className="font-bold">Deskripsi Capaian Pembelajaran: </span>
-                {activeLG.goalText}
-              </div>
+          {!selectedSubject ? (
+            <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-center gap-2 font-medium">
+              <AlertCircle size={16} className="text-amber-600 shrink-0" />
+              <span>Pilih mata pelajaran terlebih dahulu</span>
             </div>
           ) : (
-            <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-center gap-2">
-              <AlertCircle size={16} className="text-amber-600 shrink-0" />
-              <span>
-                Tidak ditemukan Learning Goal untuk mata pelajaran {getJHSubjectLabel(selectedSubject)} pada tingkat kelas ini.
-                {!isReadOnly && <> Silakan klik tombol <span className="font-bold">"Usulkan LG Baru"</span> di atas.</>}
-              </span>
-            </div>
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                <div className="md:col-span-2">
+                  <select
+                    value={selectedLGId}
+                    onChange={e => setSelectedLGId(e.target.value)}
+                    disabled={learningGoals.length === 0}
+                    className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 font-medium disabled:opacity-50"
+                  >
+                    {learningGoals.length === 0 ? (
+                      <option value="">Belum ada Learning Goal untuk mapel/grade ini</option>
+                    ) : (
+                      learningGoals.map(g => (
+                        <option key={g.id} value={g.id}>
+                          [{g.code || 'LG'}] {getJHSubjectLabel(g.subject)} • {g.goalText?.slice(0, 80)}{g.goalText?.length > 80 ? '...' : ''}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                <div className="md:col-span-1 flex items-center justify-end">
+                  {activeLG ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-gray-500">Status:</span>
+                      <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                        activeLG.status === 'DRAFT'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}>
+                        {activeLG.status === 'DRAFT'
+                          ? activeLG.reviewStatus === 'SUDAH_SESUAI'
+                            ? 'Sudah Sesuai'
+                            : 'Menunggu Persetujuan'
+                          : 'Aktif / Published'}
+                      </span>
+                      {activeLG.strand && (
+                        <span className="px-2 py-0.5 rounded-md font-medium text-[10px] bg-gray-100 text-gray-700">
+                          {activeLG.strand}
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Active LG Highlight Banner */}
+              {activeLG ? (
+                <div className="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 flex items-start gap-2.5 text-xs text-blue-950">
+                  <span className="font-extrabold bg-blue-600 text-white px-1.5 py-0.5 rounded text-[10px] shrink-0 mt-0.5">
+                    {activeLG.code || 'LG'}
+                  </span>
+                  <div className="leading-relaxed">
+                    <span className="font-bold">Deskripsi Capaian Pembelajaran: </span>
+                    {activeLG.goalText}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-center gap-2">
+                  <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                  <span>
+                    Tidak ditemukan Learning Goal untuk mata pelajaran {getJHSubjectLabel(selectedSubject)} pada tingkat kelas ini.
+                    {!isReadOnly && <> Silakan klik tombol <span className="font-bold">"Usulkan LG Baru"</span> di atas.</>}
+                  </span>
+                </div>
+              )}
+            </>
           )}
         </div>
 

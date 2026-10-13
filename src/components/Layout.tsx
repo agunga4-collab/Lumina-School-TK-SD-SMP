@@ -4,7 +4,7 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw, FileSpreadsheet,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck, AlertTriangle, FileWarning, Shield
+  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck, AlertTriangle, FileWarning, Shield, Building2
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -835,6 +835,9 @@ export function Layout() {
                   <NavItem to="/self-exploration" icon={<Sparkles size={18} />} label="Self-Exploration" />
                   {['SUPER_ADMIN', 'HEAD_JUNIOR', 'TEACHER', 'SECRETARY_JH'].includes(currentUser.role) && (
                     <NavItem to="/junior-high/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
+                  )}
+                  {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'SECRETARY_JH', 'PRINCIPAL', 'VICE_PRINCIPAL'].includes(currentUser.role) && (
+                    <NavItem to="/junior-high/school-organizations" icon={<Building2 size={18} />} label="School Organizations" />
                   )}
                   {['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH'].includes(currentUser.role) && (
                     <>

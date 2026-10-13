@@ -55,6 +55,10 @@ export function ManageLOModal({
 
   const handleAddNew = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!subjectId || !subjectId.trim()) {
+      toast.warning('Mata pelajaran tidak boleh kosong');
+      return;
+    }
     if (!newTitle.trim()) {
       toast.warning('Tuliskan deskripsi Learning Objective (LO)');
       return;
@@ -92,6 +96,10 @@ export function ManageLOModal({
   };
 
   const handleSaveEdit = async (loId: string, currentOrder: number) => {
+    if (!subjectId || !subjectId.trim()) {
+      toast.warning('Mata pelajaran tidak boleh kosong');
+      return;
+    }
     if (!title.trim()) {
       toast.warning('Deskripsi LO tidak boleh kosong');
       return;

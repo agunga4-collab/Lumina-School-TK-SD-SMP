@@ -277,6 +277,9 @@ export async function saveLO(params: {
   teacherId: string;
   teacherName?: string;
 }): Promise<string> {
+  if (!params.subjectId || !params.subjectId.trim()) {
+    throw new Error('Mata pelajaran (subjectId) tidak boleh kosong saat menyimpan LO');
+  }
   const now = Date.now();
   if (params.id) {
     const docRef = doc(db, 'jh_ab_los', params.id);
@@ -357,6 +360,9 @@ export async function getFormativeEntries(params: {
 }
 
 export async function addFormativeEntry(entry: Omit<JHFormativeEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+  if (!entry.subjectId || !entry.subjectId.trim()) {
+    throw new Error('Mata pelajaran (subjectId) tidak boleh kosong saat menyimpan entri formatif');
+  }
   const docRef = doc(collection(db, 'jh_ab_formative_entries'));
   const now = Date.now();
   const record: JHFormativeEntry = {
@@ -414,6 +420,11 @@ export async function hardDeleteFormativeEntry(entryId: string): Promise<void> {
  */
 export async function bulkAddFormativeEntries(entries: Omit<JHFormativeEntry, 'id' | 'createdAt' | 'updatedAt'>[]): Promise<void> {
   if (entries.length === 0) return;
+  for (const entry of entries) {
+    if (!entry.subjectId || !entry.subjectId.trim()) {
+      throw new Error('Mata pelajaran (subjectId) tidak boleh kosong saat menyimpan entri formatif');
+    }
+  }
   const batch = writeBatch(db);
   const now = Date.now();
 
@@ -475,6 +486,9 @@ export function buildSummativeEntryId(params: {
 }
 
 export async function saveSummativeEntry(entry: Omit<JHSummativeEntry, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<string> {
+  if (!entry.subjectId || !entry.subjectId.trim()) {
+    throw new Error('Mata pelajaran (subjectId) tidak boleh kosong saat menyimpan entri sumatif');
+  }
   const now = Date.now();
   const docId = buildSummativeEntryId({
     studentId: entry.studentId,

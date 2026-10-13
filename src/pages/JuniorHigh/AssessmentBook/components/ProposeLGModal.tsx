@@ -62,6 +62,10 @@ export function ProposeLGModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!subject || !subject.trim()) {
+      toast.warning('Pilih mata pelajaran terlebih dahulu');
+      return;
+    }
     if (!goalText.trim()) {
       toast.warning('Teks Tujuan Pembelajaran (LG) wajib diisi');
       return;

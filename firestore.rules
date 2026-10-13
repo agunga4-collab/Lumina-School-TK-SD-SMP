@@ -1580,13 +1580,13 @@ service cloud.firestore {
       allow read: if isActive() && isJuniorHighStaff();
       allow create: if isActive() && (
         isAdmin() ||
-        userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
-        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(request.resource.data.classId))
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(request.resource.data.classId))
       );
       allow update: if isActive() && (
         isAdmin() ||
-        userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
-        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(resource.data.classId))
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(resource.data.classId))
       ) &&
       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
         'title', 'code', 'order', 'isActive', 'updatedAt'
@@ -1600,8 +1600,8 @@ service cloud.firestore {
         request.resource.data.teacherId == request.auth.uid &&
         (
           isAdmin() ||
-          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
-          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(request.resource.data.classId))
+          (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(request.resource.data.classId))
         ) &&
         request.resource.data.comprehensionLevel in ['B', 'D', 'A'];
       allow update: if isActive() &&
@@ -1609,7 +1609,7 @@ service cloud.firestore {
         (
           resource.data.teacherId == request.auth.uid ||
           isAdmin() ||
-          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR']
+          (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
         ) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'comprehensionLevel', 'formativeTask', 'nextAction', 'notes',
@@ -1623,15 +1623,15 @@ service cloud.firestore {
       allow create: if isActive() &&
         (
           isAdmin() ||
-          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
-          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(request.resource.data.classId))
+          (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(request.resource.data.classId))
         ) &&
         request.resource.data.summativeScore in ['B', 'D', 'A'];
       allow update: if isActive() &&
         (
           isAdmin() ||
-          userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] ||
-          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isTeacherAssignedToClass(resource.data.classId))
+          (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(resource.data.classId))
         ) &&
         request.resource.data.summativeScore in ['B', 'D', 'A'] &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -2219,6 +2219,51 @@ service cloud.firestore {
           (isTeacher() || isJuniorHighStaff()) &&
           existing().status == 'DRAFT'
         )
+      );
+    }
+
+    // =========================================================================
+    // JUNIOR HIGH SCHOOL ORGANIZATIONS (OSIS, SWJ, COMPETITIONS)
+    // =========================================================================
+    match /jh_so_configs/{configId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaff()
+      );
+      allow create, update: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
+      );
+      allow delete: if isActive() && isAdmin();
+    }
+
+    match /jh_so_groups/{groupId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaff() ||
+        isStudent()
+      );
+      allow create, update: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (isJuniorHighTeacher() && userRole() in ['TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'SECRETARY_JH'])
+      );
+      allow delete: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
+      );
+    }
+
+    match /jh_so_memberships/{membershipId} {
+      allow read: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaff() ||
+        (isStudent() && resource != null && isOwnStudentData(resource.data.studentId))
+      );
+      allow create, update, delete: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (isJuniorHighTeacher() && userRole() in ['TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'SECRETARY_JH'])
       );
     }
   }
