@@ -2226,16 +2226,17 @@ service cloud.firestore {
     // JUNIOR HIGH SCHOOL ORGANIZATIONS (OSIS, SWJ, COMPETITIONS)
     // =========================================================================
     match /jh_so_configs/{configId} {
-      allow read: if isSignedIn() && (
-        isAdmin() ||
-        isJuniorHighStaff()
-      );
-      allow create, update: if isActive() && (
-        isAdmin() ||
-        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
-      );
-      allow delete: if isActive() && isAdmin();
-    }
+  allow read: if isSignedIn() && (
+    isAdmin() ||
+    isJuniorHighStaff() ||
+    isStudent()
+  );
+  allow create, update: if isActive() && (
+    isAdmin() ||
+    (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
+  );
+  allow delete: if isActive() && isAdmin();
+}
 
     match /jh_so_groups/{groupId} {
       allow read: if isSignedIn() && (
