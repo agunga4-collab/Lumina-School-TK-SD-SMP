@@ -8,6 +8,7 @@ import {
   deleteDoc,
   query,
   where,
+  limit,
   writeBatch
 } from 'firebase/firestore';
 import { db, getClasses, getActiveStudents } from '../lib/firebase';
@@ -96,7 +97,7 @@ export async function getGroups(academicYear: string, programType?: SchoolOrgPro
     );
   }
   const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as SOGroup));
+  return snap.docs.map(d => ({ id: d.id, ...(d.data() as any) } as SOGroup));
 }
 
 /**
@@ -247,6 +248,124 @@ export async function saveMembership(
 export async function deleteMembership(membershipId: string): Promise<void> {
   const docRef = doc(db, MEMBERSHIPS_COLLECTION, membershipId);
   await deleteDoc(docRef);
+}
+
+/**
+ * Mengambil grup tunggal berdasarkan groupId.
+ */
+export async function getGroupById(groupId: string): Promise<SOGroup | null> {
+  try {
+    const docRef = doc(db, GROUPS_COLLECTION, groupId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return { id: snap.id, ...snap.data() } as SOGroup;
+    }
+  } catch (err) {
+    console.error('Gagal mengambil grup by ID:', err);
+  }
+  return null;
+}
+
+/**
+ * Memeriksa apakah siswa memiliki keanggotaan aktif di tahun ajaran tertentu.
+ * Ringan: 1 query dengan limit(1) dan disimpan di sessionStorage.
+ */
+export async function checkStudentHasSOMembership(
+  studentId: string,
+  academicYear: string
+): Promise<boolean> {
+  const cleanId = (studentId || '').trim();
+  if (!cleanId || !academicYear) return false;
+
+  const cacheKey = `jh_so_has_membership_${cleanId}_${academicYear}`;
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached !== null) {
+      return cached === 'true';
+    }
+  } catch (_) {}
+
+  try {
+    const memRef = collection(db, MEMBERSHIPS_COLLECTION);
+    let snap = await getDocs(
+      query(
+        memRef,
+        where('studentId', '==', cleanId),
+        where('academicYear', '==', academicYear),
+        limit(1)
+      )
+    );
+
+    // Fallback bila tahun ajaran di database disimpan dalam varian garis miring / tanda hubung
+    if (snap.empty) {
+      const altYear = academicYear.includes('/')
+        ? academicYear.replace(/\//g, '-')
+        : academicYear.replace(/-/g, '/');
+      if (altYear !== academicYear) {
+        const altSnap = await getDocs(
+          query(
+            memRef,
+            where('studentId', '==', cleanId),
+            where('academicYear', '==', altYear),
+            limit(1)
+          )
+        );
+        if (!altSnap.empty) {
+          snap = altSnap;
+        }
+      }
+    }
+
+    const hasMembership = !snap.empty;
+    try {
+      sessionStorage.setItem(cacheKey, hasMembership ? 'true' : 'false');
+    } catch (_) {}
+    return hasMembership;
+  } catch (err) {
+    console.warn('Gagal memeriksa keanggotaan School Organizations siswa:', err);
+    return false;
+  }
+}
+
+/**
+ * Mengambil seluruh keanggotaan aktif milik seorang siswa pada tahun ajaran tertentu.
+ */
+export async function getStudentMemberships(
+  studentId: string,
+  academicYear: string
+): Promise<SOMembership[]> {
+  const cleanId = (studentId || '').trim();
+  if (!cleanId || !academicYear) return [];
+
+  const memRef = collection(db, MEMBERSHIPS_COLLECTION);
+  let snap = await getDocs(
+    query(
+      memRef,
+      where('studentId', '==', cleanId),
+      where('academicYear', '==', academicYear)
+    )
+  );
+
+  // Fallback variasi format tahun ajaran
+  if (snap.empty) {
+    const altYear = academicYear.includes('/')
+      ? academicYear.replace(/\//g, '-')
+      : academicYear.replace(/-/g, '/');
+    if (altYear !== academicYear) {
+      const altSnap = await getDocs(
+        query(
+          memRef,
+          where('studentId', '==', cleanId),
+          where('academicYear', '==', altYear)
+        )
+      );
+      if (!altSnap.empty) {
+        snap = altSnap;
+      }
+    }
+  }
+
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as SOMembership));
 }
 
 // =========================================================================
@@ -422,14 +541,14 @@ export async function getJuniorHighEligibleTeachers(): Promise<JuniorHighTeacher
       results.push({
         uid: d.id,
         id: d.id,
-        ...data,
+        ...(data as any),
         unitStatus
       } as JuniorHighTeacherOption);
     });
 
     return results.sort((a, b) => {
-      const nameA = a.displayName || (a as any).name || a.email || '';
-      const nameB = b.displayName || (b as any).name || b.email || '';
+      const nameA = (a as any).displayName || (a as any).name || (a as any).email || '';
+      const nameB = (b as any).displayName || (b as any).name || (b as any).email || '';
       return nameA.localeCompare(nameB);
     });
   } catch (err: any) {

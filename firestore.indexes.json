@@ -106,6 +106,22 @@
         { "fieldPath": "grade", "order": "ASCENDING" },
         { "fieldPath": "subject", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "jh_so_memberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "academicYear", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "jh_so_memberships",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "groupId", "order": "ASCENDING" },
+        { "fieldPath": "academicYear", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

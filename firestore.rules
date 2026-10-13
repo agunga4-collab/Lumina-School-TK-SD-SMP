@@ -2246,7 +2246,7 @@ service cloud.firestore {
       allow create, update: if isActive() && (
         isAdmin() ||
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
-        (isJuniorHighTeacher() && userRole() in ['TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'SECRETARY_JH'])
+        isJuniorHighTeacher()
       );
       allow delete: if isActive() && (
         isAdmin() ||
@@ -2258,12 +2258,15 @@ service cloud.firestore {
       allow read: if isSignedIn() && (
         isAdmin() ||
         isJuniorHighStaff() ||
-        (isStudent() && resource != null && isOwnStudentData(resource.data.studentId))
+        (isStudent() && resource != null && (
+          isOwnStudentData(resource.data.studentId) ||
+          exists(/databases/$(database)/documents/jh_so_memberships/$(resource.data.groupId + '_' + getStudentNis()))
+        ))
       );
       allow create, update, delete: if isActive() && (
         isAdmin() ||
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
-        (isJuniorHighTeacher() && userRole() in ['TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'SECRETARY_JH'])
+        isJuniorHighTeacher()
       );
     }
   }

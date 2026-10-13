@@ -121,6 +121,7 @@ import LearningPowerUpTeacherPage from './pages/JuniorHigh/LearningPowerUpTeache
 import UnitActivitiesPage from './pages/JuniorHigh/UnitActivitiesPage';
 import SchoolOrganizationsPage from './pages/JuniorHigh/SchoolOrganizations/SchoolOrganizationsPage';
 import StudentUnitActivitiesPage from './pages/Student/StudentUnitActivitiesPage';
+import StudentSchoolOrganizationsPage from './pages/Student/StudentSchoolOrganizationsPage';
 import MonthlyReportSummaryPage from './pages/JuniorHigh/MonthlyReportSummaryPage';
 import MonthlyReportCommentsPage from './pages/JuniorHigh/MonthlyReportCommentsPage';
 import MonthlyReportPreviewPage from './pages/JuniorHigh/MonthlyReportPreviewPage';
@@ -738,6 +739,14 @@ export default function App() {
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
                     <StudentUnitActivitiesPage />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="school-organizations" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentSchoolOrganizationsPage />
                   </RoleGuard>
                 } 
              />

@@ -1403,6 +1403,8 @@ export interface User {
   permissions?: string[];
 }
 
+export type AppUser = User;
+
 export interface RoleInvite {
   email: string;
   name: string;

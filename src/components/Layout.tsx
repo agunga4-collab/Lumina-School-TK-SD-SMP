@@ -16,8 +16,9 @@ import { LuminaLogo } from './LuminaLogo';
 import { NotificationBell } from './NotificationBell';
 import { useBehaviorAlerts } from '../hooks/useBehaviorAlerts';
 import LuminaChat from './LuminaChat';
-import { collection, query, where, onSnapshot, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, query, where, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import { db, getParentStudentLinks, getStudentById } from '../lib/firebase';
+import { checkStudentHasSOMembership } from '../services/juniorHighSchoolOrganizationsService';
 import { toast } from 'sonner';
 import type { Student } from '../types';
 
@@ -49,6 +50,26 @@ export function Layout() {
   const [pendingLXDCount, setPendingLXDCount] = React.useState(0);
   const [resolvedStudentName, setResolvedStudentName] = React.useState<string>("");
   const [resolvedStudentClass, setResolvedStudentClass] = React.useState<string>("");
+  const [hasSchoolOrgMembership, setHasSchoolOrgMembership] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (currentUser?.role === 'STUDENT' && activeYear) {
+      const studentId = ((currentUser as any)?.studentId || currentUser?.luminaId || '').trim();
+      if (!studentId) {
+        setHasSchoolOrgMembership(false);
+        return;
+      }
+      let isMounted = true;
+      checkStudentHasSOMembership(studentId, activeYear).then(res => {
+        if (isMounted) setHasSchoolOrgMembership(res);
+      });
+      return () => {
+        isMounted = false;
+      };
+    } else {
+      setHasSchoolOrgMembership(false);
+    }
+  }, [currentUser, activeYear]);
 
   React.useEffect(() => {
     if (currentUser && currentUser.role === 'STUDENT' && currentUser.luminaId) {
@@ -699,6 +720,9 @@ export function Layout() {
                         <>
                           <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                           <NavItem to="/student/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
+                          {hasSchoolOrgMembership && (
+                            <NavItem to="/student/school-organizations" icon={<Building2 size={18} />} label="School Organizations" />
+                          )}
                           <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
 
                           <NavItem to="/student/aap" icon={<FileSpreadsheet size={18} />} label="Asesmen Awal Pembelajaran" />
