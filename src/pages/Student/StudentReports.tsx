@@ -20,6 +20,7 @@ import { useAcademicYear } from '../../context/AcademicYearContext';
 import { collection, query, where, getDocs, doc, updateDoc, setDoc, serverTimestamp, onSnapshot, increment, addDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { toast } from 'sonner';
+import { StudentReportCard } from './components/StudentReportCard';
 
 const indonesianMonths = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -559,6 +560,42 @@ export default function StudentReports() {
     }
   };
 
+  const trackOtherReportView = React.useCallback((report: any) => {
+    // Optimistically update local state so badge turns to 'Sudah dilihat' immediately
+    setJhOtherReports(prev => prev.map(r => {
+      if (r.id === report.id) {
+        return {
+          ...r,
+          isOpened: true,
+          openCount: (r.openCount || 0) + 1,
+          lastOpenedAt: Date.now()
+        };
+      }
+      return r;
+    }));
+
+    // Non-blocking Firestore tracking update
+    try {
+      const targetCol = report._collection || (report.classId && String(report.classId).startsWith('ELEMENTARY') ? 'elem_other_report_links' : 'jh_other_report_links');
+      const docRef = doc(db, targetCol, report.id);
+      const now = Date.now();
+      const updateData: any = {
+        isOpened: true,
+        lastOpenedAt: now,
+        openCount: increment(1),
+        openedByEmail: currentUser?.email || ''
+      };
+      if (!report.isOpened && !report.firstOpenedAt) {
+        updateData.firstOpenedAt = now;
+      }
+      updateDoc(docRef, updateData).catch(err => {
+        console.error("Failed to update tracking for other report:", err);
+      });
+    } catch (e) {
+      console.error("Error dispatching tracking update:", e);
+    }
+  }, [currentUser?.email]);
+
   const handleSelectRole = async (role: 'student' | 'parent') => {
     if (!activeReportForPopup || !studentData) return;
     setSubmittingView(true);
@@ -778,168 +815,136 @@ export default function StudentReports() {
   }
 
   if (studentData?.unitId === 'ELEMENTARY' || currentUser?.unitId === 'ELEMENTARY') {
+    const sortedElemMidtermReports = [...elemMidtermReports].sort((a, b) => {
+      const timeA = a.sentAt || a.updatedAt || a.createdAt || 0;
+      const timeB = b.sentAt || b.updatedAt || b.createdAt || 0;
+      return timeB - timeA;
+    });
+
+    const sortedOtherReports = [...jhOtherReports].sort((a: any, b: any) => {
+      const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt || 0);
+      const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt || 0);
+      return timeB - timeA;
+    });
+
     return (
-      <div className="max-w-5xl mx-auto space-y-10 pb-20 animate-in fade-in duration-700">
-        <div className="space-y-4">
-          <Link to="/student/dashboard" className="group flex items-center gap-1 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-blue-600 transition-colors">
+      <div className="max-w-5xl mx-auto space-y-8 sm:space-y-10 pb-20 px-4 sm:px-6 animate-in fade-in duration-700">
+        <div className="space-y-3 sm:space-y-4">
+          <Link to="/student/dashboard" className="group inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-gray-400 hover:text-blue-600 transition-colors">
             <ChevronLeft size={14} className="group-hover:-translate-x-1 transition-transform" /> Dashboard
           </Link>
-          <h1 className="text-5xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-gray-900 leading-none">
             Rapor <span className="text-blue-600">Saya</span>
           </h1>
-          <p className="text-gray-400 font-bold max-w-lg">
+          <p className="text-sm text-gray-500 font-medium max-w-lg">
             Daftar hasil belajarmu yang sudah diterbitkan sekolah.
           </p>
         </div>
 
         {/* SECTION: MIDTERM REPORT */}
         <div className="space-y-4">
-          <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
-            <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
-              <FileText size={16} className="text-emerald-600" />
-              MIDTERM REPORT
+          <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+              <FileText size={16} />
+            </div>
+            <h2 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+              Midterm Report
             </h2>
           </div>
 
-          {elemMidtermReports.length === 0 ? (
-            <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
-              <p className="text-sm font-bold text-gray-700">Belum ada laporan Midterm yang dikirim untuk Anda.</p>
+          {sortedElemMidtermReports.length === 0 ? (
+            <div className="bg-white border border-dashed border-gray-200 p-8 sm:p-10 rounded-2xl text-center space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
+                <FileText size={22} />
+              </div>
+              <p className="text-sm font-bold text-gray-800">Belum Ada Midterm Report</p>
+              <p className="text-xs text-gray-400 max-w-sm mx-auto leading-relaxed">
+                Laporan hasil belajar tengah semester akan ditampilkan di sini setelah diterbitkan oleh sekolah.
+              </p>
             </div>
           ) : (
-            <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
-                      <th className="py-4 px-6">Tahun Ajaran</th>
-                      <th className="py-4 px-6">Semester</th>
-                      <th className="py-4 px-6">Periode</th>
-                      <th className="py-4 px-6">Versi PDF</th>
-                      <th className="py-4 px-6">Status</th>
-                      <th className="py-4 px-6 text-right">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
-                    {elemMidtermReports.map((report) => {
-                      const academicYear = report.academicYear || activeYear || '2026/2027';
-                      const sem = report.semester || 1;
-                      const term = report.midtermTerm || 1;
-                      const periodLabel = `Mid Term ${term}`;
-                      const isViewed = String(report.deliveryStatus || '').toLowerCase() === 'viewed';
-                      const versionText = report.reportVersion ? `v${report.reportVersion}` : 'v1';
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6">
+              {sortedElemMidtermReports.map((report, idx) => {
+                const academicYear = report.academicYear || activeYear || '2026/2027';
+                const sem = report.semester || 1;
+                const term = report.midtermTerm || 1;
+                const isViewed = String(report.deliveryStatus || '').toLowerCase() === 'viewed';
 
-                      return (
-                        <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
-                          <td className="py-4 px-6 font-bold text-gray-900">{academicYear}</td>
-                          <td className="py-4 px-6">Semester {sem}</td>
-                          <td className="py-4 px-6 font-bold text-gray-800">{periodLabel}</td>
-                          <td className="py-4 px-6 font-black text-gray-700">{versionText}</td>
-                          <td className="py-4 px-6">
-                            {isViewed ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-100">
-                                <Eye size={12} /> Dilihat
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                <Send size={12} /> Terkirim
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-4 px-6 text-right">
-                            <button
-                              onClick={() => handleElemMidtermPdfClick(report)}
-                              className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
-                            >
-                              <FileText size={12} /> Buka Rapor PDF
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                return (
+                  <StudentReportCard
+                    key={report.id || `midterm-${idx}`}
+                    type="Midterm"
+                    title={`Midterm ${term} • Semester ${sem}`}
+                    academicYear={academicYear}
+                    semester={sem}
+                    isViewed={isViewed}
+                    onOpen={() => handleElemMidtermPdfClick(report)}
+                    index={idx}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
 
         {/* SECTION: RAPOR LAINNYA */}
-        {jhOtherReports.length > 0 && (
-          <div className="space-y-4 pt-4">
-            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
-              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
-                <FileText size={16} className="text-blue-600" />
-                RAPOR LAINNYA
-              </h2>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
+            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+              <FileText size={16} />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {jhOtherReports.map((report: any, idx: number) => {
-                const isOpened = !!report.isOpened;
+            <h2 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+              Rapor Lainnya
+            </h2>
+          </div>
+
+          {sortedOtherReports.length === 0 ? (
+            <div className="bg-white border border-dashed border-gray-200 p-8 sm:p-10 rounded-2xl text-center space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 mx-auto flex items-center justify-center">
+                <FileText size={22} />
+              </div>
+              <p className="text-sm font-bold text-gray-800">Belum Ada Rapor Lainnya</p>
+              <p className="text-xs text-gray-400 max-w-sm mx-auto leading-relaxed">
+                Dokumen atau laporan belajar tambahan akan ditampilkan di sini jika sudah diterbitkan oleh sekolah.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6">
+              {sortedOtherReports.map((report: any, idx: number) => {
+                const academicYear = report.academicYear || activeYear || '2026/2027';
+                const sem = report.semester || 1;
+                const isViewed = !!report.isOpened;
+                const driveUrl = report.driveFileUrl || (report.driveFileId ? `https://drive.google.com/file/d/${report.driveFileId}/view` : '');
+
                 return (
-                  <motion.div
-                    key={report.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: idx * 0.05 }}
-                    className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl transition-all flex flex-col justify-between"
-                  >
-                    <div className="space-y-6">
-                      <div className="flex justify-between items-start">
-                        <div className="w-14 h-14 bg-indigo-50 rounded-[1.5rem] flex items-center justify-center">
-                          <FileText className="text-indigo-600" size={28} />
-                        </div>
-                        {isOpened ? (
-                          <div className="px-3.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
-                            <Eye size={11} /> SUDAH DILIHAT
-                          </div>
-                        ) : (
-                          <div className="px-3.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl text-[9px] font-black uppercase tracking-widest">
-                            DITERBITKAN
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 leading-tight">
-                          {report.judul || 'Rapor Lainnya'}
-                        </h3>
-                        {report.keterangan && (
-                          <p className="text-xs text-gray-500 font-medium line-clamp-2">{report.keterangan}</p>
-                        )}
-                        <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
-                          <span className="flex items-center gap-1"><Calendar size={12} /> Sem {report.semester || 1}</span>
-                          <span className="w-1 h-1 bg-gray-300 rounded-full" />
-                          <span>{report.academicYear || activeYear}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="space-y-3 mt-6">
-                      {(report.driveFileUrl || report.driveFileId) ? (
-                        <button
-                          onClick={() => handleOpenOtherReport(report)}
-                          className="w-full flex items-center justify-center gap-2 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all cursor-pointer"
-                        >
-                          <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor Drive
-                        </button>
-                      ) : (
-                        <button disabled className="w-full py-4 bg-gray-100 text-gray-400 border border-gray-200 rounded-2xl font-black uppercase text-[10px] tracking-widest cursor-not-allowed">
-                          Tautan Tidak Tersedia
-                        </button>
-                      )}
-                    </div>
-                  </motion.div>
+                  <StudentReportCard
+                    key={report.id || `other-${idx}`}
+                    type="Rapor Lainnya"
+                    title={report.judul || 'Rapor Lainnya'}
+                    subtitle={report.keterangan || undefined}
+                    academicYear={academicYear}
+                    semester={sem}
+                    isViewed={isViewed}
+                    driveUrl={driveUrl || undefined}
+                    disabled={!driveUrl}
+                    onOpen={() => trackOtherReportView(report)}
+                    index={idx}
+                  />
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* SECTION: ACADEMIC REPORT CARDS */}
         {reports.length > 0 && (
-          <div className="space-y-4 pt-4">
-            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
-              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
-                <Award size={16} className="text-blue-600" />
-                RAPOR AKHIR SEMESTER
+          <div className="space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
+              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <Award size={16} />
+              </div>
+              <h2 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                Rapor Akhir Semester
               </h2>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
