@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { motion } from 'motion/react';
-import { FileText, Calendar, Eye } from 'lucide-react';
+import { FileText, Calendar, Eye, ExternalLink } from 'lucide-react';
 
 export interface StudentReportCardProps {
   id?: string;
-  type: 'Midterm' | 'Rapor Lainnya';
+  type: string;
   title: string;
   subtitle?: string;
   academicYear: string;
@@ -14,6 +14,11 @@ export interface StudentReportCardProps {
   driveUrl?: string;
   disabled?: boolean;
   index?: number;
+  buttonIcon?: 'document' | 'external';
+  viewedDetails?: {
+    studentViewedAt?: string | null;
+    parentViewedAt?: string | null;
+  };
 }
 
 export const StudentReportCard: React.FC<StudentReportCardProps> = ({
@@ -24,11 +29,27 @@ export const StudentReportCard: React.FC<StudentReportCardProps> = ({
   semester,
   isViewed,
   onOpen,
-  driveUrl,
   disabled = false,
-  index = 0
+  index = 0,
+  buttonIcon = 'document',
+  viewedDetails
 }) => {
   const isMidterm = type === 'Midterm';
+  const isBulanan = type === 'Bulanan';
+
+  const badgeLabel = isMidterm ? 'Midterm' : isBulanan ? 'Bulanan' : 'Lainnya';
+
+  const badgeColor = isMidterm
+    ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+    : isBulanan
+    ? 'bg-blue-50 text-blue-700 border-blue-100'
+    : 'bg-indigo-50 text-indigo-700 border-indigo-100';
+
+  const iconColor = isMidterm
+    ? 'bg-emerald-50 text-emerald-600'
+    : isBulanan
+    ? 'bg-blue-50 text-blue-600'
+    : 'bg-indigo-50 text-indigo-600';
 
   return (
     <motion.div
@@ -41,22 +62,16 @@ export const StudentReportCard: React.FC<StudentReportCardProps> = ({
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div
-            className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-              isMidterm ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
-            }`}
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${iconColor}`}
           >
             <FileText size={22} />
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap">
             <span
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${
-                isMidterm
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                  : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-              }`}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border ${badgeColor}`}
             >
-              {isMidterm ? 'Midterm' : 'Lainnya'}
+              {badgeLabel}
             </span>
 
             {isViewed ? (
@@ -87,6 +102,28 @@ export const StudentReportCard: React.FC<StudentReportCardProps> = ({
             <span>TA {academicYear} • Semester {semester}</span>
           </div>
         </div>
+
+        {/* Viewed Details Block */}
+        {(viewedDetails?.studentViewedAt || viewedDetails?.parentViewedAt) && (
+          <div className="mt-3 p-3 bg-gray-50/80 rounded-xl border border-gray-100 text-[11px] space-y-1.5 text-gray-500 font-medium">
+            {viewedDetails.studentViewedAt && (
+              <div className="flex items-center gap-1.5 leading-tight">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                <span>
+                  Dilihat siswa: <strong className="text-gray-700 font-semibold">{viewedDetails.studentViewedAt}</strong>
+                </span>
+              </div>
+            )}
+            {viewedDetails.parentViewedAt && (
+              <div className="flex items-center gap-1.5 leading-tight">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                <span>
+                  Dilihat orang tua/wali: <strong className="text-gray-700 font-semibold">{viewedDetails.parentViewedAt}</strong>
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Bottom Action Button */}
@@ -105,7 +142,11 @@ export const StudentReportCard: React.FC<StudentReportCardProps> = ({
             onClick={onOpen}
             className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-blue-200/50 cursor-pointer text-center"
           >
-            <FileText size={14} className="shrink-0" />
+            {buttonIcon === 'external' ? (
+              <ExternalLink size={14} className="shrink-0" />
+            ) : (
+              <FileText size={14} className="shrink-0" />
+            )}
             <span>Buka Rapor</span>
           </button>
         )}

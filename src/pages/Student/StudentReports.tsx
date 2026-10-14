@@ -990,134 +990,136 @@ export default function StudentReports() {
   }
   console.log(`[StudentReports] Render state checklist: reports.length=${reports.length}, jhManualLinks.length=${jhManualLinks.length}, jhMidtermReports.length=${jhMidtermReports.length}, jhOtherReports.length=${jhOtherReports.length}`);
 
+  const sortedJhMidtermReports = [...jhMidtermReports].sort((a, b) => {
+    const timeA = a.sentAt || a.updatedAt || a.createdAt || 0;
+    const timeB = b.sentAt || b.updatedAt || b.createdAt || 0;
+    return timeB - timeA;
+  });
+
+  const sortedJhManualLinks = [...jhManualLinks].sort((a, b) => {
+    return (b.periodKey || '').localeCompare(a.periodKey || '');
+  });
+
+  const sortedJhOtherReports = [...jhOtherReports].sort((a: any, b: any) => {
+    const timeA = a.publishedAt?.toMillis ? a.publishedAt.toMillis() : (typeof a.publishedAt === 'number' ? a.publishedAt : (a.createdAt?.toMillis ? a.createdAt.toMillis() : (typeof a.createdAt === 'number' ? a.createdAt : 0)));
+    const timeB = b.publishedAt?.toMillis ? b.publishedAt.toMillis() : (typeof b.publishedAt === 'number' ? b.publishedAt : (b.createdAt?.toMillis ? b.createdAt.toMillis() : (typeof b.createdAt === 'number' ? b.createdAt : 0)));
+    return timeB - timeA;
+  });
+
   return (
-    <div className="max-w-5xl mx-auto space-y-12 pb-20 animate-in fade-in duration-700">
-      <div className="space-y-4">
-        <Link to="/student/dashboard" className="group flex items-center gap-1 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-blue-600 transition-colors">
+    <div className="max-w-5xl mx-auto space-y-8 sm:space-y-10 pb-20 px-4 sm:px-6 animate-in fade-in duration-700">
+      <div className="space-y-3 sm:space-y-4">
+        <Link to="/student/dashboard" className="group inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-gray-400 hover:text-blue-600 transition-colors">
           <ChevronLeft size={14} className="group-hover:-translate-x-1 transition-transform" /> Dashboard
         </Link>
-        <h1 className="text-5xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-gray-900 leading-none">
           Rapor <span className="text-blue-600">Saya</span>
         </h1>
-        <p className="text-gray-400 font-bold max-w-lg">
+        <p className="text-sm text-gray-500 font-medium max-w-lg">
           Rapor Midterm dan Rapor Bulanan yang sudah diterbitkan sekolah.
         </p>
       </div>
 
       {reports.length === 0 && jhManualLinks.length === 0 && jhMidtermReports.length === 0 && jhOtherReports.length === 0 ? (
-        <div className="bg-white border border-gray-100 p-20 rounded-[3rem] text-center space-y-4 shadow-sm">
-          <div className="w-20 h-20 bg-blue-50/50 rounded-[2rem] flex items-center justify-center mx-auto">
-            <FileText className="text-blue-300" size={40} />
+        <div className="bg-white border border-gray-100 p-12 sm:p-20 rounded-3xl text-center space-y-4 shadow-sm">
+          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-blue-50/50 rounded-2xl sm:rounded-[2rem] flex items-center justify-center mx-auto">
+            <FileText className="text-blue-400" size={36} />
           </div>
           <div className="space-y-2">
-            <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tighter">Belum Ada Rapor</h3>
-            <p className="text-sm text-gray-400 font-bold max-w-xs mx-auto">Belum ada rapor yang diterbitkan.</p>
+            <h3 className="text-xl font-black text-gray-900 uppercase italic tracking-tight">Belum Ada Rapor</h3>
+            <p className="text-sm text-gray-400 font-medium max-w-xs mx-auto">Belum ada rapor yang diterbitkan oleh sekolah.</p>
           </div>
         </div>
       ) : (
-        <div className="space-y-12">
+        <div className="space-y-8 sm:space-y-10">
           {/* SECTION: JUNIOR HIGH MIDTERM REPORT */}
           <div className="space-y-4">
-            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
-              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
-                <FileText size={16} className="text-emerald-600" />
-                MIDTERM REPORT
+            <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                <FileText size={16} />
+              </div>
+              <h2 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                Midterm Report
               </h2>
             </div>
 
-            {jhMidtermReports.length === 0 ? (
-              <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
-                <p className="text-sm font-bold text-gray-400">Belum ada rapor yang diterbitkan.</p>
+            {sortedJhMidtermReports.length === 0 ? (
+              <div className="bg-white border border-dashed border-gray-200 p-8 sm:p-10 rounded-2xl text-center space-y-2">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 mx-auto flex items-center justify-center">
+                  <FileText size={22} />
+                </div>
+                <p className="text-sm font-bold text-gray-800">Belum Ada Midterm Report</p>
+                <p className="text-xs text-gray-400 max-w-sm mx-auto leading-relaxed">
+                  Laporan penilaian tengah semester akan ditampilkan di sini jika sudah diterbitkan oleh sekolah.
+                </p>
               </div>
             ) : (
-              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-gray-50 text-[11px] font-black uppercase tracking-wider text-gray-400 border-b border-gray-100">
-                        <th className="py-4 px-6">Tahun Ajaran</th>
-                        <th className="py-4 px-6">Semester</th>
-                        <th className="py-4 px-6">Periode</th>
-                        <th className="py-4 px-6">Versi PDF</th>
-                        <th className="py-4 px-6">Status</th>
-                        <th className="py-4 px-6 text-right">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-sm font-semibold text-gray-700">
-                      {jhMidtermReports.map((report) => {
-                        const academicYear = report.academicYear || activeYear || '2025/2026';
-                        const sem = report.semester || 1;
-                        const term = report.midtermTerm || 1;
-                        const periodLabel = `Mid Term ${term}`;
-                        const isViewed = String(report.deliveryStatus || '').toUpperCase() === 'VIEWED';
-                        const versionText = report.reportVersion ? `v${report.reportVersion}` : 'v1';
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6">
+                {sortedJhMidtermReports.map((report, idx) => {
+                  const academicYear = report.academicYear || activeYear || '2025/2026';
+                  const sem = report.semester || 1;
+                  const term = report.midtermTerm || 1;
+                  const title = `Midterm ${term} • Semester ${sem}`;
+                  const isViewed = String(report.deliveryStatus || '').toUpperCase() === 'VIEWED';
 
-                        return (
-                          <tr key={report.id} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="py-4 px-6 font-bold text-gray-900">{academicYear}</td>
-                            <td className="py-4 px-6">Semester {sem}</td>
-                            <td className="py-4 px-6 font-bold text-gray-800">{periodLabel}</td>
-                            <td className="py-4 px-6 font-black text-gray-700">{versionText}</td>
-                            <td className="py-4 px-6">
-                              {isViewed ? (
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-100">
-                                  <Eye size={12} /> Dilihat
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-100">
-                                  <Send size={12} /> Terkirim
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-4 px-6 text-right">
-                              <button
-                                onClick={() => handleJhMidtermPdfClick(report)}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-colors shadow-sm cursor-pointer"
-                              >
-                                <FileText size={12} /> Buka Rapor PDF
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                  const studentViewTimestamp = isViewed ? (report.lastViewedAt || report.lastOpenedAt || report.firstViewedAt || report.firstOpenedAt) : null;
+                  const studentFormatted = studentViewTimestamp ? formatViewTimestamp(studentViewTimestamp) : null;
+                  const parentFormatted = report.parentViewedAt ? formatViewTimestamp(report.parentViewedAt) : null;
+
+                  return (
+                    <StudentReportCard
+                      key={report.id || `jh-midterm-${idx}`}
+                      type="Midterm"
+                      title={title}
+                      academicYear={academicYear}
+                      semester={sem}
+                      isViewed={isViewed}
+                      buttonIcon="document"
+                      onOpen={() => handleJhMidtermPdfClick(report)}
+                      index={idx}
+                      viewedDetails={studentFormatted || parentFormatted ? {
+                        studentViewedAt: studentFormatted,
+                        parentViewedAt: parentFormatted,
+                      } : undefined}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* SECTION: RAPOR BULANAN */}
           <div className="space-y-4">
-            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
-              <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
-                <FileText size={16} className="text-blue-600" />
-                RAPOR BULANAN
+            <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
+              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <FileText size={16} />
+              </div>
+              <h2 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                Rapor Bulanan
               </h2>
             </div>
 
-            {jhManualLinks.length === 0 ? (
-              <div className="bg-white border border-gray-100 p-8 rounded-3xl text-center space-y-1 shadow-sm">
-                <p className="text-sm font-bold text-gray-400">Belum ada rapor yang diterbitkan.</p>
+            {sortedJhManualLinks.length === 0 ? (
+              <div className="bg-white border border-dashed border-gray-200 p-8 sm:p-10 rounded-2xl text-center space-y-2">
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 mx-auto flex items-center justify-center">
+                  <FileText size={22} />
+                </div>
+                <p className="text-sm font-bold text-gray-800">Belum Ada Rapor Bulanan</p>
+                <p className="text-xs text-gray-400 max-w-sm mx-auto leading-relaxed">
+                  Laporan capaian belajar bulanan akan ditampilkan di sini jika sudah diterbitkan oleh sekolah.
+                </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {jhManualLinks.map((link, idx) => {
-                  const monthLabel = getIndonesianMonthLabel(link.periodKey);
-                  
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6">
+                {sortedJhManualLinks.map((link, idx) => {
+                  const monthLabel = getIndonesianMonthLabel(link.periodKey) || 'Rapor Bulanan';
+                  const academicYear = link.academicYear || activeYear || '2025/2026';
+                  const sem = link.semester || '1';
+
                   // Calculate tracking summaries
                   const reportViews = views.filter(v => v.reportId === link.id);
                   const hasStudentView = reportViews.some(v => v.viewerRole === 'student');
                   const hasParentView = reportViews.some(v => v.viewerRole === 'parent');
-
-                  let trackingSummary = 'Belum dilihat';
-                  if (hasStudentView && hasParentView) {
-                    trackingSummary = 'Sudah dilihat oleh siswa dan orang tua/wali';
-                  } else if (hasStudentView) {
-                    trackingSummary = 'Sudah dilihat sebagai siswa';
-                  } else if (hasParentView) {
-                    trackingSummary = 'Sudah dilihat sebagai orang tua/wali';
-                  }
 
                   const studentViews = reportViews.filter(v => v.viewerRole === 'student');
                   const parentViews = reportViews.filter(v => v.viewerRole === 'parent');
@@ -1134,82 +1136,28 @@ export default function StudentReports() {
                   const latestStudentTime = getLatestTimestamp(studentViews);
                   const latestParentTime = getLatestTimestamp(parentViews);
 
+                  const studentFormatted = latestStudentTime ? formatViewTimestamp(latestStudentTime) : null;
+                  const parentFormatted = latestParentTime ? formatViewTimestamp(latestParentTime) : null;
+
+                  const isViewed = hasStudentView;
+
                   return (
-                    <motion.div
-                      key={link.id}
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: idx * 0.05 }}
-                      className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100/50 hover:border-blue-100 transition-all flex flex-col justify-between"
-                    >
-                      <div className="space-y-6">
-                        <div className="flex justify-between items-start">
-                          <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
-                            <FileText className="text-blue-600 group-hover:text-white" size={28} />
-                          </div>
-                          <div className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl text-[9px] font-black uppercase tracking-widest">
-                            DITERBITKAN
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
-                            {monthLabel || 'Rapor Bulanan'}
-                          </h3>
-                          <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
-                            <span className="flex items-center gap-1">
-                              <Calendar size={12} /> Sem {link.semester || '1'}
-                            </span>
-                            <span className="w-1 h-1 bg-gray-300 rounded-full" />
-                            <span>{link.academicYear || activeYear}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* View Tracking Summary Box */}
-                      <div className="my-6 py-4 px-5 bg-gray-50 rounded-[1.5rem] border border-gray-100/80 space-y-2 text-[10px]">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2.5 h-2.5 rounded-full ${
-                            hasStudentView && hasParentView ? 'bg-emerald-500' : (hasStudentView || hasParentView ? 'bg-blue-500' : 'bg-gray-300')
-                          }`} />
-                          <span className="font-extrabold uppercase tracking-wider text-gray-600">
-                            {trackingSummary}
-                          </span>
-                        </div>
-                        {(latestStudentTime || latestParentTime) && (
-                          <div className="space-y-1 border-t border-gray-100 pt-2 font-bold text-gray-400">
-                            {latestStudentTime && (
-                              <div>
-                                Dilihat siswa: <span className="text-gray-700">{formatViewTimestamp(latestStudentTime)}</span>
-                              </div>
-                            )}
-                            {latestParentTime && (
-                              <div>
-                                Dilihat orang tua/wali: <span className="text-gray-700">{formatViewTimestamp(latestParentTime)}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="space-y-3">
-                        {link.driveUrl ? (
-                          <button
-                            onClick={() => setActiveReportForPopup(link)}
-                            className="w-full flex items-center justify-center gap-2 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-blue-100 text-center cursor-pointer"
-                          >
-                            <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor (Drive)
-                          </button>
-                        ) : (
-                          <button
-                            disabled
-                            className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-400 border border-gray-200 rounded-2xl font-black uppercase text-[10px] tracking-widest cursor-not-allowed text-center"
-                          >
-                            Tautan Tidak Tersedia
-                          </button>
-                        )}
-                      </div>
-                    </motion.div>
+                    <StudentReportCard
+                      key={link.id || `jh-monthly-${idx}`}
+                      type="Bulanan"
+                      title={monthLabel}
+                      academicYear={academicYear}
+                      semester={sem}
+                      isViewed={isViewed}
+                      buttonIcon="external"
+                      disabled={!link.driveUrl}
+                      onOpen={() => setActiveReportForPopup(link)}
+                      index={idx}
+                      viewedDetails={studentFormatted || parentFormatted ? {
+                        studentViewedAt: studentFormatted,
+                        parentViewedAt: parentFormatted,
+                      } : undefined}
+                    />
                   );
                 })}
               </div>
@@ -1217,82 +1165,42 @@ export default function StudentReports() {
           </div>
 
           {/* SECTION: RAPOR LAINNYA */}
-          {jhOtherReports.length > 0 && (
+          {sortedJhOtherReports.length > 0 && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
-                <h2 className="text-sm font-black text-gray-900 uppercase tracking-wider flex items-center gap-2 font-mono">
-                  <FileText size={16} className="text-blue-600" />
-                  RAPOR LAINNYA
+              <div className="flex items-center gap-2.5 border-b border-gray-200 pb-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                  <FileText size={16} />
+                </div>
+                <h2 className="text-base sm:text-lg font-bold text-gray-900 tracking-tight">
+                  Rapor Lainnya
                 </h2>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {jhOtherReports.map((report, idx) => {
-                  const isOpened = !!report.isOpened;
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 sm:gap-6">
+                {sortedJhOtherReports.map((report, idx) => {
+                  const academicYear = report.academicYear || activeYear || '2025/2026';
+                  const sem = report.semester || 1;
+                  const isViewed = !!report.isOpened;
+                  const driveUrl = report.driveFileUrl || (report.driveFileId ? `https://drive.google.com/file/d/${report.driveFileId}/view` : '');
+                  const studentFormatted = (report.lastOpenedAt || report.firstOpenedAt) ? formatViewTimestamp(report.lastOpenedAt || report.firstOpenedAt) : null;
 
                   return (
-                    <motion.div
-                      key={report.id}
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: idx * 0.05 }}
-                      className="group bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-blue-100/50 hover:border-blue-100 transition-all flex flex-col justify-between"
-                    >
-                      <div className="space-y-6">
-                        <div className="flex justify-between items-start">
-                          <div className="w-14 h-14 bg-indigo-50 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:-rotate-6 transition-all duration-500">
-                            <FileText className="text-indigo-600 group-hover:text-white" size={28} />
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            {isOpened ? (
-                              <div className="px-3.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
-                                <Eye size={11} /> SUDAH DILIHAT
-                              </div>
-                            ) : (
-                              <div className="px-3.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-2xl text-[9px] font-black uppercase tracking-widest">
-                                DITERBITKAN
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <h3 className="text-2xl font-black uppercase italic tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
-                            {report.judul || 'Rapor Lainnya'}
-                          </h3>
-                          {report.keterangan && (
-                            <p className="text-xs text-gray-500 font-medium line-clamp-2">
-                              {report.keterangan}
-                            </p>
-                          )}
-                          <div className="flex items-center gap-3 text-xs font-bold text-gray-400">
-                            <span className="flex items-center gap-1">
-                              <Calendar size={12} /> Sem {report.semester || '1'}
-                            </span>
-                            <span className="w-1 h-1 bg-gray-300 rounded-full" />
-                            <span>{report.academicYear || activeYear}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-3 mt-6">
-                        {report.driveFileUrl || report.driveFileId ? (
-                          <button
-                            onClick={() => handleOpenOtherReport(report)}
-                            className="w-full flex items-center justify-center gap-2 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all transform active:scale-95 shadow-sm shadow-blue-100 text-center cursor-pointer"
-                          >
-                            <ExternalLink size={14} className="inline mr-1" /> Lihat Rapor (Drive)
-                          </button>
-                        ) : (
-                          <button
-                            disabled
-                            className="w-full flex items-center justify-center gap-2 py-4 bg-gray-100 text-gray-400 border border-gray-200 rounded-2xl font-black uppercase text-[10px] tracking-widest cursor-not-allowed text-center"
-                          >
-                            Tautan Tidak Tersedia
-                          </button>
-                        )}
-                      </div>
-                    </motion.div>
+                    <StudentReportCard
+                      key={report.id || `jh-other-${idx}`}
+                      type="Lainnya"
+                      title={report.judul || 'Rapor Lainnya'}
+                      subtitle={report.keterangan || undefined}
+                      academicYear={academicYear}
+                      semester={sem}
+                      isViewed={isViewed}
+                      buttonIcon="document"
+                      disabled={!driveUrl && !report.driveFileId}
+                      onOpen={() => handleOpenOtherReport(report)}
+                      index={idx}
+                      viewedDetails={studentFormatted ? {
+                        studentViewedAt: studentFormatted,
+                      } : undefined}
+                    />
                   );
                 })}
               </div>
