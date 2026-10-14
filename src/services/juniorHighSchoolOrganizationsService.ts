@@ -673,55 +673,88 @@ export async function saveStudentWeeklyReport(
     nextText: string;
     status: 'DRAFT' | 'SUBMITTED';
     isLate: boolean;
+    isUpdate?: boolean;
   }
-): Promise<void> {
-  const reportId = makeWeeklyReportId(reportData.groupId, reportData.studentId, reportData.weekStart);
+): Promise<{ operation: 'create' | 'update'; docPath: string; fieldNames: string[] }> {
+  const cleanGroupId = (reportData.groupId || '').trim();
+  const cleanStudentId = (reportData.studentId || '').trim();
+  const cleanWeekStart = (reportData.weekStart || '').trim();
+
+  const reportId = makeWeeklyReportId(cleanGroupId, cleanStudentId, cleanWeekStart);
   const docRef = doc(db, WEEKLY_REPORTS_COLLECTION, reportId);
+  const docPath = `${WEEKLY_REPORTS_COLLECTION}/${reportId}`;
   const now = new Date().toISOString();
 
-  const snap = await getDoc(docRef);
-
-  if (snap.exists()) {
-    const existing = snap.data();
-    if (existing.readAt) {
-      throw new Error('Laporan sudah ditandai dibaca oleh guru dan terkunci.');
+  // Tentukan apakah operasi create atau update
+  let isUpdate = reportData.isUpdate;
+  if (isUpdate === undefined) {
+    try {
+      const snap = await getDoc(docRef);
+      isUpdate = snap.exists();
+      if (isUpdate && snap.data()?.readAt) {
+        throw new Error('Laporan sudah ditandai dibaca oleh guru dan terkunci.');
+      }
+    } catch (checkErr: any) {
+      if (checkErr?.message?.includes('terkunci')) throw checkErr;
+      isUpdate = false;
     }
+  }
 
-    const payload: Partial<SOWeeklyReport> = {
-      doneText: reportData.doneText.slice(0, 1500),
-      nextText: reportData.nextText.slice(0, 1500),
-      status: reportData.status,
-      isLate: reportData.isLate,
-      updatedAt: now
-    };
-    if (reportData.status === 'SUBMITTED') {
-      payload.submittedAt = now;
+  // Siapkan payload UPDATE (HANYA field yang diizinkan siswa)
+  const updatePayload: Record<string, any> = {
+    doneText: (reportData.doneText || '').slice(0, 1500),
+    nextText: (reportData.nextText || '').slice(0, 1500),
+    status: reportData.status,
+    isLate: Boolean(reportData.isLate),
+    updatedAt: now
+  };
+  if (reportData.status === 'SUBMITTED') {
+    updatePayload.submittedAt = now;
+  }
+
+  // Siapkan payload CREATE (HANYA field siswa, TIDAK menyertakan feedback/read fields sama sekali)
+  const createPayload: Record<string, any> = {
+    groupId: cleanGroupId,
+    groupName: (reportData.groupName || '').trim(),
+    programType: reportData.programType,
+    academicYear: (reportData.academicYear || '').trim(),
+    studentId: cleanStudentId,
+    studentName: (reportData.studentName || '').trim(),
+    classId: (reportData.classId || '').trim(),
+    className: (reportData.className || 'Junior High').trim(),
+    weekStart: cleanWeekStart,
+    weekEnd: (reportData.weekEnd || '').trim(),
+    doneText: (reportData.doneText || '').slice(0, 1500),
+    nextText: (reportData.nextText || '').slice(0, 1500),
+    status: reportData.status,
+    isLate: Boolean(reportData.isLate),
+    createdAt: now,
+    updatedAt: now
+  };
+  if (reportData.status === 'SUBMITTED') {
+    createPayload.submittedAt = now;
+  }
+
+  const operation: 'create' | 'update' = isUpdate ? 'update' : 'create';
+  const payloadFields = isUpdate ? Object.keys(updatePayload) : Object.keys(createPayload);
+
+  try {
+    if (isUpdate) {
+      await updateDoc(docRef, updatePayload);
+    } else {
+      await setDoc(docRef, createPayload);
     }
-
-    await updateDoc(docRef, payload);
-  } else {
-    const newReport: SOWeeklyReport = {
-      id: reportId,
-      groupId: reportData.groupId,
-      groupName: reportData.groupName,
-      programType: reportData.programType,
-      academicYear: reportData.academicYear,
-      studentId: reportData.studentId,
-      studentName: reportData.studentName,
-      classId: reportData.classId,
-      className: reportData.className,
-      weekStart: reportData.weekStart,
-      weekEnd: reportData.weekEnd,
-      doneText: reportData.doneText.slice(0, 1500),
-      nextText: reportData.nextText.slice(0, 1500),
-      status: reportData.status,
-      submittedAt: reportData.status === 'SUBMITTED' ? now : null,
-      isLate: reportData.isLate,
-      createdAt: now,
-      updatedAt: now
-    };
-
-    await setDoc(docRef, newReport);
+    return { operation, docPath, fieldNames: payloadFields };
+  } catch (err: any) {
+    console.error(
+      `[saveStudentWeeklyReport GAGAL] Operasi: ${operation}, Path: ${docPath}, Field: [${payloadFields.join(', ')}]. Galat:`,
+      err
+    );
+    // Lampirkan metadata pada error agar konsisten diakses oleh catch block pemanggil
+    err.operation = operation;
+    err.docPath = docPath;
+    err.payloadFields = payloadFields;
+    throw err;
   }
 }
 

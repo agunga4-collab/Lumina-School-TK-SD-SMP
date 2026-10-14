@@ -2272,7 +2272,20 @@ service cloud.firestore {
     }
 
     match /jh_so_weekly_reports/{reportId} {
-      allow read: if isSignedIn() && (
+      allow get: if isSignedIn() && (
+        isAdmin() ||
+        isJuniorHighStaff() ||
+        (isStudent() && (
+          resource == null ||
+          isOwnStudentData(resource.data.studentId) ||
+          (
+            exists(/databases/$(database)/documents/jh_so_memberships/$(resource.data.groupId + '_' + getStudentNis())) &&
+            get(/databases/$(database)/documents/jh_so_memberships/$(resource.data.groupId + '_' + getStudentNis())).data.canAssignTasks == true
+          )
+        ))
+      );
+
+      allow list: if isSignedIn() && (
         isAdmin() ||
         isJuniorHighStaff() ||
         (isStudent() && resource != null && (

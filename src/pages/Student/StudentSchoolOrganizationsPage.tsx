@@ -556,7 +556,7 @@ export default function StudentSchoolOrganizationsPage() {
                     <StudentWeeklyReportSection
                       group={group}
                       membership={membership}
-                      studentId={studentId}
+                      studentId={membership.studentId || studentId}
                       studentName={membership.studentName || studentName}
                       academicYear={group.academicYear}
                       teamMembers={teamMembers}

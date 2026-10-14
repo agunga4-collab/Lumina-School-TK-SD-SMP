@@ -82,6 +82,14 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
   const [nextText, setNextText] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
+  const effectiveStudentId = useMemo(() => {
+    return (membership.studentId || studentId || '').trim();
+  }, [membership.studentId, studentId]);
+
+  const effectiveStudentName = useMemo(() => {
+    return (membership.studentName || studentName || 'Siswa').trim();
+  }, [membership.studentName, studentName]);
+
   const selectedPeriod = useMemo(() => {
     return weekPeriods.find(p => p.weekStart === selectedWeekStart) || weekPeriods[0];
   }, [weekPeriods, selectedWeekStart]);
@@ -92,10 +100,10 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
 
   // Load student's own reports for this activity
   const loadMyReports = useCallback(async () => {
-    if (!studentId || !academicYear) return;
+    if (!effectiveStudentId || !academicYear) return;
     setIsLoadingReports(true);
     try {
-      const allReports = await getStudentWeeklyReports(studentId, academicYear);
+      const allReports = await getStudentWeeklyReports(effectiveStudentId, academicYear);
       // Filter for this specific group
       const groupReportsMap: Record<string, SOWeeklyReport> = {};
       allReports
@@ -110,7 +118,7 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
     } finally {
       setIsLoadingReports(false);
     }
-  }, [studentId, academicYear, group.id]);
+  }, [effectiveStudentId, academicYear, group.id]);
 
   useEffect(() => {
     loadMyReports();
@@ -238,6 +246,7 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
     }
 
     setIsSaving(true);
+    const isExisting = Boolean(currentReport);
     try {
       const willBeLate = isSubmissionLate(selectedPeriod.weekStart);
 
@@ -246,29 +255,30 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
         groupName: group.name,
         programType: group.programType as 'OSIS' | 'SWJ',
         academicYear: group.academicYear,
-        studentId: studentId.trim(),
-        studentName: studentName.trim(),
-        classId: membership.classId || '',
-        className: membership.className || 'Junior High',
+        studentId: effectiveStudentId,
+        studentName: effectiveStudentName,
+        classId: (membership.classId || '').trim(),
+        className: (membership.className || 'Junior High').trim(),
         weekStart: selectedPeriod.weekStart,
         weekEnd: selectedPeriod.weekEnd,
         doneText: doneText.trim(),
         nextText: nextText.trim(),
         status,
-        isLate: willBeLate
+        isLate: willBeLate,
+        isUpdate: isExisting
       });
 
       // Update state only after successful write
       const updatedReport: SOWeeklyReport = {
-        id: makeWeeklyReportId(group.id, studentId, selectedPeriod.weekStart),
+        id: makeWeeklyReportId(group.id, effectiveStudentId, selectedPeriod.weekStart),
         groupId: group.id,
         groupName: group.name,
         programType: group.programType as 'OSIS' | 'SWJ',
         academicYear: group.academicYear,
-        studentId: studentId.trim(),
-        studentName: studentName.trim(),
-        classId: membership.classId || '',
-        className: membership.className || 'Junior High',
+        studentId: effectiveStudentId,
+        studentName: effectiveStudentName,
+        classId: (membership.classId || '').trim(),
+        className: (membership.className || 'Junior High').trim(),
         weekStart: selectedPeriod.weekStart,
         weekEnd: selectedPeriod.weekEnd,
         doneText: doneText.trim(),
@@ -302,8 +312,23 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
         toast.success('Draf laporan mingguan berhasil disimpan.');
       }
     } catch (err: any) {
-      console.error('Gagal menyimpan laporan mingguan:', err);
-      toast.error('Gagal menyimpan laporan: ' + (err.message || 'Terjadi kesalahan koneksi'));
+      const operation = err?.operation || (isExisting ? 'update' : 'create');
+      const docPath =
+        err?.docPath ||
+        `jh_so_weekly_reports/${makeWeeklyReportId(group.id, effectiveStudentId, selectedPeriod.weekStart)}`;
+      const fieldsStr =
+        err?.payloadFields && Array.isArray(err.payloadFields)
+          ? ` [Field: ${err.payloadFields.join(', ')}]`
+          : '';
+      const errMsg = err?.message || 'Missing or insufficient permissions';
+
+      console.error(
+        `[handleSaveReport] Gagal menyimpan laporan mingguan (${operation}) pada "${docPath}"${fieldsStr}. Galat:`,
+        err
+      );
+      toast.error(
+        `Gagal menyimpan (${operation}) ke ${docPath}${fieldsStr}: ${errMsg}`
+      );
       // DO NOT update UI optimistically on error
     } finally {
       setIsSaving(false);
