@@ -31,6 +31,7 @@ import {
   type SchoolOrgProgramType,
   type SOMasterOptions
 } from '../../types/schoolOrganizations';
+import { StudentWeeklyReportSection } from './components/StudentWeeklyReportSection';
 
 interface ActivityItem {
   membership: SOMembership;
@@ -53,6 +54,11 @@ export default function StudentSchoolOrganizationsPage() {
   // Student identification (NIS: studentId / luminaId)
   const studentId = React.useMemo(() => {
     return ((currentUser as any)?.studentId || currentUser?.luminaId || '').trim();
+  }, [currentUser]);
+
+  // Student name
+  const studentName = React.useMemo(() => {
+    return (currentUser?.displayName || (currentUser as any)?.name || 'Siswa').trim();
   }, [currentUser]);
 
   // Sync selectedYear if activeYear changes
@@ -544,6 +550,18 @@ export default function StudentSchoolOrganizationsPage() {
                       </div>
                     )}
                   </div>
+
+                  {/* Laporan Mingguan (Weekly Report) - Khusus OSIS dan SWJ */}
+                  {(membership.programType === 'OSIS' || membership.programType === 'SWJ') && (
+                    <StudentWeeklyReportSection
+                      group={group}
+                      membership={membership}
+                      studentId={studentId}
+                      studentName={membership.studentName || studentName}
+                      academicYear={group.academicYear}
+                      teamMembers={teamMembers}
+                    />
+                  )}
                 </motion.div>
               );
             })}
