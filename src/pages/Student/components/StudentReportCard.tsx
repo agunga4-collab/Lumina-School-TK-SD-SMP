@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { motion } from 'motion/react';
-import { FileText, Calendar, Eye, ExternalLink } from 'lucide-react';
+import { FileText, Calendar, Eye } from 'lucide-react';
 
 export interface StudentReportCardProps {
   id?: string;
@@ -48,24 +48,24 @@ export const StudentReportCard: React.FC<StudentReportCardProps> = ({
             <FileText size={22} />
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap justify-end">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap">
             <span
-              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${
                 isMidterm
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
                   : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
               }`}
             >
-              {type}
+              {isMidterm ? 'Midterm' : 'Lainnya'}
             </span>
 
             {isViewed ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200/60">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200/60 whitespace-nowrap">
                 <Eye size={12} className="shrink-0" />
                 <span>Sudah dilihat</span>
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60 whitespace-nowrap">
                 <span>Baru</span>
               </span>
             )}
@@ -91,18 +91,7 @@ export const StudentReportCard: React.FC<StudentReportCardProps> = ({
 
       {/* Bottom Action Button */}
       <div className="pt-2">
-        {driveUrl ? (
-          <a
-            href={driveUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={onOpen}
-            className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-blue-200/50 cursor-pointer text-center"
-          >
-            <ExternalLink size={14} className="shrink-0" />
-            <span>Buka Rapor</span>
-          </a>
-        ) : disabled ? (
+        {disabled ? (
           <button
             disabled
             type="button"

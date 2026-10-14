@@ -522,10 +522,24 @@ export default function StudentReports() {
   };
 
   const handleOpenOtherReport = (report: any) => {
-    // 1. Immediately set report for viewer modal so UI renders instantly without waiting
-    setSelectedOtherReport(report);
+    // Resolve driveFileId if present as /file/d/ or /open?id=
+    const url = report.driveFileUrl || report.driveUrl || '';
+    const extractedId = report.driveFileId || (() => {
+      const m1 = url.match(/\/file\/d\/([a-zA-Z0-9-_]+)/);
+      if (m1 && m1[1]) return m1[1];
+      const m2 = url.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+      if (m2 && m2[1]) return m2[1];
+      return '';
+    })();
 
-    // 2. Optimistically update local state so badge turns to 'Sudah Dilihat' immediately
+    const reportToOpen = extractedId && !report.driveFileId
+      ? { ...report, driveFileId: extractedId }
+      : report;
+
+    // 1. Immediately set report for viewer modal so UI renders instantly without waiting
+    setSelectedOtherReport(reportToOpen);
+
+    // 2. Optimistically update local state so badge turns to 'Sudah dilihat' immediately
     setJhOtherReports(prev => prev.map(r => {
       if (r.id === report.id) {
         return {
@@ -559,42 +573,6 @@ export default function StudentReports() {
       console.error("Error dispatching tracking update:", e);
     }
   };
-
-  const trackOtherReportView = React.useCallback((report: any) => {
-    // Optimistically update local state so badge turns to 'Sudah dilihat' immediately
-    setJhOtherReports(prev => prev.map(r => {
-      if (r.id === report.id) {
-        return {
-          ...r,
-          isOpened: true,
-          openCount: (r.openCount || 0) + 1,
-          lastOpenedAt: Date.now()
-        };
-      }
-      return r;
-    }));
-
-    // Non-blocking Firestore tracking update
-    try {
-      const targetCol = report._collection || (report.classId && String(report.classId).startsWith('ELEMENTARY') ? 'elem_other_report_links' : 'jh_other_report_links');
-      const docRef = doc(db, targetCol, report.id);
-      const now = Date.now();
-      const updateData: any = {
-        isOpened: true,
-        lastOpenedAt: now,
-        openCount: increment(1),
-        openedByEmail: currentUser?.email || ''
-      };
-      if (!report.isOpened && !report.firstOpenedAt) {
-        updateData.firstOpenedAt = now;
-      }
-      updateDoc(docRef, updateData).catch(err => {
-        console.error("Failed to update tracking for other report:", err);
-      });
-    } catch (e) {
-      console.error("Error dispatching tracking update:", e);
-    }
-  }, [currentUser?.email]);
 
   const handleSelectRole = async (role: 'student' | 'parent') => {
     if (!activeReportForPopup || !studentData) return;
@@ -926,8 +904,8 @@ export default function StudentReports() {
                     semester={sem}
                     isViewed={isViewed}
                     driveUrl={driveUrl || undefined}
-                    disabled={!driveUrl}
-                    onOpen={() => trackOtherReportView(report)}
+                    disabled={!driveUrl && !report.driveFileId}
+                    onOpen={() => handleOpenOtherReport(report)}
                     index={idx}
                   />
                 );
@@ -1744,7 +1722,10 @@ export function OtherReportViewerModal({
   const driveFileId = report.driveFileId || (() => {
     const url = report.driveFileUrl || report.driveUrl || '';
     const m = url.match(/\/file\/d\/([a-zA-Z0-9-_]+)/);
-    return m ? m[1] : '';
+    if (m && m[1]) return m[1];
+    const m2 = url.match(/[?&]id=([a-zA-Z0-9-_]+)/);
+    if (m2 && m2[1]) return m2[1];
+    return '';
   })();
 
   const driveFileUrl = report.driveFileUrl || report.driveUrl || (driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : '');
