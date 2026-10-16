@@ -16,10 +16,10 @@ import {
 } from 'firebase/firestore';
 import {
   BookOpen,
-  Loader2,
-  Sparkles,
   Edit3,
   History as HistoryIcon,
+  Loader2,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -31,8 +31,12 @@ import {
   getSurahsInJuz,
   getAyahRangeForSurahInJuz,
 } from '../../constants/quranReference';
+import type { AyahRange } from '../../constants/quranReference';
 
-type ParticipantStatus =
+const PARTICIPANTS = 'elementary_quran_participants';
+const READING_LOGS = 'elementary_quran_reading_logs';
+
+type Status =
   | 'loading'
   | 'active'
   | 'inactive'
@@ -45,6 +49,15 @@ type ReadingForm = {
   surahNumber: number;
   ayat: string;
   note: string;
+};
+
+type Participant = {
+  studentUid: string;
+  studentName: string;
+  classId?: string;
+  className?: string;
+  unit: string;
+  status: string;
 };
 
 type ReadingLog = {
@@ -78,25 +91,18 @@ type HistoryEntry = {
   changedByUid?: string;
 };
 
-type SurahOption = {
-  number: number;
-  name: string;
-};
+const INPUT_CLASS =
+  'w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50';
 
-type AyahRange = {
-  startAyah: number;
-  endAyah: number;
-};
-
-const LOG_COLLECTION = 'elementary_quran_reading_logs';
-const PARTICIPANT_COLLECTION = 'elementary_quran_participants';
+const PRIMARY_BUTTON =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50';
 
 const APPRECIATION_MESSAGES = [
   'Alhamdulillah! Bacaanmu sudah tercatat.',
   'Masya Allah! Terima kasih sudah meluangkan waktu membaca.',
   'Semangat terus belajar membaca Al-Qur’an, ya!',
   'Sedikit demi sedikit, terus jaga kebiasaan baikmu.',
-  'Alhamdulillah! Kamu sudah mencatat bacaan hari ini.',
+  'Alhamdulillah! Catatan bacaanmu bertambah.',
   'Semoga Allah memudahkan langkah belajarmu.',
   'Hebat! Teruslah membaca dengan tenang dan teliti.',
   'Masya Allah! Pertahankan semangat belajarmu.',
@@ -105,12 +111,6 @@ const APPRECIATION_MESSAGES = [
   'Terima kasih sudah berusaha hari ini.',
   'Alhamdulillah! Sampai bertemu pada catatan berikutnya.',
 ];
-
-const INPUT_CLASS =
-  'w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50';
-
-const PRIMARY_BUTTON =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50';
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -122,15 +122,17 @@ function getWibDateString(date = new Date()): string {
     .slice(0, 10);
 }
 
-function previousDate(dateString: string): string {
-  const date = new Date(`${dateString}T00:00:00Z`);
+function previousDate(value: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() - 1);
   return date.toISOString().slice(0, 10);
 }
 
-function isValidDate(value: string): boolean {
+function validDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+
   const date = new Date(`${value}T00:00:00Z`);
+
   return (
     Number.isFinite(date.getTime()) &&
     date.toISOString().slice(0, 10) === value
@@ -141,8 +143,8 @@ function timestampMillis(value: any): number {
   if (value && typeof value.toMillis === 'function') {
     return value.toMillis();
   }
-  if (typeof value === 'number') return value;
-  return 0;
+
+  return typeof value === 'number' ? value : 0;
 }
 
 function formatTimestamp(value: any): string {
@@ -156,7 +158,10 @@ function formatTimestamp(value: any): string {
   });
 }
 
-function getRange(juz: number, surahNumber: number): AyahRange | null {
+function safeRange(
+  juz: number,
+  surahNumber: number
+): AyahRange | null {
   if (
     !Number.isInteger(juz) ||
     juz < 1 ||
@@ -168,58 +173,10 @@ function getRange(juz: number, surahNumber: number): AyahRange | null {
     return null;
   }
 
-  const range = getAyahRangeForSurahInJuz(juz, surahNumber);
-  if (!range) return null;
-
-  const startAyah = Number(range.startAyah);
-  const endAyah = Number(range.endAyah);
-
-  if (
-    !Number.isInteger(startAyah) ||
-    !Number.isInteger(endAyah) ||
-    startAyah < 1 ||
-    endAyah < startAyah
-  ) {
-    return null;
-  }
-
-  return { startAyah, endAyah };
+  return getAyahRangeForSurahInJuz(juz, surahNumber);
 }
 
-function getSurahName(number: number): string {
-  const surah = getSurahByNumber(number) as any;
-  return text(surah?.name) || text(surah?.surahName);
-}
-
-function getSurahOptions(juz: number): SurahOption[] {
-  if (!Number.isInteger(juz) || juz < 1 || juz > 30) return [];
-
-  const source = getSurahsInJuz(juz) as unknown;
-  if (!Array.isArray(source)) return [];
-
-  const options = new Map<number, SurahOption>();
-
-  source.forEach((item: any) => {
-    const number = Number(
-      typeof item === 'number'
-        ? item
-        : item?.surahNumber ?? item?.number
-    );
-
-    if (!Number.isInteger(number) || !getRange(juz, number)) return;
-
-    const name =
-      getSurahName(number) ||
-      text(item?.surahName) ||
-      text(item?.name);
-
-    if (name) options.set(number, { number, name });
-  });
-
-  return [...options.values()].sort((a, b) => a.number - b.number);
-}
-
-function emptyForm(): ReadingForm {
+function initialForm(): ReadingForm {
   return {
     readDate: getWibDateString(),
     juz: 1,
@@ -229,23 +186,24 @@ function emptyForm(): ReadingForm {
   };
 }
 
-function formIsValid(form: ReadingForm): boolean {
-  const range = getRange(form.juz, form.surahNumber);
+function isValidForm(form: ReadingForm): boolean {
+  const range = safeRange(form.juz, form.surahNumber);
+  if (!range) return false;
+
   const ayat = Number(form.ayat);
 
-  return Boolean(
-    range &&
-      form.ayat.trim() &&
-      Number.isInteger(ayat) &&
-      ayat >= range.startAyah &&
-      ayat <= range.endAyah &&
-      isValidDate(form.readDate) &&
-      form.readDate <= getWibDateString() &&
-      form.note.length <= 200
+  return (
+    form.ayat.trim() !== '' &&
+    Number.isInteger(ayat) &&
+    ayat >= range.startAyah &&
+    ayat <= range.endAyah &&
+    validDate(form.readDate) &&
+    form.readDate <= getWibDateString() &&
+    form.note.length <= 200
   );
 }
 
-function toForm(log: ReadingLog): ReadingForm {
+function logToForm(log: ReadingLog): ReadingForm {
   return {
     readDate: log.readDate,
     juz: Number(log.juz),
@@ -261,52 +219,52 @@ function ReadingFields({
   disabled,
 }: {
   value: ReadingForm;
-  onChange: (value: ReadingForm) => void;
+  onChange: (next: ReadingForm) => void;
   disabled: boolean;
 }) {
-  const [surahSearch, setSurahSearch] = useState('');
+  const [search, setSearch] = useState('');
 
+  // Helper mengembalikan Surah[]: number, name, totalVerses.
   const surahs = useMemo(
-    () => getSurahOptions(value.juz),
+    () => getSurahsInJuz(value.juz),
     [value.juz]
   );
 
-  const range = getRange(value.juz, value.surahNumber);
+  const range = safeRange(value.juz, value.surahNumber);
 
   const visibleSurahs = surahs.filter(
     surah =>
       surah.number === value.surahNumber ||
-      surah.name.toLowerCase().includes(surahSearch.toLowerCase().trim())
+      surah.name.toLowerCase().includes(search.trim().toLowerCase())
   );
 
-  const changeJuz = (juz: number) => {
-    setSurahSearch('');
+  function changeJuz(nextJuz: number) {
+    setSearch('');
     onChange({
       ...value,
-      juz,
+      juz: nextJuz,
       surahNumber: 0,
       ayat: '',
     });
-  };
+  }
 
-  const changeSurah = (surahNumber: number) => {
-    const nextRange = getRange(value.juz, surahNumber);
+  function changeSurah(nextSurah: number) {
+    const nextRange = safeRange(value.juz, nextSurah);
     const currentAyat = Number(value.ayat);
 
-    const keepAyat = Boolean(
-      nextRange &&
-        value.ayat.trim() &&
-        Number.isInteger(currentAyat) &&
-        currentAyat >= nextRange.startAyah &&
-        currentAyat <= nextRange.endAyah
-    );
+    const keepAyat =
+      nextRange !== null &&
+      value.ayat.trim() !== '' &&
+      Number.isInteger(currentAyat) &&
+      currentAyat >= nextRange.startAyah &&
+      currentAyat <= nextRange.endAyah;
 
     onChange({
       ...value,
-      surahNumber,
+      surahNumber: nextSurah,
       ayat: keepAyat ? value.ayat : '',
     });
-  };
+  }
 
   return (
     <fieldset disabled={disabled} className="space-y-4">
@@ -331,11 +289,13 @@ function ReadingFields({
           onChange={event => changeJuz(Number(event.target.value))}
           className={INPUT_CLASS}
         >
-          {Array.from({ length: 30 }, (_, index) => index + 1).map(juz => (
-            <option key={juz} value={juz}>
-              Juz {juz}
-            </option>
-          ))}
+          {Array.from({ length: 30 }, (_, index) => index + 1).map(
+            juz => (
+              <option key={juz} value={juz}>
+                Juz {juz}
+              </option>
+            )
+          )}
         </select>
       </label>
 
@@ -343,8 +303,8 @@ function ReadingFields({
         <span>Cari surat dalam juz ini</span>
         <input
           type="search"
-          value={surahSearch}
-          onChange={event => setSurahSearch(event.target.value)}
+          value={search}
+          onChange={event => setSearch(event.target.value)}
           placeholder="Ketik nama surat..."
           className={INPUT_CLASS}
         />
@@ -354,7 +314,9 @@ function ReadingFields({
         <span>Surat</span>
         <select
           value={value.surahNumber || ''}
-          onChange={event => changeSurah(Number(event.target.value))}
+          onChange={event =>
+            changeSurah(Number(event.target.value))
+          }
           className={INPUT_CLASS}
           required
         >
@@ -367,10 +329,9 @@ function ReadingFields({
         </select>
       </label>
 
-      {surahs.length === 0 && (
-        <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
-          Referensi surat untuk juz ini belum dapat dimuat. Jangan simpan
-          bacaan sebelum pilihan surat tersedia.
+      {visibleSurahs.length === 0 && (
+        <p className="text-xs text-amber-700">
+          Tidak ada surat yang cocok. Kosongkan pencarian atau ganti juz.
         </p>
       )}
 
@@ -387,6 +348,7 @@ function ReadingFields({
           }
           disabled={disabled || !range}
           className={INPUT_CLASS}
+          placeholder={range ? 'Isi nomor ayat' : 'Pilih surat dahulu'}
           required
         />
       </label>
@@ -394,7 +356,7 @@ function ReadingFields({
       <p className="text-xs text-emerald-700">
         {range
           ? `Rentang yang sesuai: ayat ${range.startAyah}–${range.endAyah}.`
-          : 'Pilih juz dan surat yang sesuai terlebih dahulu.'}
+          : 'Pilih juz dan surat terlebih dahulu.'}
       </p>
 
       <label className="block space-y-1.5 text-sm font-semibold">
@@ -438,7 +400,9 @@ function Modal({
         className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-xl"
       >
         <div className="mb-5 flex items-center justify-between gap-3 border-b border-slate-100 pb-4">
-          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <h2 className="text-lg font-bold text-slate-900">
+            {title}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -456,12 +420,14 @@ function Modal({
 }
 
 export default function StudentQuranPage() {
-  const outlet = useOutletContext<{ currentUser?: any } | undefined>();
+  const outlet = useOutletContext<
+    { currentUser?: any } | undefined
+  >();
   const { profile } = useAuth();
 
   const activeUser = outlet?.currentUser || profile;
 
-  const resolvedStudentId =
+  const studentId =
     text(activeUser?.luminaId) ||
     text(activeUser?.studentId) ||
     text(activeUser?.uid);
@@ -470,8 +436,9 @@ export default function StudentQuranPage() {
     text(activeUser?.unitId) || text(activeUser?.unit)
   ).toUpperCase();
 
-  const [status, setStatus] = useState<ParticipantStatus>('loading');
-  const [participant, setParticipant] = useState<any>(null);
+  const [status, setStatus] = useState<Status>('loading');
+  const [participant, setParticipant] =
+    useState<Participant | null>(null);
   const [pageError, setPageError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -479,7 +446,7 @@ export default function StudentQuranPage() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState('');
 
-  const [form, setForm] = useState<ReadingForm>(emptyForm);
+  const [form, setForm] = useState<ReadingForm>(initialForm);
   const [editing, setEditing] = useState<{
     id: string;
     form: ReadingForm;
@@ -493,7 +460,8 @@ export default function StudentQuranPage() {
     description: string;
   } | null>(null);
 
-  const [historyLogId, setHistoryLogId] = useState<string | null>(null);
+  const [historyLogId, setHistoryLogId] =
+    useState<string | null>(null);
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -506,20 +474,21 @@ export default function StudentQuranPage() {
     setParticipant(null);
     setPageError('');
     setLogs([]);
+    setForm(initialForm());
     setEditing(null);
     setAppreciation(null);
     setHistoryLogId(null);
 
     const loadParticipant = async () => {
       try {
-        if (!resolvedStudentId) {
+        if (!studentId) {
           throw new Error(
             'Identitas siswa belum tersedia. Silakan muat ulang halaman.'
           );
         }
 
         const studentSnapshot = await getDoc(
-          doc(db, 'students', resolvedStudentId)
+          doc(db, 'students', studentId)
         );
 
         if (cancelled) return;
@@ -534,12 +503,17 @@ export default function StudentQuranPage() {
 
         const confirmedUnit = masterUnit || profileUnit;
 
-        if (confirmedUnit && confirmedUnit !== 'ELEMENTARY') {
-          throw new Error('Fitur ini khusus untuk siswa Elementary.');
+        if (
+          confirmedUnit &&
+          confirmedUnit !== 'ELEMENTARY'
+        ) {
+          throw new Error(
+            'Fitur ini khusus untuk siswa Elementary.'
+          );
         }
 
         unsubscribe = onSnapshot(
-          doc(db, PARTICIPANT_COLLECTION, resolvedStudentId),
+          doc(db, PARTICIPANTS, studentId),
           snapshot => {
             if (cancelled) return;
 
@@ -549,32 +523,49 @@ export default function StudentQuranPage() {
               return;
             }
 
-            const data = snapshot.data();
+            const data = snapshot.data() as Participant;
 
             if (data.unit !== 'ELEMENTARY') {
-              setPageError('Data kepesertaan tidak sesuai unit Elementary.');
+              setPageError(
+                'Data kepesertaan tidak sesuai unit Elementary.'
+              );
+              setStatus('error');
+              return;
+            }
+
+            if (
+              data.status !== 'active' &&
+              data.status !== 'inactive'
+            ) {
+              setPageError('Status kepesertaan belum valid.');
               setStatus('error');
               return;
             }
 
             setParticipant(data);
-            setStatus(data.status === 'active' ? 'active' : 'inactive');
+            setStatus(data.status);
           },
           error => {
             if (cancelled) return;
             console.error(
-              '[StudentQuranPage] get participant',
-              PARTICIPANT_COLLECTION,
+              '[StudentQuranPage] get participant:',
               error
             );
-            setPageError('Gagal membaca kepesertaan. Periksa izin akses.');
+            setPageError(
+              'Gagal membaca kepesertaan. Periksa izin akses.'
+            );
             setStatus('error');
           }
         );
       } catch (error: any) {
         if (cancelled) return;
-        console.error('[StudentQuranPage] resolve identity:', error);
-        setPageError(error?.message || 'Gagal memuat identitas siswa.');
+        console.error(
+          '[StudentQuranPage] resolve identity:',
+          error
+        );
+        setPageError(
+          error?.message || 'Gagal memuat identitas siswa.'
+        );
         setStatus('error');
       }
     };
@@ -585,30 +576,33 @@ export default function StudentQuranPage() {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [resolvedStudentId, profileUnit, reloadKey]);
+  }, [studentId, profileUnit, reloadKey]);
 
   useEffect(() => {
     setLogs([]);
     setLogsError('');
 
     if (
-      !resolvedStudentId ||
+      !studentId ||
       (status !== 'active' && status !== 'inactive')
     ) {
       setLogsLoading(false);
       return;
     }
 
+    let cancelled = false;
     setLogsLoading(true);
 
     const logsQuery = query(
-      collection(db, LOG_COLLECTION),
-      where('studentUid', '==', resolvedStudentId)
+      collection(db, READING_LOGS),
+      where('studentUid', '==', studentId)
     );
 
-    return onSnapshot(
+    const unsubscribe = onSnapshot(
       logsQuery,
       snapshot => {
+        if (cancelled) return;
+
         const result = snapshot.docs.map(snapshotDoc => ({
           ...snapshotDoc.data(),
           id: snapshotDoc.id,
@@ -617,7 +611,8 @@ export default function StudentQuranPage() {
         result.sort(
           (a, b) =>
             String(b.readDate).localeCompare(String(a.readDate)) ||
-            timestampMillis(b.createdAt) - timestampMillis(a.createdAt) ||
+            timestampMillis(b.createdAt) -
+              timestampMillis(a.createdAt) ||
             a.id.localeCompare(b.id)
         );
 
@@ -625,12 +620,23 @@ export default function StudentQuranPage() {
         setLogsLoading(false);
       },
       error => {
-        console.error('[StudentQuranPage] list', LOG_COLLECTION, error);
-        setLogsError('Riwayat bacaan gagal dimuat. Silakan coba lagi.');
+        if (cancelled) return;
+        console.error(
+          '[StudentQuranPage] list reading logs:',
+          error
+        );
+        setLogsError(
+          'Riwayat bacaan gagal dimuat. Silakan coba lagi.'
+        );
         setLogsLoading(false);
       }
     );
-  }, [resolvedStudentId, status, reloadKey]);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [studentId, status, reloadKey]);
 
   useEffect(() => {
     if (status !== 'active') setEditing(null);
@@ -640,6 +646,7 @@ export default function StudentQuranPage() {
     if (!historyLogId) return;
 
     let cancelled = false;
+
     setHistoryLoading(true);
     setHistoryError('');
     setHistoryList([]);
@@ -647,7 +654,12 @@ export default function StudentQuranPage() {
     const loadHistory = async () => {
       try {
         const snapshot = await getDocs(
-          collection(db, LOG_COLLECTION, historyLogId, 'history')
+          collection(
+            db,
+            READING_LOGS,
+            historyLogId,
+            'history'
+          )
         );
 
         if (cancelled) return;
@@ -659,13 +671,17 @@ export default function StudentQuranPage() {
 
         result.sort(
           (a, b) =>
-            timestampMillis(b.changedAt) - timestampMillis(a.changedAt)
+            timestampMillis(b.changedAt) -
+            timestampMillis(a.changedAt)
         );
 
         setHistoryList(result);
       } catch (error) {
         if (cancelled) return;
-        console.error('[StudentQuranPage] list history:', error);
+        console.error(
+          '[StudentQuranPage] list history:',
+          error
+        );
         setHistoryError('Riwayat perubahan gagal dimuat.');
       } finally {
         if (!cancelled) setHistoryLoading(false);
@@ -681,11 +697,13 @@ export default function StudentQuranPage() {
 
   const summary = useMemo(() => {
     const dates = new Set(
-      logs.map(log => log.readDate).filter(isValidDate)
+      logs.map(log => log.readDate).filter(validDate)
     );
 
     const today = getWibDateString();
-    let cursor = dates.has(today) ? today : previousDate(today);
+    let cursor = dates.has(today)
+      ? today
+      : previousDate(today);
     let streak = 0;
 
     while (dates.has(cursor)) {
@@ -712,26 +730,31 @@ export default function StudentQuranPage() {
     return [...groups.entries()];
   }, [logs]);
 
-  const saveNewLog = async (event: FormEvent<HTMLFormElement>) => {
+  async function saveNewLog(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     if (
       savingRef.current ||
       status !== 'active' ||
-      !resolvedStudentId ||
+      !studentId ||
       !participant
     ) {
       return;
     }
 
-    if (!formIsValid(form)) {
-      toast.error('Periksa tanggal, surat, dan rentang ayat terlebih dahulu.');
+    if (!isValidForm(form)) {
+      toast.error(
+        'Periksa tanggal, surat, dan rentang ayat terlebih dahulu.'
+      );
       return;
     }
 
-    const surahName = getSurahName(form.surahNumber);
-    if (!surahName) {
-      toast.error('Nama surat belum dapat dimuat.');
+    const surah = getSurahByNumber(form.surahNumber);
+
+    if (!surah) {
+      toast.error('Referensi surat tidak ditemukan.');
       return;
     }
 
@@ -739,16 +762,16 @@ export default function StudentQuranPage() {
     setSubmitting(true);
 
     try {
-      const logData = {
-        studentUid: resolvedStudentId,
+      const data = {
+        studentUid: studentId,
         studentName: text(participant.studentName) || 'Siswa',
         classId: text(participant.classId),
         className: text(participant.className),
         unit: 'ELEMENTARY',
         readDate: form.readDate,
         juz: form.juz,
-        surahNumber: form.surahNumber,
-        surahName,
+        surahNumber: surah.number,
+        surahName: surah.name,
         ayat: Number(form.ayat),
         note: form.note.trim(),
         createdAt: serverTimestamp(),
@@ -758,31 +781,43 @@ export default function StudentQuranPage() {
       };
 
       await setDoc(
-        doc(collection(db, LOG_COLLECTION)),
-        logData
+        doc(collection(db, READING_LOGS)),
+        data
       );
 
       setAppreciation({
         message:
           APPRECIATION_MESSAGES[
-            Math.floor(Math.random() * APPRECIATION_MESSAGES.length)
+            Math.floor(
+              Math.random() * APPRECIATION_MESSAGES.length
+            )
           ],
         description:
-          `Juz ${form.juz} • ${surahName} ayat ${Number(form.ayat)}` +
+          `Juz ${form.juz} • ${surah.name} ayat ${Number(form.ayat)}` +
           ` • ${form.readDate}`,
       });
 
-      setForm(previous => ({ ...previous, note: '' }));
+      setForm(previous => ({
+        ...previous,
+        note: '',
+      }));
     } catch (error) {
-      console.error('[StudentQuranPage] create', LOG_COLLECTION, error);
-      toast.error('Bacaan belum tersimpan. Isianmu tetap tersedia.');
+      console.error(
+        '[StudentQuranPage] create reading log:',
+        error
+      );
+      toast.error(
+        'Bacaan belum tersimpan. Isianmu tetap tersedia.'
+      );
     } finally {
       savingRef.current = false;
       setSubmitting(false);
     }
-  };
+  }
 
-  const saveEditedLog = async (event: FormEvent<HTMLFormElement>) => {
+  async function saveEditedLog(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
     if (
@@ -795,16 +830,20 @@ export default function StudentQuranPage() {
 
     const draft = editing.form;
 
-    if (!formIsValid(draft)) {
-      toast.error('Periksa tanggal, surat, dan rentang ayat pada perubahan.');
+    if (!isValidForm(draft)) {
+      toast.error(
+        'Periksa tanggal, surat, dan rentang ayat pada perubahan.'
+      );
       return;
     }
 
-    const surahName = getSurahName(draft.surahNumber);
+    const surah = getSurahByNumber(draft.surahNumber);
     const actorUid = getAuth(db.app).currentUser?.uid;
 
-    if (!actorUid || !surahName) {
-      toast.error('Identitas akun atau referensi surat belum siap.');
+    if (!actorUid || !surah) {
+      toast.error(
+        'Identitas akun atau referensi surat belum siap.'
+      );
       return;
     }
 
@@ -812,73 +851,94 @@ export default function StudentQuranPage() {
     setSubmitting(true);
 
     try {
-      const logRef = doc(db, LOG_COLLECTION, editing.id);
-      const historyRef = doc(collection(logRef, 'history'));
+      const logRef = doc(
+        db,
+        READING_LOGS,
+        editing.id
+      );
+      const historyRef = doc(
+        collection(logRef, 'history')
+      );
 
-      const changed = await runTransaction(db, async transaction => {
-        const snapshot = await transaction.get(logRef);
+      const changed = await runTransaction(
+        db,
+        async transaction => {
+          const snapshot = await transaction.get(logRef);
 
-        if (!snapshot.exists()) {
-          throw new Error('Catatan bacaan tidak ditemukan.');
+          if (!snapshot.exists()) {
+            throw new Error(
+              'Catatan bacaan tidak ditemukan.'
+            );
+          }
+
+          const current = snapshot.data();
+
+          if (current.studentUid !== studentId) {
+            throw new Error(
+              'Catatan ini bukan milik siswa yang sedang login.'
+            );
+          }
+
+          const next = {
+            readDate: draft.readDate,
+            juz: draft.juz,
+            surahNumber: surah.number,
+            surahName: surah.name,
+            ayat: Number(draft.ayat),
+            note: draft.note.trim(),
+          };
+
+          const unchanged =
+            current.readDate === next.readDate &&
+            current.juz === next.juz &&
+            current.surahNumber === next.surahNumber &&
+            current.surahName === next.surahName &&
+            current.ayat === next.ayat &&
+            (current.note || '') === next.note;
+
+          if (unchanged) return false;
+
+          transaction.set(historyRef, {
+            readDate: current.readDate,
+            juz: current.juz,
+            surahNumber: current.surahNumber,
+            surahName: current.surahName,
+            ayat: current.ayat,
+            note: current.note || '',
+            changedAt: serverTimestamp(),
+            changedByUid: actorUid,
+          });
+
+          transaction.update(logRef, {
+            ...next,
+            updatedAt: serverTimestamp(),
+            editCount:
+              Number(current.editCount || 0) + 1,
+          });
+
+          return true;
         }
-
-        const current = snapshot.data();
-
-        if (current.studentUid !== resolvedStudentId) {
-          throw new Error('Catatan ini bukan milik akun siswa ini.');
-        }
-
-        const next = {
-          readDate: draft.readDate,
-          juz: draft.juz,
-          surahNumber: draft.surahNumber,
-          surahName,
-          ayat: Number(draft.ayat),
-          note: draft.note.trim(),
-        };
-
-        const unchanged =
-          current.readDate === next.readDate &&
-          current.juz === next.juz &&
-          current.surahNumber === next.surahNumber &&
-          current.surahName === next.surahName &&
-          current.ayat === next.ayat &&
-          (current.note || '') === next.note;
-
-        if (unchanged) return false;
-
-        transaction.set(historyRef, {
-          readDate: current.readDate,
-          juz: current.juz,
-          surahNumber: current.surahNumber,
-          surahName: current.surahName,
-          ayat: current.ayat,
-          note: current.note || '',
-          changedAt: serverTimestamp(),
-          changedByUid: actorUid,
-        });
-
-        transaction.update(logRef, {
-          ...next,
-          updatedAt: serverTimestamp(),
-          editCount: Number(current.editCount || 0) + 1,
-        });
-
-        return true;
-      });
+      );
 
       toast.success(
-        changed ? 'Bacaan berhasil diperbarui.' : 'Tidak ada perubahan.'
+        changed
+          ? 'Bacaan berhasil diperbarui.'
+          : 'Tidak ada perubahan.'
       );
       setEditing(null);
     } catch (error) {
-      console.error('[StudentQuranPage] update/history:', error);
-      toast.error('Perubahan gagal disimpan. Silakan periksa izin akses.');
+      console.error(
+        '[StudentQuranPage] update reading log:',
+        error
+      );
+      toast.error(
+        'Perubahan gagal disimpan. Periksa izin akses atau coba lagi.'
+      );
     } finally {
       savingRef.current = false;
       setSubmitting(false);
     }
-  };
+  }
 
   if (status === 'loading') {
     return (
@@ -892,10 +952,16 @@ export default function StudentQuranPage() {
     return (
       <div className="mx-auto max-w-2xl p-6">
         <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
-          <h1 className="font-bold text-red-900">Data belum dapat dimuat</h1>
-          <p className="mt-2 text-sm text-red-700">{pageError}</p>
+          <h1 className="font-bold text-red-900">
+            Data belum dapat dimuat
+          </h1>
+          <p className="mt-2 text-sm text-red-700">
+            {pageError}
+          </p>
           <button
-            onClick={() => setReloadKey(value => value + 1)}
+            onClick={() =>
+              setReloadKey(value => value + 1)
+            }
             className={`${PRIMARY_BUTTON} mt-4`}
           >
             Coba Lagi
@@ -910,7 +976,9 @@ export default function StudentQuranPage() {
       <div className="mx-auto max-w-2xl p-6">
         <div className="rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center">
           <BookOpen className="mx-auto mb-4 h-10 w-10 text-amber-600" />
-          <h1 className="text-xl font-bold">Sahabat Qur&apos;an</h1>
+          <h1 className="text-xl font-bold">
+            Sahabat Qur&apos;an
+          </h1>
           <p className="mt-3 text-sm text-amber-800">
             Kamu belum terdaftar di Sahabat Qur&apos;an.
             Tanyakan ke gurumu ya.
@@ -927,7 +995,9 @@ export default function StudentQuranPage() {
           <BookOpen className="h-5 w-5" />
           Program Harian Elementary
         </div>
-        <h1 className="text-3xl font-extrabold">Sahabat Qur&apos;an</h1>
+        <h1 className="text-3xl font-extrabold">
+          Sahabat Qur&apos;an
+        </h1>
         <p className="mt-2 text-sm text-emerald-100">
           Catat bacaan Al-Qur&apos;an dan lihat perjalanan belajarmu.
         </p>
@@ -944,7 +1014,9 @@ export default function StudentQuranPage() {
         <div className="rounded-2xl bg-red-50 p-4 text-sm text-red-700">
           <p>{logsError}</p>
           <button
-            onClick={() => setReloadKey(value => value + 1)}
+            onClick={() =>
+              setReloadKey(value => value + 1)
+            }
             className="mt-2 font-bold underline"
           >
             Coba Lagi
@@ -963,11 +1035,15 @@ export default function StudentQuranPage() {
             },
             {
               title: 'Berturut-turut',
-              value: logsLoading ? 'Memuat...' : `${summary.streak} hari`,
+              value: logsLoading
+                ? 'Memuat...'
+                : `${summary.streak} hari`,
             },
             {
               title: 'Total Hari Membaca',
-              value: logsLoading ? 'Memuat...' : `${summary.totalDays} hari`,
+              value: logsLoading
+                ? 'Memuat...'
+                : `${summary.totalDays} hari`,
             },
             {
               title: 'Bacaan Terakhir',
@@ -995,26 +1071,37 @@ export default function StudentQuranPage() {
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
         {status === 'active' && (
-          <section className="min-w-0 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm lg:col-span-5 md:p-6">
-            <h2 className="mb-1 text-lg font-bold">Catat Bacaan Baru</h2>
+          <section className="min-w-0 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm md:p-6 lg:col-span-5">
+            <h2 className="mb-1 text-lg font-bold">
+              Catat Bacaan Baru
+            </h2>
             <p className="mb-5 text-xs text-slate-500">
               Isi posisi ayat terakhir yang kamu baca.
             </p>
-            <form onSubmit={saveNewLog} className="space-y-5">
+
+            <form
+              onSubmit={saveNewLog}
+              className="space-y-5"
+            >
               <ReadingFields
                 value={form}
                 onChange={setForm}
                 disabled={submitting}
               />
+
               <button
                 type="submit"
-                disabled={submitting || !formIsValid(form)}
+                disabled={
+                  submitting || !isValidForm(form)
+                }
                 className={`${PRIMARY_BUTTON} w-full`}
               >
                 {submitting && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-                {submitting ? 'Menyimpan...' : 'Simpan Catatan Bacaan'}
+                {submitting
+                  ? 'Menyimpan...'
+                  : 'Simpan Catatan Bacaan'}
               </button>
             </form>
           </section>
@@ -1022,11 +1109,15 @@ export default function StudentQuranPage() {
 
         <section
           className={`min-w-0 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm md:p-6 ${
-            status === 'active' ? 'lg:col-span-7' : 'lg:col-span-12'
+            status === 'active'
+              ? 'lg:col-span-7'
+              : 'lg:col-span-12'
           }`}
         >
           <div className="mb-5 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-bold">Riwayat Bacaan</h2>
+            <h2 className="text-lg font-bold">
+              Riwayat Bacaan
+            </h2>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs">
               {logs.length} entri
             </span>
@@ -1035,7 +1126,9 @@ export default function StudentQuranPage() {
           {logsLoading ? (
             <Loader2 className="mx-auto my-10 h-6 w-6 animate-spin text-emerald-600" />
           ) : logsError ? (
-            <p className="text-sm text-red-600">{logsError}</p>
+            <p className="text-sm text-red-600">
+              {logsError}
+            </p>
           ) : logs.length === 0 ? (
             <p className="py-10 text-center text-sm text-slate-400">
               Belum ada bacaan yang tercatat.
@@ -1044,7 +1137,10 @@ export default function StudentQuranPage() {
             <div className="space-y-6">
               {groupedLogs.map(([date, entries]) => (
                 <div key={date} className="space-y-3">
-                  <h3 className="text-xs font-bold text-slate-500">{date}</h3>
+                  <h3 className="text-xs font-bold text-slate-500">
+                    {date}
+                  </h3>
+
                   {entries.map(log => (
                     <article
                       key={log.id}
@@ -1076,7 +1172,9 @@ export default function StudentQuranPage() {
                               Diedit {log.editCount}x
                             </span>
                             <button
-                              onClick={() => setHistoryLogId(log.id)}
+                              onClick={() =>
+                                setHistoryLogId(log.id)
+                              }
                               className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"
                             >
                               <HistoryIcon className="h-3.5 w-3.5" />
@@ -1084,11 +1182,15 @@ export default function StudentQuranPage() {
                             </button>
                           </>
                         )}
+
                         {status === 'active' && (
                           <button
                             disabled={submitting}
                             onClick={() =>
-                              setEditing({ id: log.id, form: toForm(log) })
+                              setEditing({
+                                id: log.id,
+                                form: logToForm(log),
+                              })
                             }
                             className="inline-flex items-center gap-1 rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold"
                           >
@@ -1113,7 +1215,9 @@ export default function StudentQuranPage() {
         >
           <div className="space-y-5 text-center">
             <Sparkles className="mx-auto h-12 w-12 text-emerald-600" />
-            <p className="text-slate-700">{appreciation.message}</p>
+            <p className="text-slate-700">
+              {appreciation.message}
+            </p>
             <p className="rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
               {appreciation.description}
             </p>
@@ -1133,16 +1237,22 @@ export default function StudentQuranPage() {
           onClose={() => setEditing(null)}
           busy={submitting}
         >
-          <form onSubmit={saveEditedLog} className="space-y-5">
+          <form
+            onSubmit={saveEditedLog}
+            className="space-y-5"
+          >
             <ReadingFields
               value={editing.form}
               onChange={next =>
                 setEditing(previous =>
-                  previous ? { ...previous, form: next } : null
+                  previous
+                    ? { ...previous, form: next }
+                    : null
                 )
               }
               disabled={submitting}
             />
+
             <div className="flex justify-end gap-3">
               <button
                 type="button"
@@ -1152,9 +1262,13 @@ export default function StudentQuranPage() {
               >
                 Batal
               </button>
+
               <button
                 type="submit"
-                disabled={submitting || !formIsValid(editing.form)}
+                disabled={
+                  submitting ||
+                  !isValidForm(editing.form)
+                }
                 className={PRIMARY_BUTTON}
               >
                 {submitting && (
@@ -1175,7 +1289,9 @@ export default function StudentQuranPage() {
           {historyLoading ? (
             <Loader2 className="mx-auto my-8 h-6 w-6 animate-spin text-emerald-600" />
           ) : historyError ? (
-            <p className="text-sm text-red-600">{historyError}</p>
+            <p className="text-sm text-red-600">
+              {historyError}
+            </p>
           ) : historyList.length === 0 ? (
             <p className="text-sm text-slate-500">
               Tidak ada riwayat perubahan.
@@ -1194,9 +1310,12 @@ export default function StudentQuranPage() {
                     Nilai sebelum perubahan:
                   </p>
                   <p className="font-bold">
-                    Juz {entry.juz} • {entry.surahName} • ayat {entry.ayat}
+                    Juz {entry.juz} • {entry.surahName} • ayat{' '}
+                    {entry.ayat}
                   </p>
-                  <p>Tanggal bacaan: {entry.readDate}</p>
+                  <p>
+                    Tanggal bacaan: {entry.readDate}
+                  </p>
                   {entry.note && (
                     <p className="whitespace-pre-wrap break-words text-slate-600">
                       {entry.note}
