@@ -822,6 +822,7 @@ export function Layout() {
                   <NavItem to="/elementary/midterm" icon={<FileText size={18} />} label="Midterm Report" />
                   <NavItem to="/elementary/midterm-sn" icon={<Shield size={18} />} label="Midterm Report SN" />
                   <NavItem to="/elementary/other-report" icon={<FileText size={18} />} label="Other Report" />
+                  <NavItem to="/elementary/quran-participants" icon={<BookOpen size={18} />} label="Peserta Sahabat Qur'an" />
                 </div>
               )}
 

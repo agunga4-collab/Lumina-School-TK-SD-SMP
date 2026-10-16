@@ -130,10 +130,13 @@ testConnection();
 
 export async function getUserProfile(uid: string): Promise<AppUser | null> {
   try {
+    if (!uid || typeof uid !== 'string' || !uid.trim()) {
+      return null;
+    }
     const docRef = doc(db, 'users', uid);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      return docSnap.data() as AppUser;
+      return { uid: docSnap.id, ...docSnap.data() } as AppUser;
     }
     return null;
   } catch (err: any) {
@@ -668,6 +671,9 @@ export async function deleteLXD(id: string): Promise<void> {
 
 export async function getBehaviorNotifications(userId: string): Promise<BehaviorNotification[]> {
   try {
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      return [];
+    }
     const q = query(
       collection(db, 'behavior_notifications'),
       where('targetUserIds', 'array-contains', userId)
@@ -680,11 +686,12 @@ export async function getBehaviorNotifications(userId: string): Promise<Behavior
 
     if (notifications.length === 0) return [];
 
-    const caseIds = Array.from(new Set(notifications.map(n => n.caseId).filter(Boolean)));
+    const caseIds = Array.from(new Set(notifications.map(n => n.caseId).filter(Boolean))) as string[];
     const activeCaseIds = new Set<string>();
 
     await Promise.all(caseIds.map(async (caseId) => {
       try {
+        if (!caseId) return;
         const caseDoc = await getDoc(doc(db, 'behaviorCases', caseId));
         if (caseDoc.exists()) {
           const cData = caseDoc.data();
@@ -701,11 +708,13 @@ export async function getBehaviorNotifications(userId: string): Promise<Behavior
       .filter(n => !n.caseId || activeCaseIds.has(n.caseId))
       .sort((a, b) => b.createdAt - a.createdAt);
   } catch (err: any) {
-    handleFirestoreError(err, 'list', 'behavior_notifications');
+    console.warn("Unable to fetch behavior notifications safely:", err);
+    return [];
   }
 }
 
 export async function markBehaviorNotificationAsRead(notifId: string, userId: string): Promise<void> {
+  if (!notifId || !userId || typeof userId !== 'string') return;
   try {
     const ref = doc(db, 'behavior_notifications', notifId);
     await updateDoc(ref, {
@@ -717,6 +726,7 @@ export async function markBehaviorNotificationAsRead(notifId: string, userId: st
 }
 
 export async function dismissBehaviorNotification(notifId: string, userId: string): Promise<void> {
+  if (!notifId || !userId || typeof userId !== 'string') return;
   try {
     const ref = doc(db, 'behavior_notifications', notifId);
     await updateDoc(ref, {
@@ -728,12 +738,15 @@ export async function dismissBehaviorNotification(notifId: string, userId: strin
 }
 
 export async function markAllBehaviorNotificationsRead(userId: string, notifIds: string[]): Promise<void> {
+  if (!userId || typeof userId !== 'string' || !Array.isArray(notifIds) || notifIds.length === 0) return;
   try {
     const batch = writeBatch(db);
     notifIds.forEach(id => {
-      batch.update(doc(db, 'behavior_notifications', id), {
-        [`isRead.${userId}`]: true
-      });
+      if (id) {
+        batch.update(doc(db, 'behavior_notifications', id), {
+          [`isRead.${userId}`]: true
+        });
+      }
     });
     await batch.commit();
   } catch (err: any) {
@@ -992,9 +1005,11 @@ export async function getStudentsByClass(classId: string, academicYear: string):
   }
 }
 
-export async function getActiveStudents(classId: string, activeYear: string): Promise<Student[]> {
+export async function getActiveStudents(classId?: string, activeYear?: string): Promise<Student[]> {
   try {
     let enrollments: Enrollment[] = [];
+    const effectiveYear = activeYear && typeof activeYear === 'string' ? activeYear : undefined;
+
     if (classId && classId !== 'ALL' && classId !== 'all') {
       const classKeys = [classId];
       try {
@@ -1009,14 +1024,17 @@ export async function getActiveStudents(classId: string, activeYear: string): Pr
       }
 
       // Query enrollments for all potential classId keys (UUIDs or Name strings)
-      const queries = classKeys.map(key => 
-        query(
+      const queries = classKeys.map(key => {
+        const constraints: any[] = [
           collection(db, 'enrollments'),
-          where('academicYear', '==', activeYear),
           where('status', '==', 'active'),
           where('classId', '==', key)
-        )
-      );
+        ];
+        if (effectiveYear) {
+          constraints.push(where('academicYear', '==', effectiveYear));
+        }
+        return query(...(constraints as [any, ...any[]]));
+      });
 
       const snaps = await Promise.all(queries.map(q => getDocs(q)));
       snaps.forEach(snap => {
@@ -1028,11 +1046,14 @@ export async function getActiveStudents(classId: string, activeYear: string): Pr
         });
       });
     } else {
-      const q = query(
+      const constraints: any[] = [
         collection(db, 'enrollments'),
-        where('academicYear', '==', activeYear),
         where('status', '==', 'active')
-      );
+      ];
+      if (effectiveYear) {
+        constraints.push(where('academicYear', '==', effectiveYear));
+      }
+      const q = query(...(constraints as [any, ...any[]]));
       const snap = await getDocs(q);
       enrollments = snap.docs.map(doc => doc.data() as Enrollment);
     }
@@ -2355,6 +2376,9 @@ export async function markReportAsViewed(parentId: string, reportId: string, stu
 
 export async function getNotifications(userId: string): Promise<AppNotification[]> {
   try {
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      return [];
+    }
     const q = query(
       collection(db, 'notifications'), 
       where('userId', '==', userId)
@@ -2364,7 +2388,8 @@ export async function getNotifications(userId: string): Promise<AppNotification[
       .map(doc => ({ id: doc.id, ...doc.data() } as AppNotification))
       .sort((a, b) => b.createdAt - a.createdAt);
   } catch (err: any) {
-    handleFirestoreError(err, 'list', 'notifications');
+    console.warn("Unable to fetch general notifications safely:", err);
+    return [];
   }
 }
 
@@ -2383,6 +2408,7 @@ export async function sendNotification(notif: Omit<AppNotification, 'id' | 'isRe
 }
 
 export async function markNotificationAsRead(id: string): Promise<void> {
+  if (!id || typeof id !== 'string') return;
   try {
     await updateDoc(doc(db, 'notifications', id), { isRead: true });
   } catch (err: any) {
@@ -2391,6 +2417,7 @@ export async function markNotificationAsRead(id: string): Promise<void> {
 }
 
 export async function markAllNotificationsAsRead(userId: string): Promise<void> {
+  if (!userId || typeof userId !== 'string' || !userId.trim()) return;
   try {
     const batch = writeBatch(db);
     const q = query(collection(db, 'notifications'), where('userId', '==', userId), where('isRead', '==', false));
@@ -2802,6 +2829,7 @@ export async function getBehaviorAnalyticsData(filters: BehaviorAnalyticsFilters
     for (let i = 0; i < caseIds.length; i += 50) cicoChunk.push(caseIds.slice(i, i + 50));
     
     for (const chunk of cicoChunk) {
+      if (chunk.length === 0) continue;
       const cicoQ = query(
         collection(db, 'cicoSessions'),
         where('caseId', 'in', chunk)

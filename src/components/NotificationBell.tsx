@@ -20,30 +20,41 @@ import { cn, formatDate } from '../lib/utils';
 import { useNavigate } from 'react-router-dom';
 
 export const NotificationBell = () => {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = React.useState(false);
   const [behaviorNotifs, setBehaviorNotifs] = React.useState<BehaviorNotification[]>([]);
   const [appNotifs, setAppNotifs] = React.useState<AppNotification[]>([]);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
 
+  const currentUid = profile?.uid || user?.uid || '';
+  const currentEmail = profile?.email || user?.email || '';
+
   React.useEffect(() => {
-    if (!profile) return;
+    if (!currentUid && !currentEmail) return;
     
     const loadNotifs = async () => {
       // Behavior notifications use UID
-      const bData = await getBehaviorNotifications(profile.uid);
-      setBehaviorNotifs(bData || []);
+      if (currentUid) {
+        const bData = await getBehaviorNotifications(currentUid);
+        setBehaviorNotifs(bData || []);
+      } else {
+        setBehaviorNotifs([]);
+      }
 
       // General app notifications use Email
-      const aData = await getNotifications(profile.email);
-      setAppNotifs(aData || []);
+      if (currentEmail) {
+        const aData = await getNotifications(currentEmail);
+        setAppNotifs(aData || []);
+      } else {
+        setAppNotifs([]);
+      }
     };
 
     loadNotifs();
     const interval = setInterval(loadNotifs, 30000); // 30s poll
     return () => clearInterval(interval);
-  }, [profile]);
+  }, [currentUid, currentEmail]);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -55,7 +66,7 @@ export const NotificationBell = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const unreadBehaviorCount = behaviorNotifs.filter(n => !n.isRead?.[profile?.uid || '']).length;
+  const unreadBehaviorCount = behaviorNotifs.filter(n => currentUid ? !n.isRead?.[currentUid] : false).length;
   const unreadAppCount = appNotifs.filter(n => !n.isRead).length;
   const unreadCount = unreadBehaviorCount + unreadAppCount;
 
@@ -66,10 +77,10 @@ export const NotificationBell = () => {
   ].sort((a, b) => b.createdAt - a.createdAt);
 
   const handleMarkAsRead = async (notif: any) => {
-    if (!profile) return;
     if (notif._source === 'behavior') {
-      await markBehaviorNotificationAsRead(notif.id, profile.uid);
-      setBehaviorNotifs(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: { ...n.isRead, [profile.uid]: true } } : n));
+      if (!currentUid) return;
+      await markBehaviorNotificationAsRead(notif.id, currentUid);
+      setBehaviorNotifs(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: { ...n.isRead, [currentUid]: true } } : n));
     } else {
       await markNotificationAsRead(notif.id);
       setAppNotifs(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: true } : n));
@@ -78,27 +89,27 @@ export const NotificationBell = () => {
 
   const handleDismiss = async (e: React.MouseEvent, notif: any) => {
     e.stopPropagation();
-    if (!profile) return;
     if (notif._source === 'behavior') {
-      await dismissBehaviorNotification(notif.id, profile.uid);
+      if (!currentUid) return;
+      await dismissBehaviorNotification(notif.id, currentUid);
       setBehaviorNotifs(prev => prev.filter(n => n.id !== notif.id));
     }
     // App notifications might not have dismiss yet, or use markAsRead as dismiss
   };
 
   const handleMarkAllRead = async () => {
-    if (!profile) return;
-    
     // Mark behavior alerts read
-    const unreadBehaviorIds = behaviorNotifs.filter(n => !n.isRead?.[profile.uid]).map(n => n.id);
-    if (unreadBehaviorIds.length > 0) {
-      await markAllBehaviorNotificationsRead(profile.uid, unreadBehaviorIds);
-      setBehaviorNotifs(prev => prev.map(n => ({ ...n, isRead: { ...n.isRead, [profile.uid]: true } })));
+    if (currentUid) {
+      const unreadBehaviorIds = behaviorNotifs.filter(n => !n.isRead?.[currentUid]).map(n => n.id);
+      if (unreadBehaviorIds.length > 0) {
+        await markAllBehaviorNotificationsRead(currentUid, unreadBehaviorIds);
+        setBehaviorNotifs(prev => prev.map(n => ({ ...n, isRead: { ...n.isRead, [currentUid]: true } })));
+      }
     }
 
     // Mark app notifications read
-    if (appNotifs.some(n => !n.isRead)) {
-      await markAllNotificationsAsRead(profile.email);
+    if (currentEmail && appNotifs.some(n => !n.isRead)) {
+      await markAllNotificationsAsRead(currentEmail);
       setAppNotifs(prev => prev.map(n => ({ ...n, isRead: true })));
     }
   };
