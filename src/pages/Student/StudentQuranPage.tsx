@@ -204,12 +204,19 @@ export default function StudentQuranPage() {
   }, [juz]);
 
   const ayahRange = useMemo(() => {
-    return getAyahRangeForSurahInJuz(juz, surahNumber);
+    const numJuz = Number(juz);
+    const numSurah = Number(surahNumber);
+    if (!numJuz || !numSurah || isNaN(numJuz) || isNaN(numSurah)) {
+      return null;
+    }
+    return getAyahRangeForSurahInJuz(numJuz, numSurah);
   }, [juz, surahNumber]);
 
   useEffect(() => {
-    if (ayat < ayahRange.startAyah || ayat > ayahRange.endAyah) {
-      setAyat(ayahRange.startAyah);
+    if (ayahRange) {
+      if (ayat < ayahRange.startAyah || ayat > ayahRange.endAyah) {
+        setAyat(ayahRange.startAyah);
+      }
     }
   }, [juz, surahNumber, ayahRange]);
 
@@ -219,14 +226,18 @@ export default function StudentQuranPage() {
     if (surahs.length > 0) {
       setSurahNumber(surahs[0].surahNumber);
       const range = getAyahRangeForSurahInJuz(newJuz, surahs[0].surahNumber);
-      setAyat(range.startAyah);
+      if (range) {
+        setAyat(range.startAyah);
+      }
     }
   };
 
   const handleSurahChange = (newSurahNum: number) => {
     setSurahNumber(newSurahNum);
     const range = getAyahRangeForSurahInJuz(juz, newSurahNum);
-    setAyat(range.startAyah);
+    if (range) {
+      setAyat(range.startAyah);
+    }
   };
 
   const summary = useMemo(() => {
@@ -299,6 +310,10 @@ export default function StudentQuranPage() {
     }
 
     const range = getAyahRangeForSurahInJuz(juz, surahNumber);
+    if (!range) {
+      toast.error('Kombinasi Juz dan Surat tidak valid.');
+      return;
+    }
     if (ayat < range.startAyah || ayat > range.endAyah) {
       toast.error(`Ayat tidak valid untuk Juz ${juz} pada surat ini. Rentang valid: ${range.startAyah} - ${range.endAyah}.`);
       return;
@@ -368,6 +383,10 @@ export default function StudentQuranPage() {
     if (submitting || !editingLog || !editingLog.id || participantStatus !== 'active') return;
 
     const range = getAyahRangeForSurahInJuz(editingLog.juz, editingLog.surahNumber);
+    if (!range) {
+      toast.error('Kombinasi Juz dan Surat pada edit tidak valid.');
+      return;
+    }
     if (editingLog.ayat < range.startAyah || editingLog.ayat > range.endAyah) {
       toast.error(`Ayat tidak valid untuk Juz ${editingLog.juz} pada surat ini.`);
       return;
