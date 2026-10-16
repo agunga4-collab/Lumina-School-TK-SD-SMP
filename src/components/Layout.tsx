@@ -4,7 +4,8 @@ import {
   Map as MapIcon, Smile, Camera, History, Heart, CheckSquare, BookOpen, 
   Eye, Clock, ShieldAlert, ShieldCheck, ClipboardList, ClipboardCheck, Target, Mail, RefreshCw, FileSpreadsheet,
   Baby, TrendingUp, Folder, BarChart3, FileText, Sparkles, Settings, GraduationCap, User, Users,
-  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck, AlertTriangle, FileWarning, Shield, Building2
+  Menu, X, Presentation, MessageSquare, Compass, Calendar, Link, FileCheck, AlertTriangle, FileWarning, Shield, Building2,
+  Megaphone
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, Navigate, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -973,7 +974,9 @@ export function Layout() {
           {!(currentUser.role === 'STUDENT' && currentUnit === 'KINDERGARTEN') && (
             <div className="space-y-1">
               <NavSectionLabel label="Komunikasi" />
-               {/* Refleksi Diri removed - replaced by Self Exploration in Academic for SMP */}
+              {currentUnit === 'ELEMENTARY' && !['STUDENT', 'PARENT'].includes(currentUser.role) && (
+                <NavItem to="/elementary/school-information" icon={<Megaphone size={18} />} label="Informasi Sekolah" />
+              )}
             </div>
           )}
 

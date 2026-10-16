@@ -6112,6 +6112,149 @@ app.post("/api/elementary/midterm/upload-pdf", async (req, res) => {
 });
 
 // ==========================================
+// Elementary School Information Endpoints
+// ==========================================
+
+// POST /api/elementary/school-information/upload-pdf
+app.post("/api/elementary/school-information/upload-pdf", async (req, res) => {
+  try {
+    const { pdfBase64, fileName, fileSize } = req.body;
+    if (!pdfBase64 || !fileName) {
+      return res.status(400).json({
+        success: false,
+        error: "Data upload tidak lengkap: pdfBase64 dan fileName wajib diisi."
+      });
+    }
+
+    const cleanBase64 = pdfBase64.includes(",") ? pdfBase64.split(",")[1] : pdfBase64;
+    const buffer = Buffer.from(cleanBase64, "base64");
+    const mediaStream = Readable.from(buffer);
+
+    const ROOT_FOLDER_ID = "17nW4LvLZ5t4SPHA50RIvRTsqebzv0s0R"; // Shared Drive root
+    let parentFolderId = ROOT_FOLDER_ID;
+
+    try {
+      const folderName = "Informasi Sekolah Elementary";
+      const escapedName = folderName.replace(/'/g, "\\'");
+      const q = `name = '${escapedName}' and '${ROOT_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const listRes = await drive.files.list({
+        q,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        corpora: 'allDrives',
+        fields: 'files(id, name)'
+      });
+
+      if (listRes.data.files && listRes.data.files.length > 0) {
+        parentFolderId = listRes.data.files[0].id;
+      } else {
+        const createRes = await drive.files.create({
+          requestBody: {
+            name: folderName,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [ROOT_FOLDER_ID]
+          },
+          supportsAllDrives: true,
+          fields: 'id'
+        });
+        if (createRes.data.id) {
+          parentFolderId = createRes.data.id;
+        }
+      }
+    } catch (fErr: any) {
+      console.warn("[SchoolInfoUpload] Warning setting up folder, fallback to root:", fErr.message);
+    }
+
+    const uploadResponse = await drive.files.create({
+      requestBody: {
+        name: fileName,
+        parents: [parentFolderId],
+        mimeType: 'application/pdf'
+      },
+      media: {
+        mimeType: 'application/pdf',
+        body: mediaStream
+      },
+      supportsAllDrives: true,
+      fields: 'id, name, webViewLink'
+    });
+
+    const fileId = uploadResponse.data.id;
+    if (!fileId) {
+      throw new Error("Google Drive tidak mengembalikan ID file setelah upload.");
+    }
+
+    try {
+      await drive.permissions.create({
+        fileId,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone'
+        },
+        supportsAllDrives: true
+      });
+    } catch (permErr: any) {
+      console.warn(`[SchoolInfoUpload] Permission warning for file ${fileId}:`, permErr.message);
+    }
+
+    const fileUrl = `/api/elementary/school-information/pdf/${fileId}`;
+    const driveViewUrl = uploadResponse.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
+
+    console.log(`[SchoolInfoUpload] Successfully uploaded '${fileName}' to Drive folder '${parentFolderId}'. File ID: ${fileId}`);
+
+    return res.json({
+      success: true,
+      driveFileId: fileId,
+      fileUrl,
+      driveViewUrl,
+      fileName,
+      fileSize: fileSize || buffer.length
+    });
+  } catch (error: any) {
+    console.error("[SchoolInfoUpload] Error uploading PDF:", error);
+    const detailMsg = error.response?.data?.error?.message || error.message || String(error);
+    return res.status(500).json({
+      success: false,
+      error: `Upload PDF gagal: ${detailMsg}`
+    });
+  }
+});
+
+// GET /api/elementary/school-information/pdf/:fileId
+app.get("/api/elementary/school-information/pdf/:fileId", async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!fileId) {
+      return res.status(400).send("Parameter fileId hilang");
+    }
+
+    const driveObj = getDrive();
+    if (!driveObj) {
+      return res.status(503).send("Google Drive service tidak tersedia");
+    }
+
+    const meta = await driveObj.files.get({
+      fileId,
+      fields: "mimeType,name",
+      supportsAllDrives: true
+    });
+
+    const fileResponse = await driveObj.files.get(
+      { fileId, alt: "media", supportsAllDrives: true },
+      { responseType: "stream" }
+    );
+
+    res.setHeader("Content-Type", meta.data.mimeType || "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${meta.data.name || 'informasi.pdf'}"`);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    fileResponse.data.pipe(res);
+  } catch (err: any) {
+    console.error("[GetSchoolInfoPdf] Error streaming PDF:", err.message);
+    res.status(500).send("Gagal mengambil file PDF dari penyimpanan");
+  }
+});
+
+// ==========================================
 // Elementary Midterm AI Endpoints
 // ==========================================
 

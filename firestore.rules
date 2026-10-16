@@ -2405,5 +2405,57 @@ service cloud.firestore {
         allow update, delete: if false;
       }
     }
+
+    // === INFORMASI SEKOLAH (ELEMENTARY) ===
+    function isElemSchoolInfoStaff() {
+      return isActive() && (
+        isAdmin() || (
+          userRole() in ['TEACHER', 'HOMEROOM_TEACHER', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_ELEM', 'BK_MENTOR'] && (
+            ('unitId' in currentUser() && currentUser().unitId in ['ELEMENTARY', 'ALL']) ||
+            ('unit' in currentUser() && currentUser().unit in ['ELEMENTARY', 'ALL']) ||
+            ('units' in currentUser() && currentUser().units is list && currentUser().units.hasAny(['ELEMENTARY', 'ALL']))
+          )
+        )
+      );
+    }
+
+    function isElemSchoolInfoHeadOrAdmin() {
+      return isActive() && (
+        isAdmin() || (
+          userRole() in ['HEAD_UNIT', 'PRINCIPAL'] && (
+            ('unitId' in currentUser() && currentUser().unitId in ['ELEMENTARY', 'ALL']) ||
+            ('unit' in currentUser() && currentUser().unit in ['ELEMENTARY', 'ALL']) ||
+            ('units' in currentUser() && currentUser().units is list && currentUser().units.hasAny(['ELEMENTARY', 'ALL']))
+          )
+        )
+      );
+    }
+
+    match /elementary_school_information/{infoId} {
+      allow read: if isSignedIn() && (
+        isElemSchoolInfoStaff() ||
+        (resource.data.status == 'PUBLISHED' && resource.data.unit == 'ELEMENTARY')
+      );
+      allow create: if isElemSchoolInfoStaff() &&
+        incoming().authorUid == request.auth.uid &&
+        incoming().unit == 'ELEMENTARY' &&
+        incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 300 &&
+        incoming().category is string &&
+        incoming().status in ['DRAFT', 'PUBLISHED', 'ARCHIVED'] &&
+        (
+          (incoming().hasPdf == true && ('pdfAttachment' in incoming()) && incoming().pdfAttachment != null) ||
+          (('content' in incoming()) && incoming().content is string && incoming().content.size() > 0)
+        );
+      allow update: if (isElemSchoolInfoHeadOrAdmin() || (isElemSchoolInfoStaff() && existing().authorUid == request.auth.uid)) &&
+        incoming().unit == 'ELEMENTARY' &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().title is string && incoming().title.size() > 0 && incoming().title.size() <= 300 &&
+        incoming().status in ['DRAFT', 'PUBLISHED', 'ARCHIVED'] &&
+        (
+          (incoming().hasPdf == true && ('pdfAttachment' in incoming()) && incoming().pdfAttachment != null) ||
+          (('content' in incoming()) && incoming().content is string && incoming().content.size() > 0)
+        );
+      allow delete: if isElemSchoolInfoHeadOrAdmin() || (isElemSchoolInfoStaff() && existing().authorUid == request.auth.uid);
+    }
   }
 }

@@ -1068,6 +1068,34 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["parentWeeklyFolderId", "midtermRootFolderId", "classId", "className", "classMidtermFolderId", "updatedAt"]
+    },
+    "ElementarySchoolInformation": {
+      "title": "ElementarySchoolInformation",
+      "description": "Announcements, circulars, agendas, and school information for Elementary unit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "content": { "type": "string" },
+        "summary": { "type": "string" },
+        "unit": { "type": "string", "enum": ["ELEMENTARY"] },
+        "targetAudience": { "type": "array" },
+        "targetGradeNames": { "type": "array" },
+        "status": { "type": "string", "enum": ["DRAFT", "PUBLISHED", "ARCHIVED"] },
+        "isPinned": { "type": "boolean" },
+        "publishDate": { "type": "string" },
+        "hasPdf": { "type": "boolean" },
+        "pdfAttachment": { "type": "object" },
+        "authorUid": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorRole": { "type": "string" },
+        "authorEmail": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "publishedAt": { "type": "number" }
+      },
+      "required": ["title", "category", "unit", "status", "authorUid", "authorName"]
     }
   },
   "firestore": {
@@ -1339,6 +1367,10 @@
     },
     "elem_sn_midterm_published_reports/{reportId}": {
       "description": "Published SN elementary midterm reports and PDF snapshots."
+    },
+    "elementary_school_information/{infoId}": {
+      "schema": "ElementarySchoolInformation",
+      "description": "Announcements and official school communications for Elementary unit."
     }
   }
 }

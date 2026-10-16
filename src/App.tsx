@@ -136,6 +136,7 @@ import ElementaryMidtermReportPage from './pages/Elementary/Midterm/ElementaryMi
 import ElementaryMidtermSnReportPage from './pages/Elementary/MidtermSN/ElementaryMidtermSnReportPage';
 import ElementaryOtherReportPage from './pages/Elementary/OtherReportPage';
 import QuranParticipantsPage from './pages/Elementary/QuranParticipantsPage';
+import ElementarySchoolInformationPage from './pages/Elementary/ElementarySchoolInformationPage';
 import StudentQuranPage from './pages/Student/StudentQuranPage';
 import { IncidentReportPage } from './pages/JuniorHigh/IncidentReportPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
@@ -523,6 +524,11 @@ export default function App() {
           <Route path="elementary/quran-participants" element={
             <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'SECRETARY_ELEM']}>
               <QuranParticipantsPage />
+            </RoleGuard>
+          } />
+          <Route path="elementary/school-information" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'SECRETARY_ELEM', 'COORDINATOR']}>
+              <ElementarySchoolInformationPage />
             </RoleGuard>
           } />
           <Route path="elementary/ldss/settings" element={
