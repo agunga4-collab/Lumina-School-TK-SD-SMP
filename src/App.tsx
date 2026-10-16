@@ -136,6 +136,7 @@ import ElementaryMidtermReportPage from './pages/Elementary/Midterm/ElementaryMi
 import ElementaryMidtermSnReportPage from './pages/Elementary/MidtermSN/ElementaryMidtermSnReportPage';
 import ElementaryOtherReportPage from './pages/Elementary/OtherReportPage';
 import QuranParticipantsPage from './pages/Elementary/QuranParticipantsPage';
+import StudentQuranPage from './pages/Student/StudentQuranPage';
 import { IncidentReportPage } from './pages/JuniorHigh/IncidentReportPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
@@ -811,6 +812,14 @@ export default function App() {
                     <MenuVisibilityGuard menuKey="reportCards">
                       <WeeklyReportDetail />
                     </MenuVisibilityGuard>
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="quran" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentQuranPage />
                   </RoleGuard>
                 } 
              />

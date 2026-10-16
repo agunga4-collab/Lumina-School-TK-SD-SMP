@@ -51,6 +51,31 @@ export function Layout() {
   const [resolvedStudentName, setResolvedStudentName] = React.useState<string>("");
   const [resolvedStudentClass, setResolvedStudentClass] = React.useState<string>("");
   const [hasSchoolOrgMembership, setHasSchoolOrgMembership] = React.useState<boolean>(false);
+  const [hasActiveQuranParticipant, setHasActiveQuranParticipant] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (currentUser?.role === 'STUDENT' && (currentUser?.unitId || '').toUpperCase() === 'ELEMENTARY') {
+      const studentId = ((currentUser as any)?.studentId || currentUser?.luminaId || currentUser?.uid || '').trim();
+      if (!studentId) {
+        setHasActiveQuranParticipant(false);
+        return;
+      }
+      const partRef = doc(db, 'elementary_quran_participants', studentId);
+      const unsubscribe = onSnapshot(partRef, (snap) => {
+        if (snap.exists() && snap.data()?.status === 'active') {
+          setHasActiveQuranParticipant(true);
+        } else {
+          setHasActiveQuranParticipant(false);
+        }
+      }, (err) => {
+        console.warn("Error checking quran participant status in layout:", err);
+        setHasActiveQuranParticipant(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setHasActiveQuranParticipant(false);
+    }
+  }, [currentUser]);
 
   React.useEffect(() => {
     if (currentUser?.role === 'STUDENT' && activeYear) {
@@ -712,6 +737,9 @@ export function Layout() {
                     <>
                       <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
                       <NavItem to="/student/reports" icon={<FileText size={18} />} label="Rapor Saya" />
+                      {hasActiveQuranParticipant && (
+                        <NavItem to="/student/quran" icon={<BookOpen size={18} />} label="Sahabat Qur'an" />
+                      )}
                     </>
                   ) : (
                     <>
