@@ -2326,5 +2326,84 @@ service cloud.firestore {
 
       allow delete: if isActive() && isAdmin();
     }
+    // === SAHABAT QUR'AN (ELEMENTARY) ===
+    function isQuranElementaryStaff() {
+      return isActive() && (
+        isAdmin() || (
+          userRole() in ['TEACHER', 'HOMEROOM_TEACHER', 'HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_ELEM'] && (
+            ('unitId' in currentUser() && currentUser().unitId in ['ELEMENTARY', 'ALL']) ||
+            ('unit' in currentUser() && currentUser().unit in ['ELEMENTARY', 'ALL']) ||
+            ('units' in currentUser() && currentUser().units is list && currentUser().units.hasAny(['ELEMENTARY', 'ALL']))
+          )
+        )
+      );
+    }
+
+    function isQuranParticipantActive(studentId) {
+      return studentId is string &&
+        exists(/databases/$(database)/documents/elementary_quran_participants/$(studentId)) &&
+        get(/databases/$(database)/documents/elementary_quran_participants/$(studentId)).data.status == 'active';
+    }
+
+    function isValidQuranLogData(data) {
+      return data.juz is int && data.juz >= 1 && data.juz <= 30 &&
+        data.surahNumber is int && data.surahNumber >= 1 && data.surahNumber <= 114 &&
+        data.ayat is int && data.ayat >= 1 &&
+        data.readDate is string && data.readDate.size() == 10 &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 200));
+    }
+
+    match /elementary_quran_participants/{studentId} {
+      allow read: if isSignedIn() && (isQuranElementaryStaff() || isOwnStudentData(studentId));
+      allow create: if isQuranElementaryStaff() &&
+        incoming().keys().hasAll(['studentUid', 'studentName', 'unit', 'status', 'registeredByUid', 'registeredAt', 'updatedByUid', 'updatedAt']) &&
+        incoming().studentUid == studentId &&
+        incoming().studentName is string &&
+        incoming().unit == 'ELEMENTARY' &&
+        incoming().status == 'active' &&
+        incoming().registeredByUid == request.auth.uid &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().registeredAt is timestamp &&
+        incoming().updatedAt is timestamp;
+      allow update: if isQuranElementaryStaff() &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedByUid', 'updatedAt']) &&
+        incoming().status in ['active', 'inactive'] &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt is timestamp;
+      allow delete: if isAdmin();
+    }
+
+    match /elementary_quran_reading_logs/{logId} {
+      allow read: if isSignedIn() && (isQuranElementaryStaff() || isOwnStudentData(resource.data.studentUid));
+      allow create: if isActive() &&
+        isOwnStudentData(incoming().studentUid) &&
+        isQuranParticipantActive(incoming().studentUid) &&
+        incoming().unit == 'ELEMENTARY' &&
+        incoming().source == 'app' &&
+        incoming().editCount == 0 &&
+        incoming().createdAt is timestamp &&
+        isValidQuranLogData(incoming());
+      allow update: if isActive() &&
+        isOwnStudentData(existing().studentUid) &&
+        isQuranParticipantActive(existing().studentUid) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['readDate', 'juz', 'surahNumber', 'surahName', 'ayat', 'note', 'updatedAt', 'editCount']) &&
+        incoming().editCount == existing().editCount + 1 &&
+        incoming().updatedAt is timestamp &&
+        isValidQuranLogData(incoming());
+      allow delete: if isAdmin();
+
+      match /history/{historyId} {
+        allow read: if isSignedIn() && (
+          isQuranElementaryStaff() ||
+          isOwnStudentData(get(/databases/$(database)/documents/elementary_quran_reading_logs/$(logId)).data.studentUid)
+        );
+        allow create: if isActive() &&
+          isOwnStudentData(get(/databases/$(database)/documents/elementary_quran_reading_logs/$(logId)).data.studentUid) &&
+          isQuranParticipantActive(get(/databases/$(database)/documents/elementary_quran_reading_logs/$(logId)).data.studentUid) &&
+          incoming().changedByUid == request.auth.uid &&
+          incoming().changedAt is timestamp;
+        allow update, delete: if false;
+      }
+    }
   }
 }
