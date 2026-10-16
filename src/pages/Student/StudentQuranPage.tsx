@@ -1,498 +1,919 @@
-import * as React from 'react';
-import { useState, useEffect, useMemo } from 'react';
-import { 
-  BookOpen, Calendar, Award, CheckCircle2, AlertCircle, 
-  Clock, Edit3, History as HistoryIcon, Loader2, Sparkles, X, ChevronRight, Check
-} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
-import { useAcademicYear } from '../../context/AcademicYearContext';
-import { db, handleFirestoreError } from '../../lib/firebase';
-import { 
-  collection, doc, getDoc, getDocs, query, where, orderBy, 
-  serverTimestamp, runTransaction, onSnapshot, DocumentData, Timestamp 
+import { getAuth } from 'firebase/auth';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  where,
 } from 'firebase/firestore';
+import {
+  BookOpen,
+  Loader2,
+  Sparkles,
+  Edit3,
+  History as HistoryIcon,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '../../lib/utils';
-import { 
-  SURAH_LIST, 
-  JUZ_BOUNDARIES, 
-  Surah, 
-  getSurahByNumber, 
-  getJuzBoundary, 
-  getSurahsInJuz, 
-  getAyahRangeForSurahInJuz 
+
+import { useAuth } from '../../context/AuthContext';
+import { db } from '../../lib/firebase';
+import {
+  getSurahByNumber,
+  getSurahsInJuz,
+  getAyahRangeForSurahInJuz,
 } from '../../constants/quranReference';
-import { QuranParticipant, QuranReadingLog, QuranReadingLogHistory } from '../../services/quranService';
+
+type ParticipantStatus =
+  | 'loading'
+  | 'active'
+  | 'inactive'
+  | 'unregistered'
+  | 'error';
+
+type ReadingForm = {
+  readDate: string;
+  juz: number;
+  surahNumber: number;
+  ayat: string;
+  note: string;
+};
+
+type ReadingLog = {
+  id: string;
+  studentUid: string;
+  studentName: string;
+  classId: string;
+  className: string;
+  unit: string;
+  readDate: string;
+  juz: number;
+  surahNumber: number;
+  surahName: string;
+  ayat: number;
+  note: string;
+  createdAt?: any;
+  updatedAt?: any;
+  editCount: number;
+  source?: string;
+};
+
+type HistoryEntry = {
+  id: string;
+  readDate: string;
+  juz: number;
+  surahNumber: number;
+  surahName: string;
+  ayat: number;
+  note: string;
+  changedAt?: any;
+  changedByUid?: string;
+};
+
+type SurahOption = {
+  number: number;
+  name: string;
+};
+
+type AyahRange = {
+  startAyah: number;
+  endAyah: number;
+};
+
+const LOG_COLLECTION = 'elementary_quran_reading_logs';
+const PARTICIPANT_COLLECTION = 'elementary_quran_participants';
 
 const APPRECIATION_MESSAGES = [
-  "Alhamdulillah! Bacaanmu hari ini sudah tercatat. Teruslah istiqomah bersama Al-Qur'an.",
-  "Barakallahufiik! Setiap huruf yang kamu baca bernilai kebaikan di sisi Allah.",
-  "Masya Allah! Langkah kecil yang konsisten ini akan menjadi cahaya di hari kiamat.",
-  "Alhamdulillah, bacaanmu bertambah lagi hari ini. Malaikat mencatat kebaikanmu!",
-  "Luar biasa! Menjaga interaksi dengan Al-Qur'an adalah kunci ketenangan hati.",
-  "Alhamdulillah! Semoga Al-Qur'an kelak menjadi syafaat bagi kehidupanmu.",
-  "Hebat! Semangat membacamu hari ini sangat menginspirasi. Pertahankan ya!",
-  "Barakallah! Allah mencintai amalan yang konsisten, sekecil apapun itu.",
-  "Masya Allah, satu langkah lebih dekat dengan kecintaan pada Kalam Ilahi.",
-  "Alhamdulillah! Jadikan Al-Qur'an sebagai sahabat setiamu setiap hari.",
-  "Pilihan yang mulia! Waktu berhargamu dihiasi dengan tilawah Al-Qur'an.",
-  "Alhamdulillah! Semoga keberkahan Al-Qur'an senantiasa menyertai harimu."
+  'Alhamdulillah! Bacaanmu sudah tercatat.',
+  'Masya Allah! Terima kasih sudah meluangkan waktu membaca.',
+  'Semangat terus belajar membaca Al-Qur’an, ya!',
+  'Sedikit demi sedikit, terus jaga kebiasaan baikmu.',
+  'Alhamdulillah! Kamu sudah mencatat bacaan hari ini.',
+  'Semoga Allah memudahkan langkah belajarmu.',
+  'Hebat! Teruslah membaca dengan tenang dan teliti.',
+  'Masya Allah! Pertahankan semangat belajarmu.',
+  'Semoga bacaan hari ini membawa kebaikan.',
+  'Yuk, terus dekat dengan Al-Qur’an setiap hari.',
+  'Terima kasih sudah berusaha hari ini.',
+  'Alhamdulillah! Sampai bertemu pada catatan berikutnya.',
 ];
 
+const INPUT_CLASS =
+  'w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50';
+
+const PRIMARY_BUTTON =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50';
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function getWibDateString(date = new Date()): string {
-  const utc = date.getTime() + (date.getTimezoneOffset() * 60000);
-  const wibDate = new Date(utc + (3600000 * 7));
-  const year = wibDate.getFullYear();
-  const month = String(wibDate.getMonth() + 1).padStart(2, '0');
-  const day = String(wibDate.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return new Date(date.getTime() + 7 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function previousDate(dateString: string): string {
+  const date = new Date(`${dateString}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function isValidDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return (
+    Number.isFinite(date.getTime()) &&
+    date.toISOString().slice(0, 10) === value
+  );
+}
+
+function timestampMillis(value: any): number {
+  if (value && typeof value.toMillis === 'function') {
+    return value.toMillis();
+  }
+  if (typeof value === 'number') return value;
+  return 0;
+}
+
+function formatTimestamp(value: any): string {
+  const millis = timestampMillis(value);
+  if (!millis) return 'Menunggu waktu server';
+
+  return new Date(millis).toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function getRange(juz: number, surahNumber: number): AyahRange | null {
+  if (
+    !Number.isInteger(juz) ||
+    juz < 1 ||
+    juz > 30 ||
+    !Number.isInteger(surahNumber) ||
+    surahNumber < 1 ||
+    surahNumber > 114
+  ) {
+    return null;
+  }
+
+  const range = getAyahRangeForSurahInJuz(juz, surahNumber);
+  if (!range) return null;
+
+  const startAyah = Number(range.startAyah);
+  const endAyah = Number(range.endAyah);
+
+  if (
+    !Number.isInteger(startAyah) ||
+    !Number.isInteger(endAyah) ||
+    startAyah < 1 ||
+    endAyah < startAyah
+  ) {
+    return null;
+  }
+
+  return { startAyah, endAyah };
+}
+
+function getSurahName(number: number): string {
+  const surah = getSurahByNumber(number) as any;
+  return text(surah?.name) || text(surah?.surahName);
+}
+
+function getSurahOptions(juz: number): SurahOption[] {
+  if (!Number.isInteger(juz) || juz < 1 || juz > 30) return [];
+
+  const source = getSurahsInJuz(juz) as unknown;
+  if (!Array.isArray(source)) return [];
+
+  const options = new Map<number, SurahOption>();
+
+  source.forEach((item: any) => {
+    const number = Number(
+      typeof item === 'number'
+        ? item
+        : item?.surahNumber ?? item?.number
+    );
+
+    if (!Number.isInteger(number) || !getRange(juz, number)) return;
+
+    const name =
+      getSurahName(number) ||
+      text(item?.surahName) ||
+      text(item?.name);
+
+    if (name) options.set(number, { number, name });
+  });
+
+  return [...options.values()].sort((a, b) => a.number - b.number);
+}
+
+function emptyForm(): ReadingForm {
+  return {
+    readDate: getWibDateString(),
+    juz: 1,
+    surahNumber: 0,
+    ayat: '',
+    note: '',
+  };
+}
+
+function formIsValid(form: ReadingForm): boolean {
+  const range = getRange(form.juz, form.surahNumber);
+  const ayat = Number(form.ayat);
+
+  return Boolean(
+    range &&
+      form.ayat.trim() &&
+      Number.isInteger(ayat) &&
+      ayat >= range.startAyah &&
+      ayat <= range.endAyah &&
+      isValidDate(form.readDate) &&
+      form.readDate <= getWibDateString() &&
+      form.note.length <= 200
+  );
+}
+
+function toForm(log: ReadingLog): ReadingForm {
+  return {
+    readDate: log.readDate,
+    juz: Number(log.juz),
+    surahNumber: Number(log.surahNumber),
+    ayat: String(log.ayat),
+    note: log.note || '',
+  };
+}
+
+function ReadingFields({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: ReadingForm;
+  onChange: (value: ReadingForm) => void;
+  disabled: boolean;
+}) {
+  const [surahSearch, setSurahSearch] = useState('');
+
+  const surahs = useMemo(
+    () => getSurahOptions(value.juz),
+    [value.juz]
+  );
+
+  const range = getRange(value.juz, value.surahNumber);
+
+  const visibleSurahs = surahs.filter(
+    surah =>
+      surah.number === value.surahNumber ||
+      surah.name.toLowerCase().includes(surahSearch.toLowerCase().trim())
+  );
+
+  const changeJuz = (juz: number) => {
+    setSurahSearch('');
+    onChange({
+      ...value,
+      juz,
+      surahNumber: 0,
+      ayat: '',
+    });
+  };
+
+  const changeSurah = (surahNumber: number) => {
+    const nextRange = getRange(value.juz, surahNumber);
+    const currentAyat = Number(value.ayat);
+
+    const keepAyat = Boolean(
+      nextRange &&
+        value.ayat.trim() &&
+        Number.isInteger(currentAyat) &&
+        currentAyat >= nextRange.startAyah &&
+        currentAyat <= nextRange.endAyah
+    );
+
+    onChange({
+      ...value,
+      surahNumber,
+      ayat: keepAyat ? value.ayat : '',
+    });
+  };
+
+  return (
+    <fieldset disabled={disabled} className="space-y-4">
+      <label className="block space-y-1.5 text-sm font-semibold">
+        <span>Tanggal bacaan</span>
+        <input
+          type="date"
+          value={value.readDate}
+          max={getWibDateString()}
+          onChange={event =>
+            onChange({ ...value, readDate: event.target.value })
+          }
+          className={INPUT_CLASS}
+          required
+        />
+      </label>
+
+      <label className="block space-y-1.5 text-sm font-semibold">
+        <span>Juz</span>
+        <select
+          value={value.juz}
+          onChange={event => changeJuz(Number(event.target.value))}
+          className={INPUT_CLASS}
+        >
+          {Array.from({ length: 30 }, (_, index) => index + 1).map(juz => (
+            <option key={juz} value={juz}>
+              Juz {juz}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="block space-y-1.5 text-sm font-semibold">
+        <span>Cari surat dalam juz ini</span>
+        <input
+          type="search"
+          value={surahSearch}
+          onChange={event => setSurahSearch(event.target.value)}
+          placeholder="Ketik nama surat..."
+          className={INPUT_CLASS}
+        />
+      </label>
+
+      <label className="block space-y-1.5 text-sm font-semibold">
+        <span>Surat</span>
+        <select
+          value={value.surahNumber || ''}
+          onChange={event => changeSurah(Number(event.target.value))}
+          className={INPUT_CLASS}
+          required
+        >
+          <option value="">Pilih surat</option>
+          {visibleSurahs.map(surah => (
+            <option key={surah.number} value={surah.number}>
+              {surah.number}. {surah.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {surahs.length === 0 && (
+        <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+          Referensi surat untuk juz ini belum dapat dimuat. Jangan simpan
+          bacaan sebelum pilihan surat tersedia.
+        </p>
+      )}
+
+      <label className="block space-y-1.5 text-sm font-semibold">
+        <span>Nomor ayat terakhir</span>
+        <input
+          type="number"
+          step={1}
+          min={range ? range.startAyah : undefined}
+          max={range ? range.endAyah : undefined}
+          value={value.ayat}
+          onChange={event =>
+            onChange({ ...value, ayat: event.target.value })
+          }
+          disabled={disabled || !range}
+          className={INPUT_CLASS}
+          required
+        />
+      </label>
+
+      <p className="text-xs text-emerald-700">
+        {range
+          ? `Rentang yang sesuai: ayat ${range.startAyah}–${range.endAyah}.`
+          : 'Pilih juz dan surat yang sesuai terlebih dahulu.'}
+      </p>
+
+      <label className="block space-y-1.5 text-sm font-semibold">
+        <span>Catatan — opsional</span>
+        <textarea
+          rows={3}
+          maxLength={200}
+          value={value.note}
+          onChange={event =>
+            onChange({ ...value, note: event.target.value })
+          }
+          placeholder="Misalnya: Hari ini membaca dengan lancar."
+          className={`${INPUT_CLASS} resize-none`}
+        />
+      </label>
+
+      <p className="text-right text-xs text-slate-400">
+        {value.note.length}/200
+      </p>
+    </fieldset>
+  );
+}
+
+function Modal({
+  title,
+  children,
+  onClose,
+  busy = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-xl"
+      >
+        <div className="mb-5 flex items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            aria-label="Tutup"
+            className="rounded-full p-2 text-slate-500 disabled:opacity-40"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        {children}
+      </section>
+    </div>
+  );
 }
 
 export default function StudentQuranPage() {
-  const { currentUser } = useOutletContext<{ currentUser: any }>();
+  const outlet = useOutletContext<{ currentUser?: any } | undefined>();
   const { profile } = useAuth();
-  const { activeYear } = useAcademicYear();
 
-  const [loading, setLoading] = useState<boolean>(true);
-  const [participant, setParticipant] = useState<QuranParticipant | null>(null);
-  const [participantStatus, setParticipantStatus] = useState<'loading' | 'active' | 'inactive' | 'unregistered' | 'error'>('loading');
-  const [studentUid, setStudentUid] = useState<string>('');
-  
-  const [logs, setLogs] = useState<QuranReadingLog[]>([]);
-  const [logsLoading, setLogsLoading] = useState<boolean>(false);
+  const activeUser = outlet?.currentUser || profile;
 
-  // Form State
-  const [readDate, setReadDate] = useState<string>(getWibDateString());
-  const [juz, setJuz] = useState<number>(1);
-  const [surahNumber, setSurahNumber] = useState<number>(1);
-  const [ayat, setAyat] = useState<number>(1);
-  const [note, setNote] = useState<string>('');
-  const [submitting, setSubmitting] = useState<boolean>(false);
+  const resolvedStudentId =
+    text(activeUser?.luminaId) ||
+    text(activeUser?.studentId) ||
+    text(activeUser?.uid);
 
-  // Edit & History Modal State
-  const [editingLog, setEditingLog] = useState<QuranReadingLog | null>(null);
-  const [historyModalLogId, setHistoryModalLogId] = useState<string | null>(null);
-  const [historyList, setHistoryList] = useState<QuranReadingLogHistory[]>([]);
-  const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+  const profileUnit = (
+    text(activeUser?.unitId) || text(activeUser?.unit)
+  ).toUpperCase();
 
-  // Appreciation Modal State
-  const [appreciationModal, setAppreciationModal] = useState<{
-    isOpen: boolean;
+  const [status, setStatus] = useState<ParticipantStatus>('loading');
+  const [participant, setParticipant] = useState<any>(null);
+  const [pageError, setPageError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const [logs, setLogs] = useState<ReadingLog[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState('');
+
+  const [form, setForm] = useState<ReadingForm>(emptyForm);
+  const [editing, setEditing] = useState<{
+    id: string;
+    form: ReadingForm;
+  } | null>(null);
+
+  const [submitting, setSubmitting] = useState(false);
+  const savingRef = useRef(false);
+
+  const [appreciation, setAppreciation] = useState<{
     message: string;
-    log: QuranReadingLog | null;
-  }>({
-    isOpen: false,
-    message: '',
-    log: null
-  });
+    description: string;
+  } | null>(null);
 
-  // 1. Identify correct student ID
+  const [historyLogId, setHistoryLogId] = useState<string | null>(null);
+  const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+
   useEffect(() => {
-    const resolveStudentIdentity = async () => {
-      if (!currentUser && !profile) {
-        setParticipantStatus('error');
-        setLoading(false);
-        return;
-      }
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
 
-      const activeUser = currentUser || profile;
-      const sId = (activeUser?.luminaId || activeUser?.studentId || activeUser?.uid || '').trim();
+    setStatus('loading');
+    setParticipant(null);
+    setPageError('');
+    setLogs([]);
+    setEditing(null);
+    setAppreciation(null);
+    setHistoryLogId(null);
 
-      if (!sId) {
-        setParticipantStatus('error');
-        setLoading(false);
-        return;
-      }
-
-      const unit = (activeUser?.unitId || activeUser?.unit || '').toUpperCase();
-      let confirmedUnit = unit;
+    const loadParticipant = async () => {
       try {
-        const studentSnap = await getDoc(doc(db, 'students', sId));
-        if (studentSnap.exists()) {
-          const sData = studentSnap.data();
-          if (sData.unitId || sData.unit) {
-            confirmedUnit = (sData.unitId || sData.unit).toUpperCase();
-          }
+        if (!resolvedStudentId) {
+          throw new Error(
+            'Identitas siswa belum tersedia. Silakan muat ulang halaman.'
+          );
         }
-      } catch (err) {
-        console.warn("Could not verify student unit from master record:", err);
-      }
 
-      if (confirmedUnit && confirmedUnit !== 'ELEMENTARY') {
-        setParticipantStatus('error');
-        setLoading(false);
-        return;
-      }
+        const studentSnapshot = await getDoc(
+          doc(db, 'students', resolvedStudentId)
+        );
 
-      setStudentUid(sId);
+        if (cancelled) return;
 
-      // 2. Listen to participant document
-      const partRef = doc(db, 'elementary_quran_participants', sId);
-      const unsubscribe = onSnapshot(partRef, (snap) => {
-        if (snap.exists()) {
-          const data = snap.data() as QuranParticipant;
-          setParticipant(data);
-          if (data.status === 'active') {
-            setParticipantStatus('active');
-          } else {
-            setParticipantStatus('inactive');
-          }
-        } else {
-          setParticipant(null);
-          setParticipantStatus('unregistered');
+        const studentData = studentSnapshot.exists()
+          ? studentSnapshot.data()
+          : {};
+
+        const masterUnit = (
+          text(studentData.unitId) || text(studentData.unit)
+        ).toUpperCase();
+
+        const confirmedUnit = masterUnit || profileUnit;
+
+        if (confirmedUnit && confirmedUnit !== 'ELEMENTARY') {
+          throw new Error('Fitur ini khusus untuk siswa Elementary.');
         }
-        setLoading(false);
-      }, (err) => {
-        console.error("Error listening to participant status:", err);
-        setParticipantStatus('error');
-        setLoading(false);
-      });
 
-      return () => unsubscribe();
+        unsubscribe = onSnapshot(
+          doc(db, PARTICIPANT_COLLECTION, resolvedStudentId),
+          snapshot => {
+            if (cancelled) return;
+
+            if (!snapshot.exists()) {
+              setParticipant(null);
+              setStatus('unregistered');
+              return;
+            }
+
+            const data = snapshot.data();
+
+            if (data.unit !== 'ELEMENTARY') {
+              setPageError('Data kepesertaan tidak sesuai unit Elementary.');
+              setStatus('error');
+              return;
+            }
+
+            setParticipant(data);
+            setStatus(data.status === 'active' ? 'active' : 'inactive');
+          },
+          error => {
+            if (cancelled) return;
+            console.error(
+              '[StudentQuranPage] get participant',
+              PARTICIPANT_COLLECTION,
+              error
+            );
+            setPageError('Gagal membaca kepesertaan. Periksa izin akses.');
+            setStatus('error');
+          }
+        );
+      } catch (error: any) {
+        if (cancelled) return;
+        console.error('[StudentQuranPage] resolve identity:', error);
+        setPageError(error?.message || 'Gagal memuat identitas siswa.');
+        setStatus('error');
+      }
     };
 
-    resolveStudentIdentity();
-  }, [currentUser, profile]);
+    void loadParticipant();
 
-  // 3. Query reading logs for this studentUid
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [resolvedStudentId, profileUnit, reloadKey]);
+
   useEffect(() => {
-    if (!studentUid || participantStatus === 'loading' || participantStatus === 'unregistered' || participantStatus === 'error') {
-      setLogs([]);
+    setLogs([]);
+    setLogsError('');
+
+    if (
+      !resolvedStudentId ||
+      (status !== 'active' && status !== 'inactive')
+    ) {
+      setLogsLoading(false);
       return;
     }
 
     setLogsLoading(true);
-    const logsRef = collection(db, 'elementary_quran_reading_logs');
-    const qLogs = query(
-      logsRef,
-      where('studentUid', '==', studentUid),
-      orderBy('readDate', 'desc'),
-      orderBy('createdAt', 'desc')
+
+    const logsQuery = query(
+      collection(db, LOG_COLLECTION),
+      where('studentUid', '==', resolvedStudentId)
     );
 
-    const unsubscribeLogs = onSnapshot(qLogs, (snapshot) => {
-      const fetchedLogs: QuranReadingLog[] = [];
-      snapshot.forEach(docSnap => {
-        fetchedLogs.push({
-          id: docSnap.id,
-          ...docSnap.data()
-        } as QuranReadingLog);
-      });
-      setLogs(fetchedLogs);
-      setLogsLoading(false);
-    }, (err) => {
-      console.error("Error listening to reading logs:", err);
-      toast.error("Gagal memuat riwayat bacaan Al-Qur'an.");
-      setLogsLoading(false);
-    });
+    return onSnapshot(
+      logsQuery,
+      snapshot => {
+        const result = snapshot.docs.map(snapshotDoc => ({
+          ...snapshotDoc.data(),
+          id: snapshotDoc.id,
+        })) as ReadingLog[];
 
-    return () => unsubscribeLogs();
-  }, [studentUid, participantStatus]);
+        result.sort(
+          (a, b) =>
+            String(b.readDate).localeCompare(String(a.readDate)) ||
+            timestampMillis(b.createdAt) - timestampMillis(a.createdAt) ||
+            a.id.localeCompare(b.id)
+        );
 
-  const availableSurahsInJuz = useMemo(() => {
-    return getSurahsInJuz(juz);
-  }, [juz]);
+        setLogs(result);
+        setLogsLoading(false);
+      },
+      error => {
+        console.error('[StudentQuranPage] list', LOG_COLLECTION, error);
+        setLogsError('Riwayat bacaan gagal dimuat. Silakan coba lagi.');
+        setLogsLoading(false);
+      }
+    );
+  }, [resolvedStudentId, status, reloadKey]);
 
   useEffect(() => {
-    const surahs = getSurahsInJuz(juz);
-    if (!surahs.some(s => s.surahNumber === surahNumber)) {
-      if (surahs.length > 0) {
-        setSurahNumber(surahs[0].surahNumber);
-      }
-    }
-  }, [juz]);
-
-  const ayahRange = useMemo(() => {
-    const numJuz = Number(juz);
-    const numSurah = Number(surahNumber);
-    if (!numJuz || !numSurah || isNaN(numJuz) || isNaN(numSurah)) {
-      return null;
-    }
-    return getAyahRangeForSurahInJuz(numJuz, numSurah);
-  }, [juz, surahNumber]);
+    if (status !== 'active') setEditing(null);
+  }, [status]);
 
   useEffect(() => {
-    if (ayahRange) {
-      if (ayat < ayahRange.startAyah || ayat > ayahRange.endAyah) {
-        setAyat(ayahRange.startAyah);
-      }
-    }
-  }, [juz, surahNumber, ayahRange]);
+    if (!historyLogId) return;
 
-  const handleJuzChange = (newJuz: number) => {
-    setJuz(newJuz);
-    const surahs = getSurahsInJuz(newJuz);
-    if (surahs.length > 0) {
-      setSurahNumber(surahs[0].surahNumber);
-      const range = getAyahRangeForSurahInJuz(newJuz, surahs[0].surahNumber);
-      if (range) {
-        setAyat(range.startAyah);
-      }
-    }
-  };
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError('');
+    setHistoryList([]);
 
-  const handleSurahChange = (newSurahNum: number) => {
-    setSurahNumber(newSurahNum);
-    const range = getAyahRangeForSurahInJuz(juz, newSurahNum);
-    if (range) {
-      setAyat(range.startAyah);
-    }
-  };
+    const loadHistory = async () => {
+      try {
+        const snapshot = await getDocs(
+          collection(db, LOG_COLLECTION, historyLogId, 'history')
+        );
+
+        if (cancelled) return;
+
+        const result = snapshot.docs.map(snapshotDoc => ({
+          ...snapshotDoc.data(),
+          id: snapshotDoc.id,
+        })) as HistoryEntry[];
+
+        result.sort(
+          (a, b) =>
+            timestampMillis(b.changedAt) - timestampMillis(a.changedAt)
+        );
+
+        setHistoryList(result);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('[StudentQuranPage] list history:', error);
+        setHistoryError('Riwayat perubahan gagal dimuat.');
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    };
+
+    void loadHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [historyLogId]);
 
   const summary = useMemo(() => {
-    if (logs.length === 0) {
-      return {
-        lastRead: null,
-        uniqueDaysCount: 0,
-        currentStreak: 0,
-        readToday: false
-      };
-    }
+    const dates = new Set(
+      logs.map(log => log.readDate).filter(isValidDate)
+    );
 
-    const lastRead = logs[0];
-    const uniqueDates = Array.from(new Set(logs.map(l => l.readDate))).sort().reverse();
-    const uniqueDaysCount = uniqueDates.length;
+    const today = getWibDateString();
+    let cursor = dates.has(today) ? today : previousDate(today);
+    let streak = 0;
 
-    const todayStr = getWibDateString();
-    const readToday = uniqueDates.includes(todayStr);
-
-    let currentStreak = 0;
-    const today = new Date();
-    const todayWibStr = getWibDateString(today);
-    
-    const yesterday = new Date();
-    yesterday.setDate(today.getDate() - 1);
-    const yesterdayWibStr = getWibDateString(yesterday);
-
-    let startDateStr = todayWibStr;
-    if (!uniqueDates.includes(todayWibStr)) {
-      if (uniqueDates.includes(yesterdayWibStr)) {
-        startDateStr = yesterdayWibStr;
-      } else {
-        currentStreak = 0;
-      }
-    }
-
-    if (uniqueDates.includes(startDateStr)) {
-      let d = new Date();
-      if (startDateStr === yesterdayWibStr) {
-        d.setDate(d.getDate() - 1);
-      }
-      
-      while (true) {
-        const dStr = getWibDateString(d);
-        if (uniqueDates.includes(dStr)) {
-          currentStreak++;
-          d.setDate(d.getDate() - 1);
-        } else {
-          break;
-        }
-      }
+    while (dates.has(cursor)) {
+      streak += 1;
+      cursor = previousDate(cursor);
     }
 
     return {
-      lastRead,
-      uniqueDaysCount,
-      currentStreak,
-      readToday
+      readToday: dates.has(today),
+      totalDays: dates.size,
+      streak,
+      lastRead: logs[0] || null,
     };
   }, [logs]);
 
-  const handleSubmitLog = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting || participantStatus !== 'active') return;
+  const groupedLogs = useMemo(() => {
+    const groups = new Map<string, ReadingLog[]>();
 
-    const todayWib = getWibDateString();
-    if (readDate > todayWib) {
-      toast.error('Tanggal bacaan tidak boleh di masa depan.');
+    logs.forEach(log => {
+      const existing = groups.get(log.readDate) || [];
+      groups.set(log.readDate, [...existing, log]);
+    });
+
+    return [...groups.entries()];
+  }, [logs]);
+
+  const saveNewLog = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (
+      savingRef.current ||
+      status !== 'active' ||
+      !resolvedStudentId ||
+      !participant
+    ) {
       return;
     }
 
-    const range = getAyahRangeForSurahInJuz(juz, surahNumber);
-    if (!range) {
-      toast.error('Kombinasi Juz dan Surat tidak valid.');
-      return;
-    }
-    if (ayat < range.startAyah || ayat > range.endAyah) {
-      toast.error(`Ayat tidak valid untuk Juz ${juz} pada surat ini. Rentang valid: ${range.startAyah} - ${range.endAyah}.`);
+    if (!formIsValid(form)) {
+      toast.error('Periksa tanggal, surat, dan rentang ayat terlebih dahulu.');
       return;
     }
 
-    const surahObj = getSurahByNumber(surahNumber);
-    if (!surahObj) {
-      toast.error('Pilihan surat tidak valid.');
+    const surahName = getSurahName(form.surahNumber);
+    if (!surahName) {
+      toast.error('Nama surat belum dapat dimuat.');
       return;
     }
+
+    savingRef.current = true;
+    setSubmitting(true);
 
     try {
-      setSubmitting(true);
-      const activeUser = currentUser || profile;
-      const sName = participant?.studentName || activeUser?.displayName || activeUser?.name || 'Siswa';
-      const cId = participant?.classId || activeUser?.classId || '';
-      const cName = participant?.className || '';
-
-      const logData: Omit<QuranReadingLog, 'id'> = {
-        studentUid,
-        studentName: sName,
-        classId: cId,
-        className: cName,
+      const logData = {
+        studentUid: resolvedStudentId,
+        studentName: text(participant.studentName) || 'Siswa',
+        classId: text(participant.classId),
+        className: text(participant.className),
         unit: 'ELEMENTARY',
-        readDate,
-        juz,
-        surahNumber,
-        surahName: surahObj.name,
-        ayat,
-        note: note.trim() ? note.trim().substring(0, 200) : '',
+        readDate: form.readDate,
+        juz: form.juz,
+        surahNumber: form.surahNumber,
+        surahName,
+        ayat: Number(form.ayat),
+        note: form.note.trim(),
         createdAt: serverTimestamp(),
         updatedAt: null,
         editCount: 0,
-        source: 'app'
+        source: 'app',
       };
 
-      const newDocRef = doc(collection(db, 'elementary_quran_reading_logs'));
-      await runTransaction(db, async (transaction) => {
-        transaction.set(newDocRef, logData);
+      await setDoc(
+        doc(collection(db, LOG_COLLECTION)),
+        logData
+      );
+
+      setAppreciation({
+        message:
+          APPRECIATION_MESSAGES[
+            Math.floor(Math.random() * APPRECIATION_MESSAGES.length)
+          ],
+        description:
+          `Juz ${form.juz} • ${surahName} ayat ${Number(form.ayat)}` +
+          ` • ${form.readDate}`,
       });
 
-      const savedLog: QuranReadingLog = {
-        id: newDocRef.id,
-        ...logData,
-        createdAt: Date.now()
-      };
-
-      setNote('');
-
-      const randomMsg = APPRECIATION_MESSAGES[Math.floor(Math.random() * APPRECIATION_MESSAGES.length)];
-      setAppreciationModal({
-        isOpen: true,
-        message: randomMsg,
-        log: savedLog
-      });
-
-    } catch (err: any) {
-      console.error("Error saving quran reading log:", err);
-      handleFirestoreError(err, 'create', 'elementary_quran_reading_logs');
+      setForm(previous => ({ ...previous, note: '' }));
+    } catch (error) {
+      console.error('[StudentQuranPage] create', LOG_COLLECTION, error);
+      toast.error('Bacaan belum tersimpan. Isianmu tetap tersedia.');
     } finally {
+      savingRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const handleUpdateLog = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting || !editingLog || !editingLog.id || participantStatus !== 'active') return;
+  const saveEditedLog = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
 
-    const range = getAyahRangeForSurahInJuz(editingLog.juz, editingLog.surahNumber);
-    if (!range) {
-      toast.error('Kombinasi Juz dan Surat pada edit tidak valid.');
-      return;
-    }
-    if (editingLog.ayat < range.startAyah || editingLog.ayat > range.endAyah) {
-      toast.error(`Ayat tidak valid untuk Juz ${editingLog.juz} pada surat ini.`);
+    if (
+      savingRef.current ||
+      !editing ||
+      status !== 'active'
+    ) {
       return;
     }
 
-    const surahObj = getSurahByNumber(editingLog.surahNumber);
-    if (!surahObj) return;
+    const draft = editing.form;
+
+    if (!formIsValid(draft)) {
+      toast.error('Periksa tanggal, surat, dan rentang ayat pada perubahan.');
+      return;
+    }
+
+    const surahName = getSurahName(draft.surahNumber);
+    const actorUid = getAuth(db.app).currentUser?.uid;
+
+    if (!actorUid || !surahName) {
+      toast.error('Identitas akun atau referensi surat belum siap.');
+      return;
+    }
+
+    savingRef.current = true;
+    setSubmitting(true);
 
     try {
-      setSubmitting(true);
-      const logRef = doc(db, 'elementary_quran_reading_logs', editingLog.id);
-      const historyRef = doc(collection(db, `elementary_quran_reading_logs/${editingLog.id}/history`));
+      const logRef = doc(db, LOG_COLLECTION, editing.id);
+      const historyRef = doc(collection(logRef, 'history'));
 
-      const activeUid = studentUid;
+      const changed = await runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(logRef);
 
-      await runTransaction(db, async (transaction) => {
-        const currentSnap = await transaction.get(logRef);
-        if (!currentSnap.exists()) {
-          throw new Error("Dokumen bacaan tidak ditemukan.");
+        if (!snapshot.exists()) {
+          throw new Error('Catatan bacaan tidak ditemukan.');
         }
 
-        const currentData = currentSnap.data() as QuranReadingLog;
+        const current = snapshot.data();
 
-        if (
-          currentData.readDate === editingLog.readDate &&
-          currentData.juz === editingLog.juz &&
-          currentData.surahNumber === editingLog.surahNumber &&
-          currentData.ayat === editingLog.ayat &&
-          (currentData.note || '') === (editingLog.note || '')
-        ) {
-          return;
+        if (current.studentUid !== resolvedStudentId) {
+          throw new Error('Catatan ini bukan milik akun siswa ini.');
         }
 
-        const historyData: Omit<QuranReadingLogHistory, 'id'> = {
-          readDate: currentData.readDate,
-          juz: currentData.juz,
-          surahNumber: currentData.surahNumber,
-          surahName: currentData.surahName,
-          ayat: currentData.ayat,
-          note: currentData.note || '',
-          changedAt: serverTimestamp(),
-          changedByUid: activeUid
+        const next = {
+          readDate: draft.readDate,
+          juz: draft.juz,
+          surahNumber: draft.surahNumber,
+          surahName,
+          ayat: Number(draft.ayat),
+          note: draft.note.trim(),
         };
-        transaction.set(historyRef, historyData);
 
-        const newEditCount = (currentData.editCount || 0) + 1;
-        transaction.update(logRef, {
-          readDate: editingLog.readDate,
-          juz: editingLog.juz,
-          surahNumber: editingLog.surahNumber,
-          surahName: surahObj.name,
-          ayat: editingLog.ayat,
-          note: editingLog.note ? editingLog.note.trim().substring(0, 200) : '',
-          editCount: newEditCount,
-          updatedAt: serverTimestamp()
+        const unchanged =
+          current.readDate === next.readDate &&
+          current.juz === next.juz &&
+          current.surahNumber === next.surahNumber &&
+          current.surahName === next.surahName &&
+          current.ayat === next.ayat &&
+          (current.note || '') === next.note;
+
+        if (unchanged) return false;
+
+        transaction.set(historyRef, {
+          readDate: current.readDate,
+          juz: current.juz,
+          surahNumber: current.surahNumber,
+          surahName: current.surahName,
+          ayat: current.ayat,
+          note: current.note || '',
+          changedAt: serverTimestamp(),
+          changedByUid: actorUid,
         });
+
+        transaction.update(logRef, {
+          ...next,
+          updatedAt: serverTimestamp(),
+          editCount: Number(current.editCount || 0) + 1,
+        });
+
+        return true;
       });
 
-      toast.success("Bacaan berhasil diperbarui.");
-      setEditingLog(null);
-    } catch (err: any) {
-      console.error("Error updating quran log:", err);
-      toast.error("Gagal memperbarui bacaan.");
+      toast.success(
+        changed ? 'Bacaan berhasil diperbarui.' : 'Tidak ada perubahan.'
+      );
+      setEditing(null);
+    } catch (error) {
+      console.error('[StudentQuranPage] update/history:', error);
+      toast.error('Perubahan gagal disimpan. Silakan periksa izin akses.');
     } finally {
+      savingRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const openHistoryModal = async (logId: string) => {
-    setHistoryModalLogId(logId);
-    setHistoryLoading(true);
-    setHistoryList([]);
-
-    try {
-      const historyColRef = collection(db, `elementary_quran_reading_logs/${logId}/history`);
-      const qHistory = query(historyColRef, orderBy('changedAt', 'desc'));
-      const snap = await getDocs(qHistory);
-      const list: QuranReadingLogHistory[] = [];
-      snap.forEach(d => {
-        list.push({ id: d.id, ...d.data() } as QuranReadingLogHistory);
-      });
-      setHistoryList(list);
-    } catch (err) {
-      console.error("Error loading log history:", err);
-      toast.error("Gagal memuat riwayat perubahan.");
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
-
-  if (loading || participantStatus === 'loading') {
+  if (status === 'loading') {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
       </div>
     );
   }
 
-  if (participantStatus === 'error' || participantStatus === 'unregistered') {
+  if (status === 'error') {
     return (
-      <div className="max-w-2xl mx-auto p-6 md:p-12">
-        <div className="bg-amber-50 border border-amber-200 rounded-3xl p-8 text-center shadow-sm">
-          <BookOpen className="w-12 h-12 text-amber-600 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-amber-900 mb-2">Sahabat Qur&apos;an</h2>
-          <p className="text-amber-700 text-sm md:text-base leading-relaxed">
-            Kamu belum terdaftar di Sahabat Qur&apos;an. Tanyakan ke gurumu ya.
+      <div className="mx-auto max-w-2xl p-6">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
+          <h1 className="font-bold text-red-900">Data belum dapat dimuat</h1>
+          <p className="mt-2 text-sm text-red-700">{pageError}</p>
+          <button
+            onClick={() => setReloadKey(value => value + 1)}
+            className={`${PRIMARY_BUTTON} mt-4`}
+          >
+            Coba Lagi
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'unregistered') {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <BookOpen className="mx-auto mb-4 h-10 w-10 text-amber-600" />
+          <h1 className="text-xl font-bold">Sahabat Qur&apos;an</h1>
+          <p className="mt-3 text-sm text-amber-800">
+            Kamu belum terdaftar di Sahabat Qur&apos;an.
+            Tanyakan ke gurumu ya.
           </p>
         </div>
       </div>
@@ -500,521 +921,293 @@ export default function StudentQuranPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-      {/* Header Banner */}
-      <div className="bg-gradient-to-r from-emerald-800 to-teal-700 rounded-3xl p-6 md:p-10 text-white shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 bottom-0 w-1/3 opacity-10 pointer-events-none flex items-center justify-end pr-10">
-          <BookOpen className="w-64 h-64" />
+    <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+      <header className="rounded-3xl bg-gradient-to-r from-emerald-800 to-teal-700 p-6 text-white shadow-lg md:p-9">
+        <div className="mb-3 flex items-center gap-2 text-sm text-emerald-100">
+          <BookOpen className="h-5 w-5" />
+          Program Harian Elementary
         </div>
-        <div className="relative z-10 space-y-2">
-          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-3.5 py-1 rounded-full text-xs font-semibold text-emerald-100">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-            Program Harian Elementary
-          </div>
-          <h1 className="text-3xl md:text-4xl font-black tracking-tight">Sahabat Qur&apos;an</h1>
-          <p className="text-emerald-100 text-sm md:text-base max-w-xl font-medium">
-            Catat dan pantau progres bacaan Al-Qur&apos;an harianmu dengan mudah dan menyenangkan.
-          </p>
-        </div>
-      </div>
+        <h1 className="text-3xl font-extrabold">Sahabat Qur&apos;an</h1>
+        <p className="mt-2 text-sm text-emerald-100">
+          Catat bacaan Al-Qur&apos;an dan lihat perjalanan belajarmu.
+        </p>
+      </header>
 
-      {/* Inactive Notice */}
-      {participantStatus === 'inactive' && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 md:p-6 text-amber-800 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-          <p className="text-sm font-medium">
-            Status kepesertaanmu saat ini sedang nonaktif. Kamu masih dapat melihat riwayat bacaan, namun belum dapat menambah atau mengedit catatan baru.
-          </p>
-        </div>
+      {status === 'inactive' && (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Pencatatanmu sedang nonaktif. Riwayat tetap dapat dibaca,
+          tetapi kamu belum dapat menambah atau mengedit bacaan.
+        </p>
       )}
 
-      {/* Summary Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className={cn(
-          "rounded-2xl p-5 border shadow-sm flex flex-col justify-between transition",
-          summary.readToday ? "bg-emerald-50/70 border-emerald-200" : "bg-white border-slate-100"
-        )}>
-          <div className="flex items-center justify-between text-slate-500 mb-4">
-            <span className="text-xs font-bold uppercase tracking-wider">Hari Ini</span>
-            <Calendar className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div>
-            {summary.readToday ? (
-              <div className="flex items-center gap-2 text-emerald-700 font-bold text-base">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                Sudah Membaca
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-amber-700 font-bold text-base">
-                <Clock className="w-5 h-5 text-amber-500" />
-                Belum Membaca
-              </div>
-            )}
-            <p className="text-xs text-slate-500 mt-1">
-              {summary.readToday ? "Alhamdulillah, tugas hari ini beres!" : "Yuk catat bacaanmu hari ini."}
+      {logsError ? (
+        <div className="rounded-2xl bg-red-50 p-4 text-sm text-red-700">
+          <p>{logsError}</p>
+          <button
+            onClick={() => setReloadKey(value => value + 1)}
+            className="mt-2 font-bold underline"
+          >
+            Coba Lagi
+          </button>
+        </div>
+      ) : (
+        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            {
+              title: 'Hari Ini',
+              value: logsLoading
+                ? 'Memuat...'
+                : summary.readToday
+                  ? 'Sudah membaca'
+                  : 'Belum tercatat',
+            },
+            {
+              title: 'Berturut-turut',
+              value: logsLoading ? 'Memuat...' : `${summary.streak} hari`,
+            },
+            {
+              title: 'Total Hari Membaca',
+              value: logsLoading ? 'Memuat...' : `${summary.totalDays} hari`,
+            },
+            {
+              title: 'Bacaan Terakhir',
+              value: logsLoading
+                ? 'Memuat...'
+                : summary.lastRead
+                  ? `${summary.lastRead.surahName} • ayat ${summary.lastRead.ayat}`
+                  : 'Belum ada',
+            },
+          ].map(card => (
+            <div
+              key={card.title}
+              className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm"
+            >
+              <p className="text-xs font-bold uppercase text-slate-500">
+                {card.title}
+              </p>
+              <p className="mt-3 break-words text-lg font-bold text-slate-900">
+                {card.value}
+              </p>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+        {status === 'active' && (
+          <section className="min-w-0 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm lg:col-span-5 md:p-6">
+            <h2 className="mb-1 text-lg font-bold">Catat Bacaan Baru</h2>
+            <p className="mb-5 text-xs text-slate-500">
+              Isi posisi ayat terakhir yang kamu baca.
             </p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-4">
-            <span className="text-xs font-bold uppercase tracking-wider">Streak Aktif</span>
-            <Sparkles className="w-4 h-4 text-amber-500" />
-          </div>
-          <div>
-            <div className="text-3xl font-black text-slate-900">
-              {summary.currentStreak} <span className="text-sm font-bold text-slate-500">hari</span>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">Membaca berturut-turut</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-4">
-            <span className="text-xs font-bold uppercase tracking-wider">Total Hari</span>
-            <Award className="w-4 h-4 text-teal-600" />
-          </div>
-          <div>
-            <div className="text-3xl font-black text-slate-900">
-              {summary.uniqueDaysCount} <span className="text-sm font-bold text-slate-500">hari unik</span>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">Akumulasi kebiasaan baik</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-4">
-            <span className="text-xs font-bold uppercase tracking-wider">Terakhir Dibaca</span>
-            <BookOpen className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div>
-            {summary.lastRead ? (
-              <div>
-                <div className="text-sm font-bold text-slate-900 truncate">
-                  Juz {summary.lastRead.juz} • {summary.lastRead.surahName}
-                </div>
-                <p className="text-xs text-slate-500 mt-0.5">Ayat {summary.lastRead.ayat}</p>
-              </div>
-            ) : (
-              <p className="text-xs font-medium text-slate-400">Belum ada riwayat</p>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content Grid: Form Input & History */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {participantStatus === 'active' && (
-          <div className="lg:col-span-5 bg-white rounded-3xl p-6 md:p-8 border border-slate-100 shadow-sm space-y-6">
-            <div className="border-b border-slate-100 pb-4">
-              <h2 className="text-lg font-black text-slate-900">Catat Bacaan Baru</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Pilih juz, surah, dan ayat terakhir yang kamu baca.</p>
-            </div>
-
-            <form onSubmit={handleSubmitLog} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Tanggal Bacaan
-                </label>
-                <input 
-                  type="date"
-                  value={readDate}
-                  max={getWibDateString()}
-                  onChange={(e) => setReadDate(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Pilih Juz (1 - 30)
-                </label>
-                <select
-                  value={juz}
-                  onChange={(e) => handleJuzChange(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  {Array.from({ length: 30 }, (_, i) => i + 1).map(j => (
-                    <option key={j} value={j}>Juz {j}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Nama Surat
-                </label>
-                <select
-                  value={surahNumber}
-                  onChange={(e) => handleSurahChange(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  {availableSurahsInJuz.map(s => (
-                    <option key={s.surahNumber} value={s.surahNumber}>
-                      {s.surahNumber}. {s.surahName} ({s.totalVerses} ayat)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                    Nomor Ayat Terakhir
-                  </label>
-                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
-                    Rentang: {ayahRange.startAyah} - {ayahRange.endAyah}
-                  </span>
-                </div>
-                <input 
-                  type="number"
-                  min={ayahRange.startAyah}
-                  max={ayahRange.endAyah}
-                  value={ayat}
-                  onChange={(e) => setAyat(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Catatan (Opsional, maks 200 karakter)
-                </label>
-                <textarea 
-                  rows={2}
-                  maxLength={200}
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Misal: Lancar dan tartil..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
-                />
-              </div>
-
+            <form onSubmit={saveNewLog} className="space-y-5">
+              <ReadingFields
+                value={form}
+                onChange={setForm}
+                disabled={submitting}
+              />
               <button
                 type="submit"
-                disabled={submitting}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                disabled={submitting || !formIsValid(form)}
+                className={`${PRIMARY_BUTTON} w-full`}
               >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Menyimpan...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-5 h-5" />
-                    Simpan Catatan Bacaan
-                  </>
+                {submitting && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 )}
+                {submitting ? 'Menyimpan...' : 'Simpan Catatan Bacaan'}
               </button>
             </form>
-          </div>
+          </section>
         )}
 
-        <div className={cn(
-          "space-y-6",
-          participantStatus === 'active' ? "lg:col-span-7" : "lg:col-span-12"
-        )}>
-          <div className="bg-white rounded-3xl p-6 md:p-8 border border-slate-100 shadow-sm space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div>
-                <h2 className="text-lg font-black text-slate-900">Riwayat Bacaan</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Daftar pencatatan harianmu yang telah tersimpan.</p>
-              </div>
-              <span className="bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-xs font-bold">
-                {logs.length} Entri
-              </span>
-            </div>
+        <section
+          className={`min-w-0 rounded-3xl border border-slate-100 bg-white p-5 shadow-sm md:p-6 ${
+            status === 'active' ? 'lg:col-span-7' : 'lg:col-span-12'
+          }`}
+        >
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">Riwayat Bacaan</h2>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs">
+              {logs.length} entri
+            </span>
+          </div>
 
-            {logsLoading ? (
-              <div className="py-12 flex justify-center">
-                <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
-              </div>
-            ) : logs.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 space-y-2">
-                <BookOpen className="w-10 h-10 mx-auto opacity-40" />
-                <p className="text-sm font-medium">Belum ada riwayat bacaan yang tercatat.</p>
-              </div>
-            ) : (
-              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
-                {logs.map((log) => (
-                  <div 
-                    key={log.id} 
-                    className="bg-slate-50 hover:bg-slate-100/70 border border-slate-200/60 rounded-2xl p-4 transition space-y-2.5"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="bg-emerald-100 text-emerald-800 text-[11px] font-black px-2.5 py-0.5 rounded-full">
-                            Juz {log.juz}
-                          </span>
-                          <h3 className="text-sm font-bold text-slate-900">
-                            {log.surahNumber}. {log.surahName} • Ayat {log.ayat}
-                          </h3>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                          <span className="font-semibold text-slate-700">{log.readDate}</span>
-                          <span>•</span>
-                          <span>Input: {log.createdAt?.toDate ? log.createdAt.toDate().toLocaleDateString('id-ID') : 'Baru saja'}</span>
-                          {log.editCount > 0 && (
-                            <>
-                              <span>•</span>
-                              <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-md">
-                                Diedit ({log.editCount}x)
-                              </span>
-                            </>
-                          )}
-                        </div>
+          {logsLoading ? (
+            <Loader2 className="mx-auto my-10 h-6 w-6 animate-spin text-emerald-600" />
+          ) : logsError ? (
+            <p className="text-sm text-red-600">{logsError}</p>
+          ) : logs.length === 0 ? (
+            <p className="py-10 text-center text-sm text-slate-400">
+              Belum ada bacaan yang tercatat.
+            </p>
+          ) : (
+            <div className="space-y-6">
+              {groupedLogs.map(([date, entries]) => (
+                <div key={date} className="space-y-3">
+                  <h3 className="text-xs font-bold text-slate-500">{date}</h3>
+                  {entries.map(log => (
+                    <article
+                      key={log.id}
+                      className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800">
+                          Juz {log.juz}
+                        </span>
+                        <h4 className="text-sm font-bold">
+                          {log.surahName} • ayat {log.ayat}
+                        </h4>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        {log.editCount > 0 && log.id && (
-                          <button
-                            onClick={() => openHistoryModal(log.id!)}
-                            className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1 bg-blue-50 px-2.5 py-1.5 rounded-xl border border-blue-100"
-                          >
-                            <HistoryIcon className="w-3.5 h-3.5" />
-                            Riwayat
-                          </button>
-                        )}
+                      <p className="text-xs text-slate-500">
+                        Input: {formatTimestamp(log.createdAt)}
+                      </p>
 
-                        {participantStatus === 'active' && (
+                      {log.note && (
+                        <p className="whitespace-pre-wrap break-words rounded-xl bg-white p-3 text-sm text-slate-600">
+                          {log.note}
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {log.editCount > 0 && (
+                          <>
+                            <span className="rounded-lg bg-amber-100 px-2 py-1 text-xs text-amber-800">
+                              Diedit {log.editCount}x
+                            </span>
+                            <button
+                              onClick={() => setHistoryLogId(log.id)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"
+                            >
+                              <HistoryIcon className="h-3.5 w-3.5" />
+                              Riwayat Perubahan
+                            </button>
+                          </>
+                        )}
+                        {status === 'active' && (
                           <button
-                            onClick={() => setEditingLog(log)}
-                            className="text-xs font-semibold text-slate-700 hover:bg-white bg-slate-200/60 px-3 py-1.5 rounded-xl transition flex items-center gap-1 border border-slate-300/40"
+                            disabled={submitting}
+                            onClick={() =>
+                              setEditing({ id: log.id, form: toForm(log) })
+                            }
+                            className="inline-flex items-center gap-1 rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold"
                           >
-                            <Edit3 className="w-3.5 h-3.5" />
+                            <Edit3 className="h-3.5 w-3.5" />
                             Edit
                           </button>
                         )}
                       </div>
-                    </div>
-
-                    {log.note && (
-                      <p className="text-xs text-slate-600 bg-white/80 border border-slate-200/40 p-2.5 rounded-xl italic">
-                        &ldquo;{log.note}&rdquo;
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+                    </article>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
-      {/* APPRECIATION MODAL */}
-      {appreciationModal.isOpen && appreciationModal.log && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl text-center space-y-6 relative overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
-              <Sparkles className="w-8 h-8" />
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="text-2xl font-black text-slate-900">Alhamdulillah!</h3>
-              <p className="text-sm font-medium text-slate-600 leading-relaxed">
-                {appreciationModal.message}
-              </p>
-            </div>
-
-            <div className="bg-emerald-50 border border-emerald-200/70 rounded-2xl p-4 text-left space-y-1">
-              <div className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Bacaan Disimpan</div>
-              <div className="text-sm font-black text-slate-900">
-                Juz {appreciationModal.log.juz} • {appreciationModal.log.surahName} (Ayat {appreciationModal.log.ayat})
-              </div>
-              <div className="text-xs text-slate-500">Tanggal: {appreciationModal.log.readDate}</div>
-            </div>
-
+      {appreciation && (
+        <Modal
+          title="Alhamdulillah!"
+          onClose={() => setAppreciation(null)}
+        >
+          <div className="space-y-5 text-center">
+            <Sparkles className="mx-auto h-12 w-12 text-emerald-600" />
+            <p className="text-slate-700">{appreciation.message}</p>
+            <p className="rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+              {appreciation.description}
+            </p>
             <button
-              onClick={() => setAppreciationModal({ isOpen: false, message: '', log: null })}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg shadow-emerald-600/20 transition"
+              onClick={() => setAppreciation(null)}
+              className={`${PRIMARY_BUTTON} w-full`}
             >
               Lanjutkan
             </button>
           </div>
-        </div>
+        </Modal>
       )}
 
-      {/* EDIT MODAL */}
-      {editingLog && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 md:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <h3 className="text-lg font-black text-slate-900">Edit Catatan Bacaan</h3>
-              <button 
-                onClick={() => setEditingLog(null)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full"
+      {editing && status === 'active' && (
+        <Modal
+          title="Edit Catatan Bacaan"
+          onClose={() => setEditing(null)}
+          busy={submitting}
+        >
+          <form onSubmit={saveEditedLog} className="space-y-5">
+            <ReadingFields
+              value={editing.form}
+              onChange={next =>
+                setEditing(previous =>
+                  previous ? { ...previous, form: next } : null
+                )
+              }
+              disabled={submitting}
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                disabled={submitting}
+                className="rounded-xl px-4 py-3 text-sm text-slate-600"
               >
-                <X className="w-5 h-5" />
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={submitting || !formIsValid(editing.form)}
+                className={PRIMARY_BUTTON}
+              >
+                {submitting && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Simpan Perubahan
               </button>
             </div>
-
-            <form onSubmit={handleUpdateLog} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Tanggal Bacaan
-                </label>
-                <input 
-                  type="date"
-                  value={editingLog.readDate}
-                  max={getWibDateString()}
-                  onChange={(e) => setEditingLog({ ...editingLog, readDate: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Pilih Juz (1 - 30)
-                </label>
-                <select
-                  value={editingLog.juz}
-                  onChange={(e) => {
-                    const newJ = Number(e.target.value);
-                    const surahs = getSurahsInJuz(newJ);
-                    const sNum = surahs[0]?.surahNumber || 1;
-                    const rng = getAyahRangeForSurahInJuz(newJ, sNum);
-                    setEditingLog({
-                      ...editingLog,
-                      juz: newJ,
-                      surahNumber: sNum,
-                      surahName: surahs[0]?.surahName || '',
-                      ayat: rng.startAyah
-                    });
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800"
-                >
-                  {Array.from({ length: 30 }, (_, i) => i + 1).map(j => (
-                    <option key={j} value={j}>Juz {j}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Nama Surat
-                </label>
-                <select
-                  value={editingLog.surahNumber}
-                  onChange={(e) => {
-                    const sNum = Number(e.target.value);
-                    const surahObj = getSurahByNumber(sNum);
-                    const rng = getAyahRangeForSurahInJuz(editingLog.juz, sNum);
-                    setEditingLog({
-                      ...editingLog,
-                      surahNumber: sNum,
-                      surahName: surahObj?.name || '',
-                      ayat: rng.startAyah
-                    });
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800"
-                >
-                  {getSurahsInJuz(editingLog.juz).map(s => (
-                    <option key={s.surahNumber} value={s.surahNumber}>
-                      {s.surahNumber}. {s.surahName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Nomor Ayat Terakhir
-                </label>
-                <input 
-                  type="number"
-                  min={1}
-                  value={editingLog.ayat}
-                  onChange={(e) => setEditingLog({ ...editingLog, ayat: Number(e.target.value) })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-800"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                  Catatan
-                </label>
-                <textarea 
-                  rows={2}
-                  maxLength={200}
-                  value={editingLog.note || ''}
-                  onChange={(e) => setEditingLog({ ...editingLog, note: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-medium text-slate-800 resize-none"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setEditingLog(null)}
-                  className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-6 rounded-xl shadow-md transition flex items-center gap-2 disabled:opacity-50"
-                >
-                  {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Simpan Perubahan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+          </form>
+        </Modal>
       )}
 
-      {/* HISTORY MODAL */}
-      {historyModalLogId && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 md:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-2">
-                <HistoryIcon className="w-5 h-5 text-blue-600" />
-                <h3 className="text-lg font-black text-slate-900">Riwayat Perubahan Bacaan</h3>
-              </div>
-              <button 
-                onClick={() => setHistoryModalLogId(null)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-full"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      {historyLogId && (
+        <Modal
+          title="Riwayat Perubahan Bacaan"
+          onClose={() => setHistoryLogId(null)}
+        >
+          {historyLoading ? (
+            <Loader2 className="mx-auto my-8 h-6 w-6 animate-spin text-emerald-600" />
+          ) : historyError ? (
+            <p className="text-sm text-red-600">{historyError}</p>
+          ) : historyList.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              Tidak ada riwayat perubahan.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {historyList.map(entry => (
+                <article
+                  key={entry.id}
+                  className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm"
+                >
+                  <p className="text-xs text-slate-500">
+                    Diubah: {formatTimestamp(entry.changedAt)}
+                  </p>
+                  <p className="text-xs font-semibold text-slate-500">
+                    Nilai sebelum perubahan:
+                  </p>
+                  <p className="font-bold">
+                    Juz {entry.juz} • {entry.surahName} • ayat {entry.ayat}
+                  </p>
+                  <p>Tanggal bacaan: {entry.readDate}</p>
+                  {entry.note && (
+                    <p className="whitespace-pre-wrap break-words text-slate-600">
+                      {entry.note}
+                    </p>
+                  )}
+                </article>
+              ))}
             </div>
-
-            {historyLoading ? (
-              <div className="py-12 flex justify-center">
-                <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
-              </div>
-            ) : historyList.length === 0 ? (
-              <p className="text-center py-8 text-slate-400 text-sm">Tidak ada riwayat perubahan.</p>
-            ) : (
-              <div className="space-y-3">
-                {historyList.map((h, idx) => (
-                  <div key={h.id || idx} className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-2 text-xs">
-                    <div className="flex items-center justify-between text-slate-500 font-semibold">
-                      <span>Perubahan #{historyList.length - idx}</span>
-                      <span>{h.changedAt?.toDate ? h.changedAt.toDate().toLocaleString('id-ID') : 'Beberapa saat lalu'}</span>
-                    </div>
-                    <div className="bg-white p-3 rounded-xl border border-slate-200/60 space-y-1">
-                      <div className="font-bold text-slate-800">
-                        Juz {h.juz} • {h.surahName} (Ayat {h.ayat})
-                      </div>
-                      <div className="text-slate-500">Tanggal bacaan: {h.readDate}</div>
-                      {h.note && <div className="italic text-slate-600">&ldquo;{h.note}&rdquo;</div>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+          )}
+        </Modal>
       )}
-    </div>
+    </main>
   );
 }
