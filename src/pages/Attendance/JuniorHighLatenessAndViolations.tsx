@@ -12,6 +12,7 @@ import {
   collection, query, where, getDocs, doc, setDoc, getDoc,
   serverTimestamp, deleteDoc, onSnapshot, updateDoc, addDoc 
 } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
@@ -134,34 +135,9 @@ export const JUNIOR_HIGH_VIOLATIONS_MASTER: ViolationCategory[] = [
 ];
 
 export const JUNIOR_HIGH_MODERATE_VIOLATIONS_MASTER: ViolationCategory[] = [
-  {
-    id: 'konflik_teman',
-    label: 'Konflik antar teman',
-    violations: [
-      { code: 'M01', label: 'Perselisihan atau pertengkaran verbal antar teman', helperText: 'Konflik argumen, saling mencemooh, atau perkataan kasar antar siswa yang mengganggu ketertiban sekolah.' },
-      { code: 'M02', label: 'Perkelahian fisik ringan / dorong-mendorong', helperText: 'Kontak fisik akibat perselisihan emosional antar teman tanpa cedera berat.' },
-      { code: 'M03', label: 'Pengucilan atau intimidasi sosial antar teman', helperText: 'Mengajak siswa lain menjauhi atau memusuhi teman tertentu secara terencana.' },
-      { code: 'M04', label: 'Penyebaran rumor atau fitnah antar teman', helperText: 'Menyebarkan kabar bohong di lingkungan sekolah yang memicu perpecahan.' }
-    ]
-  },
-  {
-    id: 'geng',
-    label: 'Geng',
-    violations: [
-      { code: 'M05', label: 'Membentuk atau bergabung dalam geng / kelompok eksklusif negatif', helperText: 'Kelompok yang menimbulkan dominasi sepihak, senioritas berlebih, atau intimidasi.' },
-      { code: 'M06', label: 'Aktivitas nongkrong liar / tawuran antar kelompok', helperText: 'Berkumpul dengan atribut atau perilaku meresahkan di dalam maupun sekitar lingkungan sekolah.' },
-      { code: 'M07', label: 'Perekrutan atau pemaksaan masuk ke dalam kelompok/geng', helperText: 'Memaksa siswa lain untuk bergabung atau tunduk pada senior/kelompok.' }
-    ]
-  },
-  {
-    id: 'pacaran',
-    label: 'Pacaran',
-    violations: [
-      { code: 'M08', label: 'Perilaku pacaran di lingkungan sekolah', helperText: 'Berduaan di tempat sepi atau menunjukkan perilaku intim yang tidak sesuai norma kesantunan sekolah.' },
-      { code: 'M09', label: 'Kontak fisik tidak pantas dalam hubungan pacaran', helperText: 'Bergandengan tangan berlebihan, merangkul, atau kontak fisik lain di area sekolah.' },
-      { code: 'M10', label: 'Mengabaikan tata tertib karena hubungan pertemanan khusus/pacaran', helperText: 'Perilaku berpasangan yang mengganggu konsentrasi belajar pribadi dan orang lain.' }
-    ]
-  }
+  { id: 'konflik_teman', label: 'Konflik antar teman', violations: [] },
+  { id: 'geng', label: 'Geng', violations: [] },
+  { id: 'pacaran', label: 'Pacaran', violations: [] }
 ];
 
 // Helper to get JKT current time
@@ -259,6 +235,7 @@ export default function JuniorHighLatenessAndViolations() {
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const { activeYear, activeSemester } = useAcademicYear();
   const { profile } = useAuth();
+  const auth = getAuth();
 
   // Role permissions
   const currentUserRole = profile?.role || 'GUEST';
@@ -534,10 +511,7 @@ export default function JuniorHighLatenessAndViolations() {
   const [moderateStudentSearchInput, setModerateStudentSearchInput] = React.useState('');
   const [showModerateStudentDropdown, setShowModerateStudentDropdown] = React.useState(false);
   const [selectedModerateCategory, setSelectedModerateCategory] = React.useState('');
-  const [selectedModerateCode, setSelectedModerateCode] = React.useState('');
-  const [customModerateText, setCustomModerateText] = React.useState('');
   const [moderateNotes, setModerateNotes] = React.useState('');
-  const [moderateCategoryManuallySelected, setModerateCategoryManuallySelected] = React.useState(false);
 
   // Today's moderate violations list on moderateDate
   const [todayModerateViolations, setTodayModerateViolations] = React.useState<any[]>([]);
@@ -547,7 +521,6 @@ export default function JuniorHighLatenessAndViolations() {
 
   // Inline edit state for moderate violations
   const [editingModerateId, setEditingModerateId] = React.useState<string | null>(null);
-  const [editingModerateType, setEditingModerateType] = React.useState('');
   const [editingModerateNotes, setEditingModerateNotes] = React.useState('');
   const [updatingModerateId, setUpdatingModerateId] = React.useState<string | null>(null);
 
@@ -617,7 +590,7 @@ export default function JuniorHighLatenessAndViolations() {
     const q = query(
       collection(db, 'moderate_violations'),
       where('academicYear', '==', activeYear),
-      where('semester', '==', activeSemester),
+      where('semester', 'in', [String(activeSemester), Number(activeSemester)]),
       where('unit', '==', 'JUNIOR_HIGH')
     );
 
@@ -1333,24 +1306,16 @@ export default function JuniorHighLatenessAndViolations() {
       return;
     }
 
-    if (!selectedModerateCode) {
-      toast.error('Pilih jenis Pelanggaran Sedang terlebih dahulu.');
-      return;
-    }
     const categoryObj = JUNIOR_HIGH_MODERATE_VIOLATIONS_MASTER.find(c => c.id === selectedModerateCategory);
     if (!categoryObj) {
       toast.error('Kategori Pelanggaran Sedang tidak valid.');
       return;
     }
-    const violationObj = categoryObj.violations.find(v => v.code === selectedModerateCode);
-    if (!violationObj) {
-      toast.error('Jenis Pelanggaran Sedang tidak valid.');
-      return;
-    }
     const categoryId = categoryObj.id;
     const categoryLabel = categoryObj.label;
-    const violationCode = violationObj.code;
-    const violationLabel = violationObj.label;
+    // Preserve the required storage fields without introducing extra violation types.
+    const violationCode = categoryId;
+    const violationLabel = categoryLabel;
     const isCustom = false;
 
     setSavingModerate(true);
@@ -1406,10 +1371,9 @@ export default function JuniorHighLatenessAndViolations() {
       setSelectedModerateStudentId('');
       setModerateStudentSearchInput('');
       setSelectedModerateCategory('');
-      setSelectedModerateCode('');
-      setCustomModerateText('');
+
       setModerateNotes('');
-      setModerateCategoryManuallySelected(false);
+
     } catch (err) {
       console.error('Error saving moderate violation:', err);
       toast.error('Gagal menyimpan catatan Pelanggaran Sedang.');
@@ -1419,14 +1383,9 @@ export default function JuniorHighLatenessAndViolations() {
   };
 
   const handleUpdateModerateViolation = async (violationId: string) => {
-    if (!editingModerateType.trim()) {
-      toast.error('Jenis Pelanggaran Sedang wajib diisi.');
-      return;
-    }
     setUpdatingModerateId(violationId);
     try {
       await updateDoc(doc(db, 'moderate_violations', violationId), {
-        violationType: editingModerateType.trim(),
         notes: editingModerateNotes,
         updatedAt: serverTimestamp()
       });
@@ -3428,9 +3387,7 @@ export default function JuniorHighLatenessAndViolations() {
                         onChange={(e) => {
                           const catId = e.target.value;
                           setSelectedModerateCategory(catId);
-                          setSelectedModerateCode('');
-                          setCustomModerateText('');
-                          setModerateCategoryManuallySelected(catId !== '');
+
                         }}
                         className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 font-bold cursor-pointer"
                         required
@@ -3441,40 +3398,6 @@ export default function JuniorHighLatenessAndViolations() {
                         ))}
                       </select>
                     </div>
-                  </div>
-
-                  {/* Violation Selector */}
-                  <div className="space-y-2 relative">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Jenis Pelanggaran Sedang *</label>
-                    <select
-                      value={selectedModerateCode}
-                      onChange={(e) => setSelectedModerateCode(e.target.value)}
-                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 font-bold cursor-pointer"
-                      required
-                      disabled={!selectedModerateCategory}
-                    >
-                      <option value="">{selectedModerateCategory ? '-- Pilih Jenis Pelanggaran Sedang --' : '-- Pilih Kategori Dahulu --'}</option>
-                      {(() => {
-                        const catObj = JUNIOR_HIGH_MODERATE_VIOLATIONS_MASTER.find(c => c.id === selectedModerateCategory);
-                        return (catObj?.violations || []).map(v => (
-                          <option key={v.code} value={v.code}>{v.code} - {v.label}</option>
-                        ));
-                      })()}
-                    </select>
-
-                    {/* Helper text callout for selected moderate violation */}
-                    {(() => {
-                      if (!selectedModerateCategory || !selectedModerateCode) return null;
-                      const catObj = JUNIOR_HIGH_MODERATE_VIOLATIONS_MASTER.find(c => c.id === selectedModerateCategory);
-                      const violObj = catObj?.violations.find(v => v.code === selectedModerateCode);
-                      if (!violObj?.helperText) return null;
-                      return (
-                        <div className="mt-2 p-3 bg-rose-50/70 border border-rose-100 rounded-xl text-[11px] text-rose-800 leading-relaxed flex items-start gap-2.5">
-                          <Info size={14} className="text-rose-500 shrink-0 mt-0.5" />
-                          <span>{violObj.helperText}</span>
-                        </div>
-                      );
-                    })()}
                   </div>
 
                   {/* Notes */}
@@ -3573,7 +3496,7 @@ export default function JuniorHighLatenessAndViolations() {
                         <tr>
                           <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
                           <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Jenis Pelanggaran Sedang</th>
+                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kategori Pelanggaran Sedang</th>
                           <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Keterangan</th>
                           <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Dicatat Oleh</th>
                           <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
@@ -3594,7 +3517,10 @@ export default function JuniorHighLatenessAndViolations() {
                               <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide uppercase bg-rose-50 text-rose-700 border border-rose-200 mb-1">
                                 {record.categoryLabel || 'Pelanggaran Sedang'}
                               </span>
-                              <p className="text-xs font-bold text-gray-800">{record.violationLabel || record.violationType}</p>
+                              {(record.violationLabel || record.violationType) &&
+                                (record.violationLabel || record.violationType) !== record.categoryLabel && (
+                                  <p className="text-xs font-bold text-gray-800">{record.violationLabel || record.violationType}</p>
+                                )}
                             </td>
                             <td className="px-5 py-4 max-w-xs">
                               {editingModerateId === record.id ? (
@@ -3650,7 +3576,7 @@ export default function JuniorHighLatenessAndViolations() {
                                   <button
                                     onClick={() => {
                                       setEditingModerateId(record.id);
-                                      setEditingModerateType(record.violationType || '');
+
                                       setEditingModerateNotes(record.notes || '');
                                     }}
                                     className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
