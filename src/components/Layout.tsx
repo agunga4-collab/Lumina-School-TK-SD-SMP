@@ -859,7 +859,7 @@ export function Layout() {
                 <div className="space-y-1">
                   <NavSectionLabel label="Akademik & MTSS" />
                   <NavItem to="/class-data" icon={<Users size={18} />} label="Data Kelas" />
-                  <NavItem to="/lateness" icon={<Clock size={18} />} label="Keterlambatan & Pelanggaran Ringan" />
+                  <NavItem to="/lateness" icon={<Clock size={18} />} label="School Code of Conduct" />
                   <NavItem to="/attendance" icon={<CheckSquare size={18} />} label="Kehadiran" />
                   {isMenuVisible(currentUnit, 'learningGoals') && (
                     <NavItem to="/academic/learning-goals" icon={<Target size={18} />} label="Learning Goals" />

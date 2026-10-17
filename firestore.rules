@@ -519,15 +519,42 @@ service cloud.firestore {
       && data.className is string && data.className.size() <= 128
       && data.academicYear is string && data.academicYear.size() <= 32
       && (data.semester == null || data.semester is string)
-      && data.issueType in ['lateness', 'minor_violation']
+      && data.issueType in ['lateness', 'minor_violation', 'moderate_violation']
       && data.incidentIds is list && data.incidentIds.size() > 0 && data.incidentIds.size() <= 50
       && data.interventionPlan is string && data.interventionPlan.size() <= 2000
       && data.status in ['in_progress', 'completed']
       && (data.outcomeNote == null || (data.outcomeNote is string && data.outcomeNote.size() <= 2000))
-      && data.createdBy == request.auth.uid
-      && (data.createdByName == null || data.createdByName is string)
-      && (data.updatedBy == null || data.updatedBy is string)
-      && (data.completedBy == null || data.completedBy is string);
+      && data.createdBy is string && data.createdBy.size() <= 128
+      && (data.createdByName == null || (data.createdByName is string && data.createdByName.size() <= 200))
+      && (data.updatedBy == null || (data.updatedBy is string && data.updatedBy.size() <= 128))
+      && (data.completedBy == null || (data.completedBy is string && data.completedBy.size() <= 128));
+    }
+
+    function isValidModerateViolation(data) {
+      return data.keys().hasAll([
+        'unit', 'studentId', 'studentName', 'classId', 'className',
+        'date', 'incidentType', 'categoryId', 'categoryLabel',
+        'violationCode', 'violationLabel', 'recordedByUid', 'recordedByName',
+        'academicYear', 'semester', 'createdAt', 'updatedAt'
+      ])
+      && data.unit == 'JUNIOR_HIGH'
+      && data.incidentType == 'moderate_violation'
+      && data.categoryId in ['konflik_teman', 'geng', 'pacaran']
+      && data.studentId is string && data.studentId.size() <= 128
+      && data.studentName is string && data.studentName.size() <= 200
+      && data.classId is string && data.classId.size() <= 128
+      && data.className is string && data.className.size() <= 128
+      && data.date is string && data.date.size() == 10
+      && data.violationCode is string && data.violationCode.size() <= 32
+      && data.violationLabel is string && data.violationLabel.size() <= 300
+      && data.recordedByUid is string && data.recordedByUid.size() <= 128
+      && data.recordedByName is string && data.recordedByName.size() <= 200
+      && data.academicYear is string && data.academicYear.size() <= 32
+      && (data.semester is string || data.semester is int || data.semester is number)
+      && (data.notes == null || (data.notes is string && data.notes.size() <= 2000))
+      && (data.isCustom == null || data.isCustom is bool)
+      && (data.mtssBehaviorCaseId == null || (data.mtssBehaviorCaseId is string && data.mtssBehaviorCaseId.size() <= 128))
+      && (data.mtssTier == null || (data.mtssTier is string && data.mtssTier.size() <= 32));
     }
 
     function isValidClassLearningGoals(data) {
@@ -661,10 +688,11 @@ service cloud.firestore {
     }
 
     match /teacherSupportInterventions/{interventionId} {
-      allow read: if isActive() && isJuniorHighStaff();
-      allow create: if isJuniorHighStaff() && isValidTeacherSupportIntervention(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isJuniorHighStaff() && isValidTeacherSupportIntervention(incoming()) && incoming().updatedAt == request.time
-        && incoming().createdBy == existing().createdBy && incoming().studentId == existing().studentId && incoming().issueType == existing().issueType
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow create: if (isJuniorHighStaff() || isAdmin()) && isValidTeacherSupportIntervention(incoming()) && incoming().createdBy == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if (isJuniorHighStaff() || isAdmin()) && isValidTeacherSupportIntervention(incoming()) && incoming().updatedAt == request.time
+        && incoming().createdBy == existing().createdBy && incoming().createdAt == existing().createdAt && incoming().studentId == existing().studentId && incoming().issueType == existing().issueType
+        && incoming().updatedBy == request.auth.uid
         && (existing().status == 'in_progress' || isAdmin());
       allow delete: if isAdmin();
     }
@@ -1034,6 +1062,22 @@ service cloud.firestore {
       allow read: if isActive() && (isTeacher() || isSecretaryKindyClassAccess(existing().classId) || isSecretaryElemClassAccess(existing().classId) || isSecretaryJHClassAccess(existing().classId) || isJuniorHighStaff() || isAdmin());
       allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isActive() && (isTeacher() || isSecretaryKindyClassAccess(incoming().classId) || isSecretaryElemClassAccess(incoming().classId) || isSecretaryJHClassAccess(incoming().classId) || isJuniorHighStaff() || isAdmin());
+    }
+
+    match /moderate_violations/{violationId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow create: if isActive() && (isJuniorHighStaff() || isAdmin())
+        && isValidModerateViolation(incoming())
+        && incoming().recordedByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isActive() && (isJuniorHighStaff() || isAdmin())
+        && incoming().unit == 'JUNIOR_HIGH'
+        && incoming().studentId == existing().studentId
+        && incoming().recordedByUid == existing().recordedByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isActive() && (isJuniorHighStaff() || isAdmin());
     }
 
     match /minor_violation_types/{typeId} {
