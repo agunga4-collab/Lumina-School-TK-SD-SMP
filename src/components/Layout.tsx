@@ -977,6 +977,9 @@ export function Layout() {
               {currentUnit === 'ELEMENTARY' && !['STUDENT', 'PARENT'].includes(currentUser.role) && (
                 <NavItem to="/elementary/school-information" icon={<Megaphone size={18} />} label="Informasi Sekolah" />
               )}
+              {currentUnit === 'ELEMENTARY' && currentUser.role === 'STUDENT' && (
+                <NavItem to="/student/school-information" icon={<Megaphone size={18} />} label="Informasi Sekolah" />
+              )}
             </div>
           )}
 

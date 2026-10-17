@@ -138,6 +138,7 @@ import ElementaryOtherReportPage from './pages/Elementary/OtherReportPage';
 import QuranParticipantsPage from './pages/Elementary/QuranParticipantsPage';
 import ElementarySchoolInformationPage from './pages/Elementary/ElementarySchoolInformationPage';
 import StudentQuranPage from './pages/Student/StudentQuranPage';
+import StudentSchoolInformationPage from './pages/Student/StudentSchoolInformationPage';
 import { IncidentReportPage } from './pages/JuniorHigh/IncidentReportPage';
 import WeeklyReportDetail from './pages/Kindergarten/WeeklyReportDetail';
 
@@ -826,6 +827,14 @@ export default function App() {
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
                     <StudentQuranPage />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
+                path="school-information" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentSchoolInformationPage />
                   </RoleGuard>
                 } 
              />
