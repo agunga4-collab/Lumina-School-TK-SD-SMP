@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileSpreadsheet, User, Calendar, Save, Trash2, Plus, 
   Info, Clock, BookOpen, ChevronLeft, ChevronRight, HelpCircle,
-  FileText, ArrowLeft
+  FileText, ArrowLeft, AlertTriangle
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
@@ -12,7 +12,7 @@ import {
   db, getClasses, getActiveStudents, getTeachers, createBehaviorAlert,
   handleFirestoreError
 } from '../../lib/firebase';
-import { collection, query, where, onSnapshot, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, getDocs, limit, setDoc } from 'firebase/firestore';
 import type { 
   MTSSCase, Student, Class, User as AppUser
 } from '../../types';

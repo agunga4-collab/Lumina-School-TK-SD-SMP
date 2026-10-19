@@ -715,6 +715,7 @@ export default function App() {
             <Route path="concern/new/:caseId" element={<AddConcern />} />
             <Route path="intervention/:id" element={<InterventionPlan />} />
             <Route path="cico/:caseId" element={<CICOTracker />} />
+            <Route path="spreadsheet" element={<Navigate to="/junior-high/behavior/mtss/spreadsheet" replace />} />
           </Route>
           
           <Route path="self-exploration">

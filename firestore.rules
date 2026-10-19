@@ -808,6 +808,10 @@ service cloud.firestore {
       allow write: if isJuniorHighStaff();
     }
 
+    match /cicoWeeklyWorksheets/{worksheetId} {
+      allow read, write: if isActive() && (isJuniorHighStaffAuthorized() || isJuniorHighStaff());
+    }
+
     match /elementary_mtss_cases/{caseId} {
       allow read: if isActive() && (isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff() || isLinkedStudent(resource.data.studentId));
       allow write: if isTeacher() || isSecretaryElem() || isAdmin() || isJuniorHighStaff();
