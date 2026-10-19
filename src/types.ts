@@ -480,6 +480,8 @@ export interface MTSSConcern {
   nextStepPicId?: string;
   nextStepPicName?: string;
   nextStepDueDate?: string;
+  categoryCode?: string;
+  categoryLabel?: string;
   isDone: boolean;
   doneAt?: number;
   createdAt: number;
@@ -580,6 +582,8 @@ export interface MTSSCase {
   semester?: string;
   tier: MTSSTier;
   status: MTSSStatus;
+  categoryCode?: string;
+  categoryLabel?: string;
   picId: string; // PIC Guru pengampu saat ini
   picName: string;
   initialAssets?: string; // Student strengths recorded at report time

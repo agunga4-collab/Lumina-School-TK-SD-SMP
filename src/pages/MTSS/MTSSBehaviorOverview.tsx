@@ -233,7 +233,7 @@ export default function MTSSBehaviorOverview() {
                 onClick={() => navigate('/junior-high/behavior/mtss/cases/new')}
                 className="w-full text-left px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-between transition-all active:scale-[0.98]"
               >
-                <span>+ Lapor Kasus Baru</span>
+                <span>+ Lapor Kasus Baru (Tier 2 Intervention)</span>
                 <ArrowRight size={14} />
               </button>
               

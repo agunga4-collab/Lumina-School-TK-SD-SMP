@@ -20,6 +20,7 @@ import type {
   MTSSCase, MTSSConcern, MTSSTier, User as AppUser, Student, CICOGoal, BehaviorNotification 
 } from '../../types';
 import StudentSearch from '../StudentSearch';
+import { SEVERE_BEHAVIOR_CATEGORIES } from '../../constants/mtssSevereCategories';
 
 interface ModalProps {
   isOpen: boolean;
@@ -88,6 +89,8 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
 
   const [formData, setFormData] = React.useState({
     studentId: '',
+    categoryCode: '',
+    categoryLabel: '',
     date: new Date().toISOString().split('T')[0],
     description: '',
     interventionsTried: '',
@@ -196,7 +199,8 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
   const validate = () => {
     const newErrors: Record<string, string> = {};
     if (!formData.studentId) newErrors.studentId = "Pilih siswa wajib";
-    if (!formData.description.trim()) newErrors.description = "Behavior concern wajib diisi";
+    if (!formData.categoryCode) newErrors.categoryCode = "Pilih kategori pelanggaran wajib (Bagian G 1-17)";
+    if (!formData.description.trim()) newErrors.description = "Kronologi / behavior concern wajib diisi";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -220,14 +224,20 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
         ...manualParties
       ];
 
+      const selectedCat = SEVERE_BEHAVIOR_CATEGORIES.find(c => c.code === formData.categoryCode);
+      const catCode = selectedCat?.code || formData.categoryCode;
+      const catLabel = selectedCat?.label || formData.categoryLabel;
+
       const caseId = await createMTSSCase({
         studentId: formData.studentId,
         studentName,
         classId,
         academicYear: activeYear || '2026/2027',
         semester: String(activeSemester || '1'),
-        tier: 'Tier 1',
+        tier: 'Tier 2',
         status: 'OPEN',
+        categoryCode: catCode,
+        categoryLabel: catLabel,
         picId: profile?.uid || '',
         picName: profile?.displayName || '',
         initialAssets: formData.studentAsset,
@@ -241,6 +251,8 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
       await addMTSSConcern(caseId, {
         date: formData.date,
         description: formData.description,
+        categoryCode: catCode,
+        categoryLabel: catLabel,
         reporterId: profile?.uid || '',
         reporterName: profile?.displayName || '',
         interventionsTried: formData.interventionsTried.split(',').map(i => i.trim()),
@@ -357,7 +369,7 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Lapor Kasus Perilaku Baru">
+    <Modal isOpen={isOpen} onClose={onClose} title="Lapor Kasus Baru (Tier 2 Intervention)">
       <div className="space-y-8">
         {activeCaseWarning && (
           <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">
@@ -376,6 +388,46 @@ export const NewCaseForm = ({ isOpen, onClose, onSuccess, initialStudentId }: { 
             </div>
           </div>
         )}
+
+        {/* Dropdown Wajib: Kategori */}
+        <div className="space-y-2 bg-blue-50/40 p-5 rounded-2xl border border-blue-100">
+           <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase tracking-widest text-blue-900 ml-1 flex items-center gap-1.5">
+                <span>Kategori Pelanggaran Berat</span>
+                <span className="text-rose-500 font-bold">* (Wajib)</span>
+              </label>
+              <span className="text-[9px] font-black uppercase tracking-wider text-blue-600 bg-blue-100/70 px-2 py-0.5 rounded-md">
+                Bagian G (Nomor 1–17)
+              </span>
+           </div>
+           <div className="relative">
+              <select
+                value={formData.categoryCode}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const matched = SEVERE_BEHAVIOR_CATEGORIES.find(c => c.code === val);
+                  setFormData(p => ({
+                    ...p,
+                    categoryCode: val,
+                    categoryLabel: matched ? matched.label : ''
+                  }));
+                }}
+                className={cn(
+                  "w-full px-5 py-3.5 rounded-xl bg-white border outline-none font-bold text-sm appearance-none cursor-pointer text-gray-900 shadow-sm transition-all",
+                  errors.categoryCode ? "border-rose-400 focus:ring-rose-200" : "border-gray-200 focus:border-blue-400 focus:ring-blue-100"
+                )}
+              >
+                <option value="">-- Pilih Kategori Pelanggaran --</option>
+                {SEVERE_BEHAVIOR_CATEGORIES.map(cat => (
+                  <option key={cat.code} value={cat.code}>
+                    {cat.number}. {cat.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={18} />
+           </div>
+           {errors.categoryCode && <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest mt-1 ml-2">{errors.categoryCode}</p>}
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
            <div className="space-y-2">

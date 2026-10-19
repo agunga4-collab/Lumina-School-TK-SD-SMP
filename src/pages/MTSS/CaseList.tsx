@@ -733,7 +733,7 @@ export default function CaseList() {
                                     >
                                       <span className="text-[11px] font-bold text-blue-800 uppercase tracking-tight flex items-center gap-1">
                                         <PlusCircle size={11} />
-                                        Buat Kasus Baru (Ulang Cycle)
+                                        Lapor Kasus Baru (Tier 2 Intervention)
                                       </span>
                                       <span className="text-[10px] text-gray-500 font-medium tracking-tight leading-normal">
                                         Memulai penanganan kasus kategori berbeda dari awal.

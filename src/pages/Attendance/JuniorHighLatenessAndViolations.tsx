@@ -12,7 +12,6 @@ import {
   collection, query, where, getDocs, doc, setDoc, getDoc,
   serverTimestamp, deleteDoc, onSnapshot, updateDoc, addDoc 
 } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
@@ -134,12 +133,6 @@ export const JUNIOR_HIGH_VIOLATIONS_MASTER: ViolationCategory[] = [
   }
 ];
 
-export const JUNIOR_HIGH_MODERATE_VIOLATIONS_MASTER: ViolationCategory[] = [
-  { id: 'konflik_teman', label: 'Konflik antar teman', violations: [] },
-  { id: 'geng', label: 'Geng', violations: [] },
-  { id: 'pacaran', label: 'Pacaran', violations: [] }
-];
-
 // Helper to get JKT current time
 const getCurrentTimeStr = () => {
   const formatter = new Intl.DateTimeFormat('sv-SE', {
@@ -235,14 +228,13 @@ export default function JuniorHighLatenessAndViolations() {
   const { activeUnit } = useOutletContext<{ activeUnit: UnitType }>();
   const { activeYear, activeSemester } = useAcademicYear();
   const { profile } = useAuth();
-  const auth = getAuth();
 
   // Role permissions
   const currentUserRole = profile?.role || 'GUEST';
   const isStudentOrParent = ['STUDENT', 'PARENT'].includes(currentUserRole);
 
-  // Active Tab: 'lateness' | 'violations' | 'moderate' | 'rekap'
-  const [activeTab, setActiveTab] = React.useState<'lateness' | 'violations' | 'moderate' | 'rekap'>('lateness');
+  // Active Tab: 'lateness' | 'violations' | 'rekap'
+  const [activeTab, setActiveTab] = React.useState<'lateness' | 'violations' | 'rekap'>('lateness');
 
   // Master Data State
   const [classes, setClasses] = React.useState<any[]>([]);
@@ -484,7 +476,7 @@ export default function JuniorHighLatenessAndViolations() {
   const [showInterventionModal, setShowInterventionModal] = React.useState(false);
   const [activeIntervention, setActiveIntervention] = React.useState<any | null>(null);
   const [activeInterventionStudent, setActiveInterventionStudent] = React.useState<any | null>(null);
-  const [activeInterventionIssueType, setActiveInterventionIssueType] = React.useState<'lateness' | 'minor_violation' | 'moderate_violation'>('lateness');
+  const [activeInterventionIssueType, setActiveInterventionIssueType] = React.useState<'lateness' | 'minor_violation'>('lateness');
   const [selectedIncidentIds, setSelectedIncidentIds] = React.useState<Set<string>>(new Set());
   const [interventionPlanText, setInterventionPlanText] = React.useState('');
   const [activeInterventionStatus, setActiveInterventionStatus] = React.useState<'in_progress' | 'completed'>('in_progress');
@@ -495,116 +487,6 @@ export default function JuniorHighLatenessAndViolations() {
   const editingInterventionId = activeIntervention?.id || null;
   const selectedInterventionStudent = activeInterventionStudent;
   const selectedInterventionIssueType = activeInterventionIssueType;
-
-  // ----------------------------------------------------
-  // TAB: PELANGGARAN SEDANG STATE & LOGIC
-  // ----------------------------------------------------
-  const [moderateViolationsList, setModerateViolationsList] = React.useState<any[]>([]);
-  const [loadingModerate, setLoadingModerate] = React.useState(false);
-  const [savingModerate, setSavingModerate] = React.useState(false);
-
-  // Form states for moderate violations
-  const [moderateDate, setModerateDate] = React.useState<string>(() => getCurrentDateStr());
-  const [selectedModerateClassId, setSelectedModerateClassId] = React.useState('');
-  const [moderateStudents, setModerateStudents] = React.useState<any[]>([]);
-  const [selectedModerateStudentId, setSelectedModerateStudentId] = React.useState('');
-  const [moderateStudentSearchInput, setModerateStudentSearchInput] = React.useState('');
-  const [showModerateStudentDropdown, setShowModerateStudentDropdown] = React.useState(false);
-  const [selectedModerateCategory, setSelectedModerateCategory] = React.useState('');
-  const [moderateNotes, setModerateNotes] = React.useState('');
-
-  // Today's moderate violations list on moderateDate
-  const [todayModerateViolations, setTodayModerateViolations] = React.useState<any[]>([]);
-  const [loadingTodayModerate, setLoadingTodayModerate] = React.useState(false);
-  const [moderateClassFilter, setModerateClassFilter] = React.useState('');
-  const [moderateSearch, setModerateSearch] = React.useState('');
-
-  // Inline edit state for moderate violations
-  const [editingModerateId, setEditingModerateId] = React.useState<string | null>(null);
-  const [editingModerateNotes, setEditingModerateNotes] = React.useState('');
-  const [updatingModerateId, setUpdatingModerateId] = React.useState<string | null>(null);
-
-  // Sync selectedModerateClassId with available classes
-  React.useEffect(() => {
-    if (classes.length > 0 && !selectedModerateClassId) {
-      setSelectedModerateClassId(classes[0].id);
-    }
-  }, [classes, selectedModerateClassId]);
-
-  // Load students for selectedModerateClassId
-  React.useEffect(() => {
-    if (!selectedModerateClassId || !activeYear) return;
-    let isMounted = true;
-    async function loadModerateClassStudents() {
-      try {
-        const fetchedS = await getActiveStudents(selectedModerateClassId, activeYear);
-        if (isMounted) {
-          const mappedS = fetchedS.map(s => ({
-            id: s.id,
-            name: s.name,
-            nickname: s.nickname || (s as any).panggilan || (s as any).nicknameStr || ''
-          }));
-          mappedS.sort((a, b) => a.name.localeCompare(b.name));
-          setModerateStudents(mappedS);
-          setSelectedModerateStudentId('');
-          setModerateStudentSearchInput('');
-        }
-      } catch (err) {
-        console.warn('Failed to load active moderate class students:', err);
-      }
-    }
-    loadModerateClassStudents();
-    return () => { isMounted = false; };
-  }, [selectedModerateClassId, activeYear]);
-
-  // Subscribe to today's moderate violations (realtime)
-  React.useEffect(() => {
-    setLoadingTodayModerate(true);
-    const q = query(
-      collection(db, 'moderate_violations'),
-      where('date', '==', moderateDate),
-      where('unit', '==', 'JUNIOR_HIGH')
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
-      list.sort((a, b) => {
-        const timeA = a.createdAt?.toMillis?.() || 0;
-        const timeB = b.createdAt?.toMillis?.() || 0;
-        return timeB - timeA;
-      });
-      setTodayModerateViolations(list);
-      setLoadingTodayModerate(false);
-    }, (err) => {
-      console.error('Error subscribing to today moderate violations:', err);
-      setLoadingTodayModerate(false);
-    });
-
-    return unsub;
-  }, [moderateDate]);
-
-  // Subscribe to all moderate violations for current academic year & semester
-  React.useEffect(() => {
-    if (!activeYear) return;
-    setLoadingModerate(true);
-    const q = query(
-      collection(db, 'moderate_violations'),
-      where('academicYear', '==', activeYear),
-      where('semester', 'in', [String(activeSemester), Number(activeSemester)]),
-      where('unit', '==', 'JUNIOR_HIGH')
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
-      setModerateViolationsList(list);
-      setLoadingModerate(false);
-    }, (err) => {
-      console.error('Error subscribing to moderate violations list:', err);
-      setLoadingModerate(false);
-    });
-
-    return unsub;
-  }, [activeYear, activeSemester]);
 
   const isJuniorHighStaff = React.useCallback(() => {
     return ['TEACHER', 'ADMIN', 'SUPER_ADMIN'].includes(profile?.role || '');
@@ -1284,223 +1166,6 @@ export default function JuniorHighLatenessAndViolations() {
   }, [todayViolations]);
 
   // ----------------------------------------------------
-  // TAB: PELANGGARAN SEDANG ACTIONS & COMPUTED
-  // ----------------------------------------------------
-  const handleSaveModerateViolation = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!selectedModerateStudentId) {
-      toast.error('Pilih siswa terlebih dahulu.');
-      return;
-    }
-    if (!moderateDate) {
-      toast.error('Pilih tanggal terlebih dahulu.');
-      return;
-    }
-    if (!selectedModerateClassId) {
-      toast.error('Pilih kelas terlebih dahulu.');
-      return;
-    }
-    if (!selectedModerateCategory) {
-      toast.error('Pilih kategori Pelanggaran Sedang terlebih dahulu.');
-      return;
-    }
-
-    const categoryObj = JUNIOR_HIGH_MODERATE_VIOLATIONS_MASTER.find(c => c.id === selectedModerateCategory);
-    if (!categoryObj) {
-      toast.error('Kategori Pelanggaran Sedang tidak valid.');
-      return;
-    }
-    const categoryId = categoryObj.id;
-    const categoryLabel = categoryObj.label;
-    // Preserve the required storage fields without introducing extra violation types.
-    const violationCode = categoryId;
-    const violationLabel = categoryLabel;
-    const isCustom = false;
-
-    setSavingModerate(true);
-    try {
-      const studentObj = moderateStudents.find(s => s.id === selectedModerateStudentId) || 
-        students.find(s => s.id === selectedModerateStudentId);
-      const classObj = classes.find(c => c.id === selectedModerateClassId);
-
-      if (!studentObj) {
-        toast.error('Siswa tidak ditemukan.');
-        setSavingModerate(false);
-        return;
-      }
-
-      const currentUid = profile?.uid || auth.currentUser?.uid || '';
-      const currentName = profile?.displayName || profile?.name || auth.currentUser?.displayName || 'Guru / Staff';
-
-      const payload = {
-        unit: 'JUNIOR_HIGH',
-        studentId: studentObj.id,
-        studentName: studentObj.name,
-        classId: selectedModerateClassId,
-        className: classObj?.name || 'Kelas Lain',
-        date: moderateDate,
-        violationType: violationLabel,
-        incidentType: 'moderate_violation',
-        categoryId,
-        categoryLabel,
-        violationCode,
-        violationLabel,
-        isCustom,
-        notes: moderateNotes.trim() || null,
-        recordedByUid: currentUid,
-        recordedByName: currentName,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        academicYear: activeYear,
-        semester: String(activeSemester),
-        // Relasi MTSS Behavior berikutnya (tidak ada kasus/tier otomatis)
-        mtssBehaviorCaseId: null,
-        mtssTier: null
-      };
-
-      await addDoc(collection(db, 'moderate_violations'), {
-        ...payload,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-
-      toast.success('Catatan Pelanggaran Sedang berhasil disimpan.');
-
-      // Reset student selection and inputs, KEEP date and class
-      setSelectedModerateStudentId('');
-      setModerateStudentSearchInput('');
-      setSelectedModerateCategory('');
-
-      setModerateNotes('');
-
-    } catch (err) {
-      console.error('Error saving moderate violation:', err);
-      toast.error('Gagal menyimpan catatan Pelanggaran Sedang.');
-    } finally {
-      setSavingModerate(false);
-    }
-  };
-
-  const handleUpdateModerateViolation = async (violationId: string) => {
-    setUpdatingModerateId(violationId);
-    try {
-      await updateDoc(doc(db, 'moderate_violations', violationId), {
-        notes: editingModerateNotes,
-        updatedAt: serverTimestamp()
-      });
-      toast.success('Catatan Pelanggaran Sedang berhasil diperbarui.');
-      setEditingModerateId(null);
-    } catch (err) {
-      console.error(err);
-      toast.error('Gagal memperbarui catatan.');
-    } finally {
-      setUpdatingModerateId(null);
-    }
-  };
-
-  const handleDeleteModerateViolation = async (violationId: string) => {
-    if (window.confirm('Apakah Anda yakin ingin menghapus catatan Pelanggaran Sedang ini?')) {
-      try {
-        await deleteDoc(doc(db, 'moderate_violations', violationId));
-        toast.success('Catatan Pelanggaran Sedang berhasil dihapus.');
-      } catch (err) {
-        console.error(err);
-        toast.error('Gagal menghapus data.');
-      }
-    }
-  };
-
-  const filteredModerateList = React.useMemo(() => {
-    return todayModerateViolations.filter(record => {
-      const matchesClass = !moderateClassFilter || record.classId === moderateClassFilter;
-      const matchesSearch = !moderateSearch || 
-        (record.studentName && record.studentName.toLowerCase().includes(moderateSearch.toLowerCase())) ||
-        (record.violationType && record.violationType.toLowerCase().includes(moderateSearch.toLowerCase())) ||
-        (record.categoryLabel && record.categoryLabel.toLowerCase().includes(moderateSearch.toLowerCase()));
-      return matchesClass && matchesSearch;
-    });
-  }, [todayModerateViolations, moderateClassFilter, moderateSearch]);
-
-  const moderateTodayStats = React.useMemo(() => {
-    const total = todayModerateViolations.length;
-    const uniqueStudents = new Set(todayModerateViolations.map(r => r.studentId)).size;
-    const categoryCounts: Record<string, number> = {};
-    todayModerateViolations.forEach(r => {
-      const cat = r.categoryLabel || r.violationType || 'Lainnya';
-      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
-    });
-    let mostFreqType = '-';
-    let maxCount = 0;
-    Object.entries(categoryCounts).forEach(([cat, count]) => {
-      if (count > maxCount) {
-        maxCount = count;
-        mostFreqType = `${cat} (${count}x)`;
-      }
-    });
-    return { total, uniqueStudents, mostFreqType };
-  }, [todayModerateViolations]);
-
-  const moderateStudentsForDukungan = React.useMemo(() => {
-    const studentMap: Record<string, {
-      studentId: string;
-      studentName: string;
-      className: string;
-      classId: string;
-      totalCount: number;
-      aktifCount: number;
-      selesaiCount: number;
-      lastDate: string;
-      activeIntervention: any | null;
-    }> = {};
-
-    moderateViolationsList.forEach(r => {
-      if (!r.studentId) return;
-      if (!studentMap[r.studentId]) {
-        studentMap[r.studentId] = {
-          studentId: r.studentId,
-          studentName: r.studentName,
-          className: r.className || 'Kelas Lain',
-          classId: r.classId || '',
-          totalCount: 0,
-          aktifCount: 0,
-          selesaiCount: 0,
-          lastDate: r.date || '',
-          activeIntervention: null
-        };
-      }
-      studentMap[r.studentId].totalCount++;
-      if (completedIncidentIdsSet.has(r.id)) {
-        studentMap[r.studentId].selesaiCount++;
-      } else {
-        studentMap[r.studentId].aktifCount++;
-      }
-      if (r.date && r.date > studentMap[r.studentId].lastDate) {
-        studentMap[r.studentId].lastDate = r.date;
-      }
-    });
-
-    interventions.forEach(item => {
-      if (item && item.issueType === 'moderate_violation' && item.studentId) {
-        if (studentMap[item.studentId]) {
-          if (item.status === 'in_progress') {
-            studentMap[item.studentId].activeIntervention = item;
-          }
-        }
-      }
-    });
-
-    return Object.values(studentMap).sort((a, b) => {
-      if (b.aktifCount !== a.aktifCount) return b.aktifCount - a.aktifCount;
-      return (b.lastDate || '').localeCompare(a.lastDate || '');
-    });
-  }, [moderateViolationsList, completedIncidentIdsSet, interventions]);
-
-  const moderateInterventionsList = React.useMemo(() => {
-    return interventions.filter(item => item && item.issueType === 'moderate_violation');
-  }, [interventions]);
-
-  // ----------------------------------------------------
   // TAB 3: RECAP & LEADERBOARD LOGIC
   // ----------------------------------------------------
   const normalizeTardinessRecord = React.useCallback((r: any) => {
@@ -1743,29 +1408,21 @@ export default function JuniorHighLatenessAndViolations() {
   // GURU SUPPORT (INTERVENTION) HANDLERS
   // ==========================================
 
-  const handleOpenNewInterventionModal = (student: any, issueType: 'lateness' | 'minor_violation' | 'moderate_violation') => {
+  const handleOpenNewInterventionModal = (student: any, issueType: 'lateness' | 'minor_violation') => {
     resetInterventionForm();
     if (!student || typeof student.studentId !== 'string') {
       toast.error('Data siswa tidak valid.');
       return;
     }
-    const safeIssueType = (issueType === 'moderate_violation')
-      ? 'moderate_violation'
-      : ((issueType === 'minor_violation') ? 'minor_violation' : 'lateness');
+    const safeIssueType = (issueType === 'minor_violation') ? 'minor_violation' : 'lateness';
 
     setActiveInterventionStudent(student);
     setActiveInterventionIssueType(safeIssueType);
 
     // Get all active incidents for this student of this type
-    let incidents = safeIssueType === 'lateness'
+    const incidents = safeIssueType === 'lateness'
       ? rekapLatenessData.filter(r => r && typeof r.id === 'string' && r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id))
-      : safeIssueType === 'moderate_violation'
-        ? moderateViolationsList.filter(r => r && typeof r.id === 'string' && r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id))
-        : rekapViolationData.filter(r => r && typeof r.id === 'string' && r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id));
-
-    if (safeIssueType === 'moderate_violation' && incidents.length === 0) {
-      incidents = todayModerateViolations.filter(r => r && typeof r.id === 'string' && r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id));
-    }
+      : rekapViolationData.filter(r => r && typeof r.id === 'string' && r.studentId === student.studentId && !completedIncidentIdsSet.has(r.id));
 
     setStudentEligibleIncidents(incidents);
     // Pre-select all of them by default
@@ -1788,9 +1445,7 @@ export default function JuniorHighLatenessAndViolations() {
       classId: intervention.classId || '',
     });
     
-    const safeIssueType = (intervention.issueType === 'moderate_violation')
-      ? 'moderate_violation'
-      : ((intervention.issueType === 'minor_violation') ? 'minor_violation' : 'lateness');
+    const safeIssueType = (intervention.issueType === 'minor_violation') ? 'minor_violation' : 'lateness';
     setActiveInterventionIssueType(safeIssueType);
     setInterventionPlanText(intervention.interventionPlan || '');
     setActiveInterventionStatus(intervention.status || 'in_progress');
@@ -1802,15 +1457,9 @@ export default function JuniorHighLatenessAndViolations() {
       : [];
     const currentlyLinkedSet = new Set(currentlyLinkedIds);
 
-    let activeIncidents = safeIssueType === 'lateness'
+    const activeIncidents = safeIssueType === 'lateness'
       ? rekapLatenessData.filter(r => r && typeof r.id === 'string' && r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedSet.has(r.id)))
-      : safeIssueType === 'moderate_violation'
-        ? moderateViolationsList.filter(r => r && typeof r.id === 'string' && r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedSet.has(r.id)))
-        : rekapViolationData.filter(r => r && typeof r.id === 'string' && r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedSet.has(r.id)));
-
-    if (safeIssueType === 'moderate_violation' && activeIncidents.length === 0) {
-      activeIncidents = todayModerateViolations.filter(r => r && typeof r.id === 'string' && r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedSet.has(r.id)));
-    }
+      : rekapViolationData.filter(r => r && typeof r.id === 'string' && r.studentId === intervention.studentId && (!completedIncidentIdsSet.has(r.id) || currentlyLinkedSet.has(r.id)));
 
     setStudentEligibleIncidents(activeIncidents);
     setSelectedIncidentIds(new Set(currentlyLinkedIds));
@@ -1869,53 +1518,42 @@ export default function JuniorHighLatenessAndViolations() {
     setSavingIntervention(true);
     try {
       const interventionId = activeIntervention?.id || doc(collection(db, 'teacherSupportInterventions')).id;
-      const safeIssueType = (activeInterventionIssueType === 'moderate_violation')
-        ? 'moderate_violation'
-        : ((activeInterventionIssueType === 'minor_violation') ? 'minor_violation' : 'lateness');
+      const safeIssueType = (activeInterventionIssueType === 'minor_violation') ? 'minor_violation' : 'lateness';
 
-      const currentUid = profile?.uid || auth.currentUser?.uid || '';
-      const currentName = profile?.displayName || profile?.name || auth.currentUser?.displayName || 'Guru';
+      const payload: any = {
+        id: interventionId,
+        studentId: activeInterventionStudent.studentId,
+        studentName: activeInterventionStudent.studentName || 'Siswa',
+        className: activeInterventionStudent.className || 'Kelas Lain',
+        classId: activeInterventionStudent.classId || '',
+        academicYear: activeYear,
+        semester: String(activeSemester),
+        issueType: safeIssueType,
+        incidentIds: incidentIdsArray,
+        interventionPlan: planText,
+        status: activeInterventionStatus,
+        outcomeNote: activeInterventionStatus === 'completed' ? interventionOutcomeNote.trim() : '',
+        updatedBy: profile?.uid || '',
+        updatedAt: serverTimestamp(),
+        completedBy: activeInterventionStatus === 'completed' ? (profile?.uid || profile?.email || 'system') : '',
+        completedAt: activeInterventionStatus === 'completed' ? serverTimestamp() : null,
+      };
 
       if (activeIntervention?.id) {
-        // Update existing intervention using updateDoc to preserve original creator and timestamps
-        const updatePayload: any = {
-          incidentIds: incidentIdsArray,
-          interventionPlan: planText,
-          status: activeInterventionStatus,
-          outcomeNote: activeInterventionStatus === 'completed' ? interventionOutcomeNote.trim() : '',
-          updatedBy: currentUid,
-          updatedAt: serverTimestamp(),
-          completedBy: activeInterventionStatus === 'completed' ? currentUid : '',
-          completedAt: activeInterventionStatus === 'completed' ? serverTimestamp() : null,
-        };
-        await updateDoc(doc(db, 'teacherSupportInterventions', activeIntervention.id), updatePayload);
-        toast.success('Sesi intervensi berhasil diperbarui.');
+        // Keep original creator fields on update
+        payload.createdAt = activeIntervention.createdAt || serverTimestamp();
+        payload.createdBy = activeIntervention.createdBy || profile?.uid || '';
+        payload.createdByName = activeIntervention.createdByName || profile?.displayName || 'Guru';
       } else {
-        // Create new intervention using setDoc
-        const payload: any = {
-          id: interventionId,
-          studentId: activeInterventionStudent.studentId,
-          studentName: activeInterventionStudent.studentName || 'Siswa',
-          className: activeInterventionStudent.className || 'Kelas Lain',
-          classId: activeInterventionStudent.classId || '',
-          academicYear: activeYear,
-          semester: String(activeSemester),
-          issueType: safeIssueType,
-          incidentIds: incidentIdsArray,
-          interventionPlan: planText,
-          status: activeInterventionStatus,
-          outcomeNote: activeInterventionStatus === 'completed' ? interventionOutcomeNote.trim() : '',
-          createdBy: currentUid,
-          createdByName: currentName,
-          createdAt: serverTimestamp(),
-          updatedBy: currentUid,
-          updatedAt: serverTimestamp(),
-          completedBy: activeInterventionStatus === 'completed' ? currentUid : '',
-          completedAt: activeInterventionStatus === 'completed' ? serverTimestamp() : null,
-        };
-        await setDoc(doc(db, 'teacherSupportInterventions', interventionId), payload);
-        toast.success('Dukungan Guru baru berhasil dimulai.');
+        // Seeding creator fields on create
+        payload.createdAt = serverTimestamp();
+        payload.createdBy = profile?.uid || '';
+        payload.createdByName = profile?.displayName || 'Guru';
       }
+
+      // Using setDoc to satisfy both create and update while strictly complying with isValidTeacherSupportIntervention
+      await setDoc(doc(db, 'teacherSupportInterventions', interventionId), payload);
+      toast.success(activeIntervention?.id ? 'Sesi intervensi berhasil diperbarui.' : 'Dukungan Guru baru berhasil dimulai.');
 
       setShowInterventionModal(false);
       resetInterventionForm();
@@ -2173,7 +1811,7 @@ export default function JuniorHighLatenessAndViolations() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
         <div>
           <h1 className="text-2xl font-black text-gray-900 tracking-tight">School Code of Conduct</h1>
-          <p className="text-sm font-medium text-gray-500 mt-1">Pencatatan harian, Pelanggaran Ringan, Pelanggaran Sedang, dan rekap disiplin siswa SMP</p>
+          <p className="text-sm font-medium text-gray-500 mt-1">Pencatatan harian dan rekap disiplin siswa SMP</p>
         </div>
         {/* Unit Selector Context display */}
         <div className="flex items-center gap-2 bg-blue-50/50 text-blue-700 px-4 py-2.5 rounded-2xl border border-blue-100">
@@ -2207,18 +1845,6 @@ export default function JuniorHighLatenessAndViolations() {
         >
           <ClipboardList size={16} />
           Pelanggaran Ringan
-        </button>
-        <button
-          onClick={() => setActiveTab('moderate')}
-          className={cn(
-            "flex items-center gap-2 px-5 py-3 rounded-t-2xl font-black text-xs uppercase tracking-wider transition-all border-b-2 cursor-pointer",
-            activeTab === 'moderate' 
-              ? "bg-rose-50/50 text-rose-600 border-rose-500 shadow-sm shadow-rose-50/30" 
-              : "text-gray-400 border-transparent hover:text-gray-600"
-          )}
-        >
-          <ShieldAlert size={16} />
-          Pelanggaran Sedang
         </button>
         {!isStudentOrParent && (
           <button
@@ -3278,498 +2904,6 @@ export default function JuniorHighLatenessAndViolations() {
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* TAB CONTENT: PELANGGARAN SEDANG */}
-      {/* ---------------------------------------------------- */}
-      {activeTab === 'moderate' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* Main Column: Form input & Today's List (lg:col-span-2) */}
-            <div className="lg:col-span-2 space-y-6">
-              
-              {/* Form Card */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-6">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-rose-50 text-rose-600 rounded-2xl border border-rose-100">
-                      <ShieldAlert size={18} />
-                    </div>
-                    <div>
-                      <h2 className="font-black text-gray-900 text-sm">Catat Pelanggaran Sedang</h2>
-                      <p className="text-xs text-gray-400">Pencatatan pelanggaran sedang siswa SMP</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="date"
-                      value={moderateDate}
-                      onChange={(e) => setModerateDate(e.target.value)}
-                      className="bg-gray-50/70 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none"
-                    />
-                    <select
-                      value={selectedModerateClassId}
-                      onChange={(e) => setSelectedModerateClassId(e.target.value)}
-                      className="bg-gray-50/70 border border-gray-100 rounded-xl px-3 py-2 text-xs font-bold text-gray-700 outline-none cursor-pointer"
-                    >
-                      {classes.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <form onSubmit={handleSaveModerateViolation} className="space-y-5">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    
-                    {/* Student Selector with Autocomplete */}
-                    <div className="space-y-2 relative">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Siswa *</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder={moderateStudents.length === 0 ? "Memuat siswa..." : "Cari & Pilih Siswa..."}
-                          value={moderateStudentSearchInput}
-                          onChange={(e) => {
-                            setModerateStudentSearchInput(e.target.value);
-                            setShowModerateStudentDropdown(true);
-                          }}
-                          onFocus={() => setShowModerateStudentDropdown(true)}
-                          className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 font-bold"
-                          disabled={moderateStudents.length === 0}
-                        />
-                        <Search size={14} className="absolute right-3 top-3.5 text-gray-400" />
-                      </div>
-
-                      {/* Search Autocomplete Dropdown */}
-                      {showModerateStudentDropdown && moderateStudents.length > 0 && (
-                        <div className="absolute z-30 left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-white border border-gray-100 shadow-xl rounded-xl divide-y divide-gray-50">
-                          {(() => {
-                            const filteredSList = moderateStudents.filter(s => 
-                              s.name.toLowerCase().includes(moderateStudentSearchInput.toLowerCase()) ||
-                              (s.nickname && s.nickname.toLowerCase().includes(moderateStudentSearchInput.toLowerCase()))
-                            );
-                            
-                            if (filteredSList.length === 0) {
-                              return <div className="p-3 text-xs text-gray-400 italic">Siswa tidak ditemukan</div>;
-                            }
-
-                            return filteredSList.map(s => (
-                              <button
-                                key={s.id}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedModerateStudentId(s.id);
-                                  setModerateStudentSearchInput(s.name);
-                                  setShowModerateStudentDropdown(false);
-                                }}
-                                className="w-full text-left px-4 py-2.5 hover:bg-rose-50/50 text-xs font-bold text-gray-700 block transition-all cursor-pointer"
-                              >
-                                {s.name} {s.nickname ? `(${s.nickname})` : ''}
-                              </button>
-                            ));
-                          })()}
-                        </div>
-                      )}
-                      {showModerateStudentDropdown && (
-                        <div 
-                          className="fixed inset-0 z-20" 
-                          onClick={() => setShowModerateStudentDropdown(false)}
-                        />
-                      )}
-                    </div>
-
-                    {/* Category Selector */}
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Kategori Pelanggaran Sedang *</label>
-                      <select
-                        value={selectedModerateCategory}
-                        onChange={(e) => {
-                          const catId = e.target.value;
-                          setSelectedModerateCategory(catId);
-
-                        }}
-                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 font-bold cursor-pointer"
-                        required
-                      >
-                        <option value="">-- Pilih Kategori --</option>
-                        {JUNIOR_HIGH_MODERATE_VIOLATIONS_MASTER.map(c => (
-                          <option key={c.id} value={c.id}>{c.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Notes */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">
-                        Keterangan Kejadian
-                      </label>
-                      <span className="text-[10px] font-bold text-gray-400">{moderateNotes.length}/300</span>
-                    </div>
-                    <textarea
-                      placeholder="Tulis keterangan kejadian, kronologi singkat, atau pihak terkait..."
-                      value={moderateNotes}
-                      onChange={(e) => setModerateNotes(e.target.value.slice(0, 300))}
-                      rows={3}
-                      className="w-full bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 font-medium"
-                    />
-                  </div>
-
-                  {/* Recorded By & Submit */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Dicatat Oleh</label>
-                      <div className="bg-gray-100/50 border border-gray-100 rounded-xl px-4 py-3 text-xs font-black text-gray-500 flex items-center gap-2">
-                        <User size={14} />
-                        {profile?.displayName || 'Guru / Staff'}
-                      </div>
-                    </div>
-
-                    <div className="flex items-end">
-                      <button
-                        type="submit"
-                        disabled={savingModerate}
-                        className="w-full bg-rose-600 hover:bg-rose-700 text-white font-black py-3 px-8 rounded-xl shadow-lg shadow-rose-100 transition-all text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                      >
-                        {savingModerate ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                        {savingModerate ? 'Menyimpan...' : 'Simpan Catatan Pelanggaran Sedang'}
-                      </button>
-                    </div>
-                  </div>
-                </form>
-              </div>
-
-              {/* Today's Moderate Violations List */}
-              <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="p-6 border-b border-gray-50 flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
-                      <ShieldAlert size={18} />
-                    </div>
-                    <div>
-                      <h2 className="font-black text-gray-900 text-sm">Catatan Pelanggaran Sedang Hari Ini</h2>
-                      <p className="text-xs text-gray-400 mt-0.5">Log pelanggaran sedang tanggal {getFormattedDateLong(moderateDate)}</p>
-                    </div>
-                  </div>
-
-                  {/* Filter & Search */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <select
-                      value={moderateClassFilter}
-                      onChange={(e) => setModerateClassFilter(e.target.value)}
-                      className="bg-gray-50 border border-gray-100 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-700 outline-none cursor-pointer"
-                    >
-                      <option value="">Semua Kelas</option>
-                      {classes.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-
-                    <div className="relative">
-                      <input
-                        type="text"
-                        placeholder="Cari siswa..."
-                        value={moderateSearch}
-                        onChange={(e) => setModerateSearch(e.target.value)}
-                        className="bg-gray-50 border border-gray-100 rounded-xl pl-8 pr-3 py-1.5 text-xs font-bold text-gray-700 outline-none w-36"
-                      />
-                      <Search size={12} className="absolute left-2.5 top-2.5 text-gray-400" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  {loadingTodayModerate ? (
-                    <div className="p-12 flex flex-col items-center justify-center gap-2 text-gray-400">
-                      <Loader2 size={24} className="animate-spin text-rose-500" />
-                      <p className="text-xs font-medium uppercase tracking-widest">Memuat catatan...</p>
-                    </div>
-                  ) : filteredModerateList.length === 0 ? (
-                    <div className="p-12 text-center text-gray-400">
-                      <p className="text-sm italic">Belum ada catatan Pelanggaran Sedang pada tanggal ini.</p>
-                    </div>
-                  ) : (
-                    <table className="w-full text-left">
-                      <thead className="bg-gray-50/50">
-                        <tr>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kelas</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Kategori Pelanggaran Sedang</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Keterangan</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">Dicatat Oleh</th>
-                          <th className="px-5 py-3 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {filteredModerateList.map(record => (
-                          <tr key={record.id} className="hover:bg-gray-50/30 transition-all">
-                            <td className="px-5 py-4">
-                              <p className="font-bold text-gray-900 text-xs">{record.studentName}</p>
-                            </td>
-                            <td className="px-5 py-4">
-                              <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-wider">
-                                {record.className}
-                              </span>
-                            </td>
-                            <td className="px-5 py-4">
-                              <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide uppercase bg-rose-50 text-rose-700 border border-rose-200 mb-1">
-                                {record.categoryLabel || 'Pelanggaran Sedang'}
-                              </span>
-                              {(record.violationLabel || record.violationType) &&
-                                (record.violationLabel || record.violationType) !== record.categoryLabel && (
-                                  <p className="text-xs font-bold text-gray-800">{record.violationLabel || record.violationType}</p>
-                                )}
-                            </td>
-                            <td className="px-5 py-4 max-w-xs">
-                              {editingModerateId === record.id ? (
-                                <input
-                                  type="text"
-                                  value={editingModerateNotes}
-                                  onChange={(e) => setEditingModerateNotes(e.target.value)}
-                                  className="w-full bg-transparent border-b border-gray-300 focus:border-rose-500 outline-none text-xs font-bold text-gray-700 py-1"
-                                />
-                              ) : (
-                                <p className="text-xs text-gray-500 break-words font-medium">{record.notes || <span className="text-gray-300 italic">-</span>}</p>
-                              )}
-                            </td>
-                            <td className="px-5 py-4">
-                              <p className="text-[10px] font-bold text-gray-500">{record.recordedByName || 'Guru'}</p>
-                            </td>
-                            <td className="px-5 py-4 text-right">
-                              {editingModerateId === record.id ? (
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    onClick={() => handleUpdateModerateViolation(record.id)}
-                                    disabled={updatingModerateId === record.id}
-                                    className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
-                                    title="Simpan"
-                                  >
-                                    {updatingModerateId === record.id ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setEditingModerateId(null);
-                                      setEditingModerateNotes('');
-                                    }}
-                                    className="p-1 text-gray-400 hover:bg-gray-100 rounded cursor-pointer"
-                                    title="Batal"
-                                  >
-                                    <X size={16} />
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <button
-                                    onClick={() => handleOpenNewInterventionModal({
-                                      studentId: record.studentId,
-                                      studentName: record.studentName,
-                                      classId: record.classId,
-                                      className: record.className
-                                    }, 'moderate_violation')}
-                                    className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all cursor-pointer"
-                                    title="Mulai Daya Dukung untuk siswa ini"
-                                  >
-                                    Daya Dukung
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setEditingModerateId(record.id);
-
-                                      setEditingModerateNotes(record.notes || '');
-                                    }}
-                                    className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                                    title="Edit Keterangan"
-                                  >
-                                    <Edit2 size={14} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteModerateViolation(record.id)}
-                                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
-                                    title="Hapus Catatan"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Daya Dukung Pelanggaran Sedang (lg:col-span-1, below on mobile) */}
-            <div className="space-y-6">
-              
-              {/* Daya Dukung Workspace Panel */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-6">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-rose-50 text-rose-600 rounded-2xl border border-rose-100">
-                    <ShieldAlert size={18} />
-                  </div>
-                  <div>
-                    <h3 className="font-black text-gray-900 text-sm">Daya Dukung Pelanggaran Sedang</h3>
-                    <p className="text-xs text-gray-400">Pendampingan terarah guru & wali kelas</p>
-                  </div>
-                </div>
-
-                {/* Sub-section 1: Siswa yang Perlu Daya Dukung */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                      Siswa dengan Pelanggaran Sedang
-                    </h4>
-                    <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">
-                      {moderateStudentsForDukungan.length} Siswa
-                    </span>
-                  </div>
-
-                  {moderateStudentsForDukungan.length === 0 ? (
-                    <div className="p-4 bg-gray-50/50 rounded-2xl border border-gray-100 text-center text-xs text-gray-400 italic">
-                      Belum ada siswa dengan catatan Pelanggaran Sedang pada semester ini.
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1 divide-y divide-gray-50">
-                      {moderateStudentsForDukungan.map(s => (
-                        <div key={s.studentId} className="pt-2.5 first:pt-0 flex items-center justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="font-bold text-gray-900 text-xs truncate">{s.studentName}</p>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded uppercase">
-                                {s.className}
-                              </span>
-                              <span className="text-[10px] text-gray-400 font-medium">
-                                {s.aktifCount} aktif · {s.selesaiCount} selesai
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="shrink-0">
-                            {s.activeIntervention ? (
-                              <button
-                                onClick={() => handleOpenEditInterventionModal(s.activeIntervention, s)}
-                                className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
-                              >
-                                Lanjutkan Sesi
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => handleOpenNewInterventionModal(s, 'moderate_violation')}
-                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
-                              >
-                                Mulai Dukungan
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Sub-section 2: Daftar Sesi Daya Dukung yang Tersimpan */}
-                <div className="space-y-3 pt-3 border-t border-gray-50">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                      Riwayat Sesi Daya Dukung
-                    </h4>
-                    <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">
-                      {moderateInterventionsList.length} Sesi
-                    </span>
-                  </div>
-
-                  {moderateInterventionsList.length === 0 ? (
-                    <div className="p-4 bg-gray-50/50 rounded-2xl border border-gray-100 text-center text-xs text-gray-400 italic">
-                      Belum ada sesi daya dukung pelanggaran sedang yang tersimpan.
-                    </div>
-                  ) : (
-                    <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                      {moderateInterventionsList.map(item => (
-                        <div key={item.id} className="p-3.5 bg-gray-50/60 rounded-2xl border border-gray-100 space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-black text-gray-900 text-xs truncate">{item.studentName}</span>
-                            <span className={cn(
-                              "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shrink-0",
-                              item.status === 'completed'
-                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                : "bg-amber-50 text-amber-700 border-amber-200"
-                            )}>
-                              {item.status === 'completed' ? 'Selesai' : 'Sedang Berjalan'}
-                            </span>
-                          </div>
-
-                          <p className="text-xs text-gray-600 font-medium line-clamp-2 italic leading-relaxed">
-                            &ldquo;{item.interventionPlan}&rdquo;
-                          </p>
-
-                          {item.outcomeNote && (
-                            <p className="text-[11px] text-emerald-700 font-medium bg-emerald-50/50 p-2 rounded-xl border border-emerald-100 line-clamp-2">
-                              <span className="font-bold">Hasil: </span>{item.outcomeNote}
-                            </p>
-                          )}
-
-                          <div className="flex items-center justify-between pt-1 border-t border-gray-100 text-[10px]">
-                            <span className="text-gray-400 font-bold">
-                              {item.incidentIds?.length || 0} kejadian tercakup
-                            </span>
-                            <button
-                              onClick={() => handleOpenEditInterventionModal(item, {
-                                studentId: item.studentId,
-                                studentName: item.studentName,
-                                className: item.className,
-                                classId: item.classId
-                              })}
-                              className="text-rose-600 hover:text-rose-700 font-black uppercase tracking-wider cursor-pointer"
-                            >
-                              Kelola / Edit
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Stats Card */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 space-y-6">
-                <h3 className="font-black text-gray-900 text-sm flex items-center gap-2">
-                  <TrendingUp size={16} className="text-rose-500" />
-                  Ringkasan Pelanggaran Sedang Hari Ini
-                </h3>
-                <div className="space-y-4">
-                  <div className="p-4 bg-gray-50/50 rounded-2xl border border-gray-50 flex items-center justify-between">
-                    <div>
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Total Catatan Hari Ini</p>
-                      <p className="text-sm font-bold text-gray-800 mt-0.5">{moderateTodayStats.total} kejadian</p>
-                    </div>
-                    <ShieldAlert size={18} className="text-rose-300" />
-                  </div>
-                  <div className="p-4 bg-gray-50/50 rounded-2xl border border-gray-50 flex items-center justify-between">
-                    <div>
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Siswa Terlibat</p>
-                      <p className="text-sm font-bold text-gray-800 mt-0.5">{moderateTodayStats.uniqueStudents} siswa</p>
-                    </div>
-                    <User size={18} className="text-rose-300" />
-                  </div>
-                  <div className="p-4 bg-gray-50/50 rounded-2xl border border-gray-50">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Kategori Terbanyak</p>
-                    <p className="text-xs font-bold text-gray-800 mt-1 break-words leading-relaxed">{moderateTodayStats.mostFreqType}</p>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ---------------------------------------------------- */}
       {/* TAB CONTENT: REKAP & LEADERBOARD */}
       {/* ---------------------------------------------------- */}
       {activeTab === 'rekap' && !isStudentOrParent && (
@@ -4569,7 +3703,7 @@ export default function JuniorHighLatenessAndViolations() {
               <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-violet-50/10">
                 <div>
                   <span className="text-[9px] font-black text-violet-600 uppercase tracking-widest bg-violet-50 px-2.5 py-1 rounded-full">
-                    Dukungan Guru &bull; {selectedInterventionIssueType === 'lateness' ? 'Keterlambatan' : selectedInterventionIssueType === 'moderate_violation' ? 'Pelanggaran Sedang' : 'Pelanggaran Ringan'}
+                    Dukungan Guru &bull; {selectedInterventionIssueType === 'lateness' ? 'Keterlambatan' : 'Pelanggaran Ringan'}
                   </span>
                   <h3 className="text-base font-black text-gray-900 mt-2">
                     {editingInterventionId ? 'Edit Sesi Dukungan Guru' : 'Mulai Dukungan Guru Baru'}
@@ -4621,7 +3755,7 @@ export default function JuniorHighLatenessAndViolations() {
 
                   {studentEligibleIncidents.length === 0 ? (
                     <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 text-center text-xs text-gray-400 italic">
-                      Tidak ada catatan {selectedInterventionIssueType === 'lateness' ? 'Keterlambatan' : selectedInterventionIssueType === 'moderate_violation' ? 'Pelanggaran Sedang' : 'Pelanggaran Ringan'} aktif yang tersedia.
+                      Tidak ada catatan {selectedInterventionIssueType === 'lateness' ? 'keterlambatan' : 'pelanggaran ringan'} aktif yang tersedia.
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
@@ -4648,13 +3782,9 @@ export default function JuniorHighLatenessAndViolations() {
                               <div className="flex items-center justify-between gap-2">
                                 <span className={cn(
                                   "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
-                                  selectedInterventionIssueType === 'lateness' 
-                                    ? "bg-blue-50 text-blue-600" 
-                                    : selectedInterventionIssueType === 'moderate_violation'
-                                      ? "bg-rose-50 text-rose-600"
-                                      : "bg-amber-50 text-amber-600"
+                                  selectedInterventionIssueType === 'lateness' ? "bg-blue-50 text-blue-600" : "bg-amber-50 text-amber-600"
                                 )}>
-                                  {selectedInterventionIssueType === 'lateness' ? 'Keterlambatan' : selectedInterventionIssueType === 'moderate_violation' ? 'Pelanggaran Sedang' : 'Pelanggaran Ringan'}
+                                  {selectedInterventionIssueType === 'lateness' ? 'Keterlambatan' : 'Pelanggaran'}
                                 </span>
                                 <span className="font-bold text-gray-400">
                                   {getFormattedDateLong(inc.date)}
@@ -4663,7 +3793,7 @@ export default function JuniorHighLatenessAndViolations() {
                               <p className="font-black text-gray-800 mt-1">
                                 {selectedInterventionIssueType === 'lateness' 
                                   ? `Keterlambatan (${inc.timeString || inc.timeLabel || inc.minutesLate + ' menit'})` 
-                                  : (inc.violationLabel || inc.violationType || (selectedInterventionIssueType === 'moderate_violation' ? 'Pelanggaran Sedang' : 'Pelanggaran Ringan'))
+                                  : (inc.violationLabel || inc.violationType || 'Pelanggaran Ringan')
                                 }
                               </p>
                               {inc.notes && (
@@ -4678,7 +3808,7 @@ export default function JuniorHighLatenessAndViolations() {
                       })}
                     </div>
                   )}
-                  {selectedIncidentIds.size === 0 && (
+                  {selectedIncidentIds.length === 0 && (
                     <p className="text-[10px] text-red-500 font-bold">
                       * Anda harus memilih setidaknya 1 catatan kejadian untuk membuat/menyimpan intervensi.
                     </p>

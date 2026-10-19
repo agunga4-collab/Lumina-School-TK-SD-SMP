@@ -8,9 +8,10 @@ import {
   History, PlusCircle, CheckCircle, HelpCircle, ClipboardCheck
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { createMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases, getTeachers, getStudentById, getClasses, getActiveStudents } from '../../lib/firebase';
+import { createMTSSCase, updateMTSSCase, addMTSSConcern, getStudentActiveBehaviorCases, getTeachers, getStudentById, getClasses, getActiveStudents } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
+import { SEVERE_BEHAVIOR_CATEGORIES } from '../../constants/mtssSevereCategories';
 import type { MTSSTier, MTSSStatus } from '../../types';
 
 export default function CreateCase() {
@@ -35,8 +36,10 @@ export default function CreateCase() {
     studentId: '',
     classId: '',
     academicYear: activeYear || '',
-    tier: 'Tier 1' as MTSSTier,
+    tier: 'Tier 2' as MTSSTier,
     status: 'OPEN' as MTSSStatus,
+    categoryCode: '',
+    categoryLabel: '',
     date: new Date().toISOString().split('T')[0],
     time: '',
     location: '',
@@ -239,13 +242,20 @@ export default function CreateCase() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     if (!formData.studentId) {
       alert("Silakan pilih siswa terlebih dahulu.");
       return;
     }
 
+    if (!formData.categoryCode) {
+      alert("Silakan pilih Kategori Pelanggaran (Bagian G nomor 1–17) terlebih dahulu.");
+      return;
+    }
+
     if (!formData.description.trim()) {
-      alert("Silakan isi deskripsi Behavior Concern terlebih dahulu.");
+      alert("Silakan isi deskripsi kronologi kejadian terlebih dahulu.");
       return;
     }
     
@@ -259,6 +269,10 @@ export default function CreateCase() {
       const targetPicId = formData.nextStepPicId || profile?.uid || 'unknown';
       const targetPicName = formData.nextStepPicName || profile?.displayName || 'Unknown Teacher';
 
+      const selectedCat = SEVERE_BEHAVIOR_CATEGORIES.find(c => c.code === formData.categoryCode);
+      const catCode = selectedCat?.code || formData.categoryCode;
+      const catLabel = selectedCat?.label || formData.categoryLabel;
+
       if (reportingMode === 'EXISTING') {
         if (!selectedCaseId) {
           alert("Silakan pilih kasus aktif yang ingin dilanjutkan.");
@@ -270,6 +284,8 @@ export default function CreateCase() {
         await addMTSSConcern(selectedCaseId, {
           date: formData.date,
           description: formData.description,
+          categoryCode: catCode,
+          categoryLabel: catLabel,
           reporterId: profile?.uid || 'unknown',
           reporterName: profile?.displayName || 'Unknown Teacher',
           interventionsTried: interventionsArray,
@@ -281,17 +297,28 @@ export default function CreateCase() {
           isDone: false,
         });
 
+        // Update category on parent case if empty
+        const existingCase = activeCases.find(c => c.id === selectedCaseId);
+        if (!existingCase?.categoryCode && catCode) {
+          await updateMTSSCase(selectedCaseId, {
+            categoryCode: catCode,
+            categoryLabel: catLabel,
+          });
+        }
+
         navigate('/junior-high/behavior/mtss/cases/' + selectedCaseId);
       } else {
-        // Create a completely new case
+        // Create a completely new case at Tier 2
         const caseId = await createMTSSCase({
           studentId: formData.studentId,
           studentName: formData.studentName,
           classId: formData.classId,
           academicYear: formData.academicYear,
           semester: String(activeSemester),
-          tier: formData.tier,
-          status: formData.status,
+          tier: 'Tier 2',
+          status: formData.status || 'OPEN',
+          categoryCode: catCode,
+          categoryLabel: catLabel,
           picId: targetPicId,
           picName: targetPicName,
           totalConcerns: 1,
@@ -304,6 +331,8 @@ export default function CreateCase() {
           await addMTSSConcern(caseId, {
             date: formData.date,
             description: formData.description,
+            categoryCode: catCode,
+            categoryLabel: catLabel,
             reporterId: profile?.uid || 'unknown',
             reporterName: profile?.displayName || 'Unknown Teacher',
             interventionsTried: interventionsArray,
@@ -320,6 +349,7 @@ export default function CreateCase() {
       }
     } catch (error) {
       console.error("Error submitting case:", error);
+      alert("Terjadi kesalahan saat menyimpan kasus. Silakan coba lagi.");
     } finally {
       setIsSubmitting(false);
     }
@@ -337,7 +367,7 @@ export default function CreateCase() {
                <Sparkles className="text-blue-300" size={20} />
                <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-200">MTSS Behavior Module</span>
             </div>
-            <h1 className="text-4xl font-black italic tracking-tighter uppercase mb-2">Lapor Kasus Perilaku</h1>
+            <h1 className="text-3xl md:text-4xl font-black italic tracking-tighter uppercase mb-2">Lapor Kasus Baru (Tier 2 Intervention)</h1>
             <p className="text-blue-100/70 text-xs font-bold uppercase tracking-widest">SMP Lazuardi GCS</p>
           </div>
         </div>
@@ -532,6 +562,47 @@ export default function CreateCase() {
                <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Detail Kejadian</h3>
             </div>
 
+            {/* Dropdown Wajib: Kategori Pelanggaran Berat (Bagian G 1-17) */}
+            <div className="space-y-2 bg-blue-50/40 p-5 rounded-2xl border border-blue-100">
+              <div className="flex items-center justify-between">
+                <label htmlFor="kategori-select" className="text-[10px] font-black uppercase text-blue-900 tracking-widest flex items-center gap-1.5">
+                  <span>Kategori Pelanggaran</span>
+                  <span className="text-rose-500 font-bold">* (Wajib)</span>
+                </label>
+                <span className="text-[9px] font-black uppercase tracking-wider text-blue-600 bg-blue-100/70 px-2.5 py-0.5 rounded-md">
+                  Bagian G (Nomor 1–17)
+                </span>
+              </div>
+              <div className="relative">
+                <select
+                  id="kategori-select"
+                  required
+                  className="w-full px-5 py-4 rounded-xl bg-white border border-gray-200 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all font-bold text-sm appearance-none cursor-pointer text-gray-900 shadow-sm"
+                  value={formData.categoryCode}
+                  onChange={e => {
+                    const val = e.target.value;
+                    const matched = SEVERE_BEHAVIOR_CATEGORIES.find(c => c.code === val);
+                    setFormData(prev => ({
+                      ...prev,
+                      categoryCode: val,
+                      categoryLabel: matched ? matched.label : ''
+                    }));
+                  }}
+                >
+                  <option value="">-- Pilih Kategori Pelanggaran --</option>
+                  {SEVERE_BEHAVIOR_CATEGORIES.map(cat => (
+                    <option key={cat.code} value={cat.code}>
+                      {cat.number}. {cat.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={18} />
+              </div>
+              <p className="text-[11px] text-gray-500 font-medium">
+                Pilih salah satu dari 17 butir pelanggaran berat tata tertib sekolah untuk intervensi Tier 2.
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest ml-1">Tanggal</label>
@@ -687,7 +758,7 @@ export default function CreateCase() {
                <p className="text-[11px] font-bold text-blue-700 leading-relaxed uppercase tracking-wide">
                   {reportingMode === 'EXISTING' 
                     ? "Laporan ini akan ditambahkan sebagai catatan kejadian baru pada kasus penanganan aktif yang Anda pilih." 
-                    : "Laporan ini akan otomatis membuat entitas kasus penanganan perilaku baru (Tier 1/2/3) untuk siswa tersebut."}
+                    : "Laporan ini akan otomatis membuat entitas kasus penanganan perilaku baru pada Tier 2 (Tier 2 Intervention) untuk siswa tersebut."}
                </p>
             </div>
           </div>

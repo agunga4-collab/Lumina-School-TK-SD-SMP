@@ -166,7 +166,7 @@ export default function MTSSBehaviorLayout() {
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all active:scale-[0.98] shadow-sm"
           >
             <Plus size={12} />
-            Lapor Kasus Baru
+            Lapor Kasus Baru (Tier 2 Intervention)
           </Link>
 
           {/* Refresh Action */}

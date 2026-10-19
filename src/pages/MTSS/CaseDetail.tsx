@@ -8,7 +8,7 @@ import {
   MessageSquare, History, Activity, Lock, ExternalLink,
   ClipboardList, TrendingUp, AlertTriangle, Star, CheckCircle2,
   Trash2, Download, MoreVertical, ShieldCheck, UserCircle, Info, BookOpen,
-  Cloud, RefreshCw
+  Cloud, RefreshCw, Pencil, X
 } from 'lucide-react';
 import { formatDate, cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
@@ -21,8 +21,10 @@ import {
   getCICODailyReport, 
   getCICODailyReports,
   getBehaviorNotifications,
-  deleteMTSSConcern
+  deleteMTSSConcern,
+  getTeachers
 } from '../../lib/firebase';
+import { SEVERE_BEHAVIOR_CATEGORIES } from '../../constants/mtssSevereCategories';
 import { getBehaviorStudentAcademicContext } from '../../services/mtssAcademicContextService';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { AddDataForm, Tier2MeetingForm, CloseCaseForm } from '../../components/MTSS/BehaviorForms';
@@ -36,8 +38,203 @@ import {
 import { mtssBehaviorRegisterService } from '../../services/mtssBehaviorRegisterService';
 import { mtssBehaviorDriveService } from '../../services/mtssBehaviorDriveService';
 import { MTSSBehaviorPdfType } from '../../types';
-import type { MTSSCase, MTSSConcern, MTSSStatus, MTSSTier, BIPPlan, CICODailyReport } from '../../types';
-import { GoogleGenAI, Type } from '@google/genai';
+interface EditCaseModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  mtssCase: MTSSCase;
+  teachers: any[];
+  onUpdated: (updates: Partial<MTSSCase>) => void;
+}
+
+function EditCaseModal({ isOpen, onClose, mtssCase, teachers, onUpdated }: EditCaseModalProps) {
+  const [categoryCode, setCategoryCode] = React.useState(mtssCase.categoryCode || '');
+  const [lastConcernSummary, setLastConcernSummary] = React.useState(mtssCase.lastConcernSummary || '');
+  const [status, setStatus] = React.useState<MTSSStatus>(mtssCase.status || 'OPEN');
+  const [picId, setPicId] = React.useState(mtssCase.picId || '');
+  const [picName, setPicName] = React.useState(mtssCase.picName || '');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    setCategoryCode(mtssCase.categoryCode || '');
+    setLastConcernSummary(mtssCase.lastConcernSummary || '');
+    setStatus(mtssCase.status || 'OPEN');
+    setPicId(mtssCase.picId || '');
+    setPicName(mtssCase.picName || '');
+  }, [mtssCase]);
+
+  if (!isOpen) return null;
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (saving) return;
+
+    const selectedCat = SEVERE_BEHAVIOR_CATEGORIES.find(c => c.code === categoryCode);
+    const catLabel = selectedCat ? selectedCat.label : (categoryCode ? (mtssCase.categoryLabel || '') : '');
+
+    setSaving(true);
+    try {
+      const updates: Partial<MTSSCase> = {
+        categoryCode,
+        categoryLabel: catLabel,
+        lastConcernSummary,
+        status,
+        picId,
+        picName,
+      };
+
+      await updateMTSSCase(mtssCase.id, updates);
+      onUpdated(updates);
+      toast.success("Data kasus berhasil diperbarui");
+      onClose();
+    } catch (err) {
+      console.error("Error updating case:", err);
+      toast.error("Gagal memperbarui data kasus");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+      <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-6">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <Pencil size={18} />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-gray-900 tracking-tight">Edit Kasus MTSS Behavior</h3>
+              <p className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">{mtssCase.studentName} • Kelas {mtssCase.classId}</p>
+            </div>
+          </div>
+          <button 
+            type="button"
+            onClick={onClose}
+            className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSave} className="space-y-5">
+          {/* Read-only Tier badge */}
+          <div className="flex items-center justify-between bg-gray-50 p-3.5 rounded-xl border border-gray-100">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Tier Penanganan:</span>
+            <span className="text-xs font-black uppercase tracking-wider px-3 py-1 rounded-lg bg-amber-100 text-amber-800 border border-amber-200">
+              {mtssCase.tier} (Tetap)
+            </span>
+          </div>
+
+          {/* Kategori Dropdown (Bagian G nomor 1-17) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase text-blue-900 tracking-widest flex items-center gap-1.5">
+                <span>Kategori Pelanggaran Berat</span>
+              </label>
+              <span className="text-[9px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
+                Bagian G (Nomor 1–17)
+              </span>
+            </div>
+            <div className="relative">
+              <select
+                value={categoryCode}
+                onChange={(e) => setCategoryCode(e.target.value)}
+                className="w-full px-4 py-3.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-blue-500 outline-none font-bold text-xs appearance-none cursor-pointer text-gray-900"
+              >
+                <option value="">-- Pilih Kategori Pelanggaran --</option>
+                {SEVERE_BEHAVIOR_CATEGORIES.map(cat => (
+                  <option key={cat.code} value={cat.code}>
+                    {cat.number}. {cat.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={16} />
+            </div>
+          </div>
+
+          {/* Status Kasus */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">
+              Status Kasus
+            </label>
+            <div className="relative">
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as MTSSStatus)}
+                className="w-full px-4 py-3.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-blue-500 outline-none font-bold text-xs appearance-none cursor-pointer text-gray-900"
+              >
+                <option value="OPEN">OPEN (Sedang Dibuka)</option>
+                <option value="IN_PROGRESS">IN PROGRESS (Dalam Penanganan)</option>
+                <option value="UNDER_REVIEW">UNDER REVIEW (Dalam Evaluasi)</option>
+                <option value="CLOSED">CLOSED (Selesai/Ditutup)</option>
+              </select>
+              <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={16} />
+            </div>
+          </div>
+
+          {/* PIC Kasus */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">
+              Guru Penanggung Jawab (PIC)
+            </label>
+            <div className="relative">
+              <select
+                value={picId}
+                onChange={(e) => {
+                  setPicId(e.target.value);
+                  const matched = teachers.find(t => t.uid === e.target.value);
+                  if (matched) setPicName(matched.displayName || matched.name);
+                }}
+                className="w-full px-4 py-3.5 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-blue-500 outline-none font-bold text-xs appearance-none cursor-pointer text-gray-900"
+              >
+                <option value="">{picName || 'Pilih Guru PIC'}</option>
+                {teachers.map(t => (
+                  <option key={t.uid} value={t.uid}>
+                    {t.displayName || t.name} ({t.role})
+                  </option>
+                ))}
+              </select>
+              <ChevronLeft className="absolute right-4 top-1/2 -translate-y-1/2 rotate-[-90deg] text-gray-400 pointer-events-none" size={16} />
+            </div>
+          </div>
+
+          {/* Ringkasan Kasus / Concern */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">
+              Ringkasan Kasus / Kronologi
+            </label>
+            <textarea
+              rows={3}
+              value={lastConcernSummary}
+              onChange={(e) => setLastConcernSummary(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-blue-500 outline-none font-medium text-xs text-gray-900 leading-relaxed"
+              placeholder="Deskripsi kronologi kejadian..."
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-gray-400 hover:text-gray-700 transition-colors"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-blue-600 hover:bg-blue-700 text-white shadow-md disabled:opacity-50 flex items-center gap-2"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : null}
+              Simpan Perubahan
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 export default function CaseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -68,6 +265,13 @@ export default function CaseDetail() {
   const [showCicoInputModal, setShowCicoInputModal] = React.useState(false);
   const [showWeeklyReflectionModal, setShowWeeklyReflectionModal] = React.useState(false);
   const [showExportMenu, setShowExportMenu] = React.useState(false);
+  const [showEditCaseModal, setShowEditCaseModal] = React.useState(false);
+  const [teachersList, setTeachersList] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    getTeachers().then(res => setTeachersList(res || [])).catch(console.error);
+  }, []);
+
   const [activeTab, setActiveTab] = React.useState<'overview' | 'concerns' | 'cico' | 'bip' | 'home-programme'>('overview');
 
   const [todayReport, setTodayReport] = React.useState<CICODailyReport | null>(null);
@@ -382,6 +586,17 @@ export default function CaseDetail() {
             weekStartingDate={todayReport?.date || ''} // Optimization needed for week start
           />
         )}
+        {showEditCaseModal && (
+          <EditCaseModal
+            isOpen={showEditCaseModal}
+            onClose={() => setShowEditCaseModal(false)}
+            mtssCase={mtssCase}
+            teachers={teachersList}
+            onUpdated={(updates) => {
+              setMtssCase(prev => prev ? ({ ...prev, ...updates }) : null);
+            }}
+          />
+        )}
       </AnimatePresence>
 
       {/* Top Header Navigation */}
@@ -507,6 +722,16 @@ export default function CaseDetail() {
                   <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight uppercase leading-none">{mtssCase.studentName}</h1>
                   <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest px-3 py-1 bg-blue-50 rounded-xl border border-blue-100/50">Kelas {mtssCase.classId}</span>
                 </div>
+                {(mtssCase.categoryLabel || mtssCase.categoryCode) && (
+                  <div className="flex flex-wrap items-center justify-center md:justify-start gap-2 pt-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 px-2.5 py-1 rounded-lg border border-rose-200 shadow-xs">
+                      {mtssCase.categoryCode || 'Kategori'}
+                    </span>
+                    <span className="text-xs font-bold text-gray-800">
+                      {mtssCase.categoryLabel}
+                    </span>
+                  </div>
+                )}
                 <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest ml-1">Student Behavior Profile</p>
               </div>
 
@@ -536,32 +761,40 @@ export default function CaseDetail() {
             </div>
           </div>
 
-          {mtssCase.status !== 'CLOSED' && (
-            <div className="flex flex-wrap gap-3 w-full lg:w-auto">
-              <button 
-                onClick={() => setShowAddDataModal(true)}
-                className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md hover:-translate-y-0.5 active:scale-95"
-              >
-                  <Plus size={16} /> Tambah Data Baru
-              </button>
-              
-              {mtssCase.tier === 'Tier 1' && (
+          <div className="flex flex-wrap gap-3 w-full lg:w-auto">
+            <button 
+              onClick={() => setShowEditCaseModal(true)}
+              className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-sm hover:-translate-y-0.5 active:scale-95"
+            >
+                <Pencil size={15} /> Edit Kasus
+            </button>
+            {mtssCase.status !== 'CLOSED' && (
+              <>
                 <button 
-                  onClick={() => setShowTier2MeetingModal(true)}
-                  className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md hover:-translate-y-0.5 active:scale-95"
+                  onClick={() => setShowAddDataModal(true)}
+                  className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md hover:-translate-y-0.5 active:scale-95"
                 >
-                    <TrendingUp size={16} /> Eskalasi ke Tier 2
+                    <Plus size={16} /> Tambah Data Baru
                 </button>
-              )}
+                
+                {mtssCase.tier === 'Tier 1' && (
+                  <button 
+                    onClick={() => setShowTier2MeetingModal(true)}
+                    className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md hover:-translate-y-0.5 active:scale-95"
+                  >
+                      <TrendingUp size={16} /> Eskalasi ke Tier 2
+                  </button>
+                )}
 
-              <button 
-                onClick={() => setShowCloseCaseModal(true)}
-                className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md"
-              >
-                  Tutup Kasus
-              </button>
-            </div>
-          )}
+                <button 
+                  onClick={() => setShowCloseCaseModal(true)}
+                  className="flex-1 lg:flex-none flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md"
+                >
+                    Tutup Kasus
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -967,6 +1200,16 @@ export default function CaseDetail() {
                                    </div>
                                 </div>
                                 <h4 className="text-[10px] font-black text-gray-300 uppercase tracking-[0.3em] ml-2">Behavior Concern Summary</h4>
+                                {concern.categoryLabel && (
+                                  <div className="flex items-center gap-2 pt-1 ml-2">
+                                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-rose-50 text-rose-800 border border-rose-200">
+                                      {concern.categoryCode || 'Kategori'}
+                                    </span>
+                                    <span className="text-xs font-bold text-gray-800">
+                                      {concern.categoryLabel}
+                                    </span>
+                                  </div>
+                                )}
                              </div>
                              <button 
                                 onClick={() => handleDeleteConcern(concern.id)}
