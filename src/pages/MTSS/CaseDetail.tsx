@@ -8,7 +8,7 @@ import {
   MessageSquare, History, Activity, Lock, ExternalLink,
   ClipboardList, TrendingUp, AlertTriangle, Star, CheckCircle2,
   Trash2, Download, MoreVertical, ShieldCheck, UserCircle, Info, BookOpen,
-  Cloud, RefreshCw, Pencil, X
+  Cloud, RefreshCw, Pencil, X, FileSpreadsheet, Edit2, ArrowRight
 } from 'lucide-react';
 import { formatDate, cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
@@ -20,6 +20,7 @@ import {
   handleFirestoreError, 
   getCICODailyReport, 
   getCICODailyReports,
+  getCICOWeeklyWorksheetsForStudent,
   getBehaviorNotifications,
   deleteMTSSConcern,
   getTeachers
@@ -28,8 +29,6 @@ import { SEVERE_BEHAVIOR_CATEGORIES } from '../../constants/mtssSevereCategories
 import { getBehaviorStudentAcademicContext } from '../../services/mtssAcademicContextService';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { AddDataForm, Tier2MeetingForm, CloseCaseForm } from '../../components/MTSS/BehaviorForms';
-import { CICOInputForm } from '../../components/MTSS/CICOInputForm';
-import { CICOWeeklyReflectionModal } from '../../components/MTSS/CICOWeeklyReflection';
 import { 
   generateWeeklyCICOReport, 
   generateFullCICOReport, 
@@ -37,7 +36,7 @@ import {
 } from '../../services/pdfService';
 import { mtssBehaviorRegisterService } from '../../services/mtssBehaviorRegisterService';
 import { mtssBehaviorDriveService } from '../../services/mtssBehaviorDriveService';
-import { MTSSBehaviorPdfType } from '../../types';
+import { MTSSBehaviorPdfType, MTSSCase, MTSSConcern, BIPPlan, CICODailyReport, MTSSStatus, MTSSTier, CICOWeeklyWorksheet } from '../../types';
 interface EditCaseModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -236,6 +235,107 @@ function EditCaseModal({ isOpen, onClose, mtssCase, teachers, onUpdated }: EditC
   );
 }
 
+interface EditContractModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  currentContract: string;
+  onSave: (newContract: string) => Promise<void>;
+}
+
+function EditContractModal({ isOpen, onClose, currentContract, onSave }: EditContractModalProps) {
+  const [contractText, setContractText] = React.useState(currentContract);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    setContractText(currentContract);
+  }, [currentContract, isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await onSave(contractText.trim());
+      onClose();
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal menyimpan kontrak perilaku.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-gray-100 overflow-hidden">
+        <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+              <Pencil size={18} />
+            </div>
+            <div>
+              <h3 className="text-base font-black italic uppercase tracking-tight text-gray-900">
+                Edit Kontrak Perilaku
+              </h3>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">
+                Target Kesepakatan Siswa & Tim MTSS
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl text-gray-400">
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">
+              Teks Kontrak Perilaku
+            </label>
+            <textarea
+              rows={4}
+              value={contractText}
+              onChange={(e) => setContractText(e.target.value)}
+              placeholder="Tuliskan kesepakatan target perilaku siswa (misal: Siswa bersedia melakukan Check-In setiap pagi pkl 07:15 dan menyelesaikan tugas mandiri)..."
+              className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:bg-white focus:border-amber-500 outline-none font-medium text-xs text-gray-900 leading-relaxed"
+            />
+            <p className="text-[10px] text-gray-400 italic">
+              Kosongkan jika kontrak belum diisi atau disepakati.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-gray-400 hover:text-gray-700 transition-colors"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-amber-600 hover:bg-amber-700 text-white shadow-md disabled:opacity-50 flex items-center gap-2"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : null}
+              Simpan Kontrak
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function getMonday(d: Date): Date {
+  const dateCopy = new Date(d);
+  const day = dateCopy.getDay();
+  const diff = dateCopy.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(dateCopy.setDate(diff));
+}
+
 export default function CaseDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -262,10 +362,9 @@ export default function CaseDetail() {
   const [showAddDataModal, setShowAddDataModal] = React.useState(false);
   const [showTier2MeetingModal, setShowTier2MeetingModal] = React.useState(false);
   const [showCloseCaseModal, setShowCloseCaseModal] = React.useState(false);
-  const [showCicoInputModal, setShowCicoInputModal] = React.useState(false);
-  const [showWeeklyReflectionModal, setShowWeeklyReflectionModal] = React.useState(false);
   const [showExportMenu, setShowExportMenu] = React.useState(false);
   const [showEditCaseModal, setShowEditCaseModal] = React.useState(false);
+  const [showEditContractModal, setShowEditContractModal] = React.useState(false);
   const [teachersList, setTeachersList] = React.useState<any[]>([]);
 
   React.useEffect(() => {
@@ -273,6 +372,8 @@ export default function CaseDetail() {
   }, []);
 
   const [activeTab, setActiveTab] = React.useState<'overview' | 'concerns' | 'cico' | 'bip' | 'home-programme'>('overview');
+
+  const [worksheets, setWorksheets] = React.useState<CICOWeeklyWorksheet[]>([]);
 
   const [todayReport, setTodayReport] = React.useState<CICODailyReport | null>(null);
   const [allCicoReports, setAllCicoReports] = React.useState<CICODailyReport[]>([]);
@@ -363,15 +464,19 @@ export default function CaseDetail() {
 
     const todayDate = new Date().toISOString().split('T')[0];
     const fetchReports = async () => {
-      const today = await getCICODailyReport(id, todayDate);
-      setTodayReport(today);
-      
-      const all = await getCICODailyReports(id);
-      setAllCicoReports(all || []);
+      try {
+        const today = await getCICODailyReport(id, todayDate);
+        setTodayReport(today);
+        
+        const all = await getCICODailyReports(id);
+        setAllCicoReports(all || []);
+      } catch (err) {
+        console.error("Error loading daily reports:", err);
+      }
     };
 
     fetchReports();
-  }, [id, showCicoInputModal]);
+  }, [id]);
 
   React.useEffect(() => {
     if (!id) return;
@@ -384,10 +489,15 @@ export default function CaseDetail() {
 
         // Fetch academic context
         getBehaviorStudentAcademicContext(caseData.studentId).then(setAcademicContext);
+
+        // Fetch weekly worksheets from the primary spreadsheet data source
+        if (caseData.studentId) {
+          getCICOWeeklyWorksheetsForStudent(caseData.studentId)
+            .then(ws => setWorksheets(ws || []))
+            .catch(err => console.error("Error loading CICO worksheets:", err));
+        }
         
-        // Also refresh concerns since we are already listening to the case doc
-        // (Wait, concerns is a subcollection in some designs, or separate. 
-        //  The previous code was listening to the SAME doc to trigger a getMTSSConcerns call.)
+        // Refresh concerns
         const concernsData = await getMTSSConcerns(id);
         setConcerns(concernsData || []);
       } else {
@@ -401,6 +511,168 @@ export default function CaseDetail() {
       unsubscribeCase();
     };
   }, [id]);
+
+  // Derived CICO statistics from Spreadsheet / Weekly Worksheets on Scale 1-4
+  const cicoStats = React.useMemo(() => {
+    if (!worksheets || worksheets.length === 0) {
+      return {
+        hasData: false,
+        overallAvg: null as number | null,
+        overallPct: null as number | null,
+        totalScoredSlots: 0,
+        totalWeeksWithData: 0,
+        currentWeekStats: null as {
+          weekStartingDate: string;
+          avgScore: number | null;
+          pct: number | null;
+          hasData: boolean;
+          earned: number;
+          possible: number;
+        } | null,
+        dailyEntries: [] as Array<{
+          dateStr: string;
+          dateLabel: string;
+          dayName: string;
+          avgScore: number;
+          pct: number;
+        }>,
+        weeksList: [] as Array<{
+          weekStartingDate: string;
+          weekLabel: string;
+          avgScore: number | null;
+          pct: number | null;
+          scoredSlots: number;
+        }>
+      };
+    }
+
+    const dayNames = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'];
+    let grandTotalEarned = 0;
+    let grandTotalSlots = 0;
+    let weeksWithDataCount = 0;
+
+    const sortedWorksheets = [...worksheets].sort((a, b) => 
+      a.weekStartingDate.localeCompare(b.weekStartingDate)
+    );
+
+    const allDailyEntries: Array<{
+      dateStr: string;
+      dateLabel: string;
+      dayName: string;
+      avgScore: number;
+      pct: number;
+    }> = [];
+
+    const weeksList: Array<{
+      weekStartingDate: string;
+      weekLabel: string;
+      avgScore: number | null;
+      pct: number | null;
+      scoredSlots: number;
+    }> = [];
+
+    const today = new Date();
+    const thisMonday = getMonday(today).toISOString().split('T')[0];
+    let currentWeekStats: {
+      weekStartingDate: string;
+      avgScore: number | null;
+      pct: number | null;
+      hasData: boolean;
+      earned: number;
+      possible: number;
+    } | null = null;
+
+    sortedWorksheets.forEach((ws) => {
+      let wsEarned = 0;
+      let wsSlots = 0;
+      const mondayDate = new Date(ws.weekStartingDate);
+
+      for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
+        const dayDate = new Date(mondayDate);
+        dayDate.setDate(mondayDate.getDate() + dayIdx);
+        const dayDateStr = dayDate.toISOString().split('T')[0];
+        const dayLocalDate = dayDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+
+        let dayEarned = 0;
+        let daySlots = 0;
+
+        (ws.targets || []).forEach(t => {
+          const scoreObj = ws.scores?.[t.id]?.[dayIdx];
+          if (scoreObj) {
+            if (scoreObj.checkIn !== null && scoreObj.checkIn !== undefined && scoreObj.checkIn > 0) {
+              dayEarned += scoreObj.checkIn;
+              daySlots += 1;
+            }
+            if (scoreObj.checkOut !== null && scoreObj.checkOut !== undefined && scoreObj.checkOut > 0) {
+              dayEarned += scoreObj.checkOut;
+              daySlots += 1;
+            }
+          }
+        });
+
+        if (daySlots > 0) {
+          const avg = dayEarned / daySlots;
+          const pct = (dayEarned / (daySlots * 4)) * 100;
+          allDailyEntries.push({
+            dateStr: dayDateStr,
+            dateLabel: dayLocalDate,
+            dayName: dayNames[dayIdx],
+            avgScore: avg,
+            pct
+          });
+          wsEarned += dayEarned;
+          wsSlots += daySlots;
+        }
+      }
+
+      const wsHasData = wsSlots > 0;
+      if (wsHasData) {
+        weeksWithDataCount += 1;
+        grandTotalEarned += wsEarned;
+        grandTotalSlots += wsSlots;
+      }
+
+      const weekAvg = wsSlots > 0 ? wsEarned / wsSlots : null;
+      const weekPct = wsSlots > 0 ? (wsEarned / (wsSlots * 4)) * 100 : null;
+
+      const endFriday = new Date(mondayDate);
+      endFriday.setDate(mondayDate.getDate() + 4);
+      const weekLabel = `${mondayDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} - ${endFriday.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`;
+
+      weeksList.push({
+        weekStartingDate: ws.weekStartingDate,
+        weekLabel,
+        avgScore: weekAvg,
+        pct: weekPct,
+        scoredSlots: wsSlots
+      });
+
+      if (ws.weekStartingDate === thisMonday) {
+        currentWeekStats = {
+          weekStartingDate: ws.weekStartingDate,
+          avgScore: weekAvg,
+          pct: weekPct,
+          hasData: wsHasData,
+          earned: wsEarned,
+          possible: wsSlots * 4
+        };
+      }
+    });
+
+    const overallAvg = grandTotalSlots > 0 ? grandTotalEarned / grandTotalSlots : null;
+    const overallPct = grandTotalSlots > 0 ? (grandTotalEarned / (grandTotalSlots * 4)) * 100 : null;
+
+    return {
+      hasData: grandTotalSlots > 0,
+      overallAvg,
+      overallPct,
+      totalScoredSlots: grandTotalSlots,
+      totalWeeksWithData: weeksWithDataCount,
+      currentWeekStats,
+      dailyEntries: allDailyEntries,
+      weeksList
+    };
+  }, [worksheets]);
 
   React.useEffect(() => {
     const fetchBIP = async () => {
@@ -570,20 +842,16 @@ export default function CaseDetail() {
             mtssCase={mtssCase} 
           />
         )}
-        {showCicoInputModal && (
-          <CICOInputForm 
-            isOpen={showCicoInputModal}
-            onClose={() => setShowCicoInputModal(false)}
-            mtssCase={mtssCase}
-          />
-        )}
-        {showWeeklyReflectionModal && (
-          <CICOWeeklyReflectionModal
-            isOpen={showWeeklyReflectionModal}
-            onClose={() => setShowWeeklyReflectionModal(false)}
-            caseId={mtssCase.id}
-            weekNumber={todayReport?.weekNumber || 1}
-            weekStartingDate={todayReport?.date || ''} // Optimization needed for week start
+        {showEditContractModal && (
+          <EditContractModal
+            isOpen={showEditContractModal}
+            onClose={() => setShowEditContractModal(false)}
+            currentContract={mtssCase.behaviorContract || mtssCase.tier2Meeting?.behaviorContract || mtssCase.tier2Meeting?.interventionDescription || ''}
+            onSave={async (newContract) => {
+              await updateMTSSCase(mtssCase.id, { behaviorContract: newContract });
+              setMtssCase(prev => prev ? ({ ...prev, behaviorContract: newContract }) : null);
+              toast.success("Kontrak perilaku berhasil disimpan.");
+            }}
           />
         )}
         {showEditCaseModal && (
@@ -815,78 +1083,121 @@ export default function CaseDetail() {
                    </div>
                    <div>
                      <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest italic tracking-tighter">CICO Tracker</h4>
-                     <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Quick Summary</p>
+                     <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">
+                       {((mtssCase.tier2Meeting?.cicoGoals && mtssCase.tier2Meeting.cicoGoals.length > 0) || cicoStats.hasData || (worksheets.length > 0 && worksheets.some(w => w.targets?.length > 0)))
+                         ? 'Ringkasan Pemantauan CICO'
+                         : 'Belum Dikonfigurasi'}
+                     </p>
                    </div>
                 </div>
 
                 <div className="space-y-6">
-                   {/* Progress Bar */}
-                   <div className="space-y-2">
-                     <div className="flex items-center justify-between">
-                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Cycle Progress</p>
-                        <p className="text-[9px] font-black text-gray-900 uppercase tracking-widest">Minggu 3 / 4</p>
+                   {/* Progress Pemantauan */}
+                   {cicoStats.totalWeeksWithData > 0 ? (
+                     <div className="space-y-2">
+                       <div className="flex items-center justify-between">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Progress Pemantauan</p>
+                          <p className="text-[9px] font-black text-gray-900 uppercase tracking-widest">
+                            {cicoStats.totalWeeksWithData} Minggu Terdata
+                          </p>
+                       </div>
+                       <div className="relative h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <motion.div 
+                           initial={{ width: 0 }}
+                           animate={{ width: `${Math.min(100, (cicoStats.totalWeeksWithData / 4) * 100)}%` }}
+                           className="absolute h-full bg-amber-500 rounded-full"
+                          />
+                       </div>
                      </div>
-                     <div className="relative h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <motion.div 
-                         initial={{ width: 0 }}
-                         animate={{ width: '75%' }}
-                         className="absolute h-full bg-amber-500 rounded-full"
-                        />
+                   ) : (
+                     <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 text-center">
+                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Siklus Pemantauan</p>
+                        <p className="text-[10px] font-bold text-gray-500 italic mt-0.5">Belum ada siklus data berjalan</p>
                      </div>
-                   </div>
+                   )}
 
-                   {/* Avg Score */}
+                   {/* Nilai Rata-rata Kumulatif (Skala 1-4) */}
                    <div className="flex items-center justify-between">
                       <div className="space-y-0.5">
-                         <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Nilai Rata-rata</p>
-                         <div className="flex items-baseline gap-1">
-                            <p className="text-2xl font-black text-gray-900 italic tracking-tighter leading-none">
-                               {allCicoReports.length > 0 
-                                 ? (allCicoReports.reduce((acc, curr) => acc + curr.dailyAvgScore, 0) / allCicoReports.length).toFixed(1)
-                                 : '0.0'}
-                            </p>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-tighter">/ 3.0</p>
-                         </div>
+                         <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Rata-rata Kumulatif</p>
+                         {cicoStats.overallAvg !== null ? (
+                           <div className="flex items-baseline gap-1">
+                              <p className="text-2xl font-black text-gray-900 italic tracking-tighter leading-none">
+                                {cicoStats.overallAvg.toFixed(1)}
+                              </p>
+                              <p className="text-xs font-bold text-gray-400 uppercase tracking-tighter">/ 4.0</p>
+                           </div>
+                         ) : (
+                           <p className="text-xs font-bold text-gray-400 italic">Belum ada data</p>
+                         )}
                       </div>
-                      {allCicoReports.length > 0 && (
+                      {cicoStats.overallAvg !== null && cicoStats.overallPct !== null && (
                         <div className={cn(
                           "px-3 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-widest",
-                          (allCicoReports.reduce((acc, curr) => acc + curr.dailyAvgScore, 0) / allCicoReports.length) >= 2.4 
+                          cicoStats.overallAvg >= 3.2 
                             ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
-                            : "bg-amber-50 text-amber-600 border-amber-100"
+                            : cicoStats.overallAvg >= 2.5
+                            ? "bg-amber-50 text-amber-600 border-amber-100"
+                            : "bg-rose-50 text-rose-600 border-rose-100"
                         )}>
-                          {((allCicoReports.reduce((acc, curr) => acc + curr.dailyAvgScore, 0) / allCicoReports.length) / 3 * 100).toFixed(0)}% SUCCESS
+                          {cicoStats.overallPct.toFixed(0)}% Capaian
                         </div>
                       )}
                    </div>
 
-                   {/* Heatmap Placeholder */}
-                   <div className="space-y-3 pt-3 border-t border-gray-100">
-                     <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Activity Heatmap (Past 20 entries)</p>
-                     <div className="grid grid-cols-5 gap-1.5">
-                         {allCicoReports.slice(0, 20).reverse().map((report, i) => (
-                           <div 
-                             key={report.id} 
-                             className={cn(
-                               "aspect-square rounded-md transition-all hover:scale-110 cursor-help",
-                               report.isAbsent ? "bg-gray-200" :
-                               report.dailyAvgScore >= 2.4 ? "bg-emerald-500" : 
-                               report.dailyAvgScore >= 2.0 ? "bg-amber-400" : "bg-red-400"
-                             )} 
-                             title={`${formatDate(report.date)}: ${report.dailyAvgScore.toFixed(1)}`}
-                           />
-                         ))}
-                         {Array.from({ length: Math.max(0, 20 - allCicoReports.length) }).map((_, i) => (
-                           <div key={`empty-${i}`} className="aspect-square rounded-md bg-gray-50 h-full w-full" />
-                         ))}
-                     </div>
+                   {/* Rincian Periode */}
+                   <div className="px-3 py-2 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
+                      <div className="flex items-center justify-between text-[8px] font-bold uppercase tracking-wider text-gray-400">
+                        <span>Minggu Ini</span>
+                        <span className="text-gray-700">
+                          {cicoStats.currentWeekStats?.hasData 
+                            ? `${cicoStats.currentWeekStats.avgScore?.toFixed(1)} / 4.0 (${cicoStats.currentWeekStats.pct?.toFixed(0)}%)`
+                            : 'Belum ada input'
+                          }
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[8px] font-bold uppercase tracking-wider text-gray-400">
+                        <span>Seluruh Periode</span>
+                        <span className="text-gray-700">
+                          {cicoStats.totalWeeksWithData > 0 ? `${cicoStats.totalWeeksWithData} Minggu Terdata` : 'Belum ada data'}
+                        </span>
+                      </div>
                    </div>
 
+                   {/* Heatmap Pemantauan Harian */}
+                   <div className="space-y-3 pt-3 border-t border-gray-100">
+                     <div className="flex items-center justify-between">
+                       <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Aktivitas Harian (Spreadsheet)</p>
+                       <span className="text-[8px] font-bold text-gray-400">Skala 1–4</span>
+                     </div>
+                     {cicoStats.dailyEntries.length > 0 ? (
+                       <div className="grid grid-cols-5 gap-1.5">
+                           {cicoStats.dailyEntries.slice(-20).map((entry, i) => (
+                             <div 
+                               key={`${entry.dateStr}-${i}`}
+                               className={cn(
+                                 "aspect-square rounded-md transition-all hover:scale-110 cursor-help flex items-center justify-center text-[8px] font-black text-white",
+                                 entry.avgScore >= 3.2 ? "bg-emerald-500" : 
+                                 entry.avgScore >= 2.5 ? "bg-amber-400" : "bg-rose-500"
+                               )} 
+                               title={`${entry.dayName}, ${entry.dateLabel}: Skor ${entry.avgScore.toFixed(1)} / 4.0 (${entry.pct.toFixed(0)}%)`}
+                             >
+                               {entry.avgScore.toFixed(1)}
+                             </div>
+                           ))}
+                       </div>
+                     ) : (
+                       <p className="text-[10px] text-gray-400 italic text-center py-2">Belum ada data harian</p>
+                     )}
+                   </div>
+
+                   {/* Tombol menuju Spreadsheet Siswa */}
                    <button 
-                     onClick={() => navigate(`/mtss/cico/${mtssCase.id}`)}
-                     className="w-full bg-amber-50 hover:bg-amber-100 text-amber-600 py-3 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all border border-amber-100/30 flex items-center justify-center gap-1.5"
+                     type="button"
+                     onClick={() => navigate(`/mtss/spreadsheet?studentId=${mtssCase.studentId}&classId=${mtssCase.classId}`)}
+                     className="w-full bg-[#002366] hover:bg-blue-800 text-white py-3 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98]"
                    >
-                      Review Detailed Charts <TrendingUp size={12} />
+                      <FileSpreadsheet size={13} /> Buka Pemantauan CICO
                    </button>
                 </div>
               </div>
@@ -1027,51 +1338,88 @@ export default function CaseDetail() {
               <div className="grid grid-cols-1 gap-6">
                  {/* Tier 2 Specifics */}
                  {mtssCase.tier === 'Tier 2' && (
-                   <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-xl p-5 border border-amber-100 shadow-sm space-y-6 relative overflow-hidden group/t2">
-                      <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover/t2:scale-110 transition-transform duration-1000">
-                         <TrendingUp size={120} />
-                      </div>
-                      <div className="flex items-center gap-5">
-                         <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner ring-4 ring-amber-50">
-                            <TrendingUp size={24} />
-                         </div>
-                         <div>
-                            <h4 className="text-lg font-black text-gray-900 italic tracking-tighter uppercase leading-none">Tier 2 Support</h4>
-                            <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest mt-1">CICO Tracker Active</p>
-                         </div>
-                      </div>
+                    <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-xl p-5 border border-amber-100 shadow-sm space-y-6 relative overflow-hidden group/t2">
+                       <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover/t2:scale-110 transition-transform duration-1000">
+                          <TrendingUp size={120} />
+                       </div>
+                       <div className="flex items-center gap-5">
+                          <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner ring-4 ring-amber-50">
+                             <TrendingUp size={24} />
+                          </div>
+                          <div>
+                             <h4 className="text-lg font-black text-gray-900 italic tracking-tighter uppercase leading-none">Tier 2 Support</h4>
+                             <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest mt-1">
+                               {((mtssCase.tier2Meeting?.cicoGoals && mtssCase.tier2Meeting.cicoGoals.length > 0) || cicoStats.hasData || (worksheets.length > 0 && worksheets.some(w => w.targets?.length > 0)))
+                                 ? 'CICO Tracker Aktif'
+                                 : 'CICO Belum Dikonfigurasi'}
+                             </p>
+                          </div>
+                       </div>
 
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div 
-                              onClick={() => setShowCicoInputModal(true)}
-                              className={cn(
-                                "p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden group/btn",
-                                todayReport ? "bg-white border-emerald-100 hover:border-emerald-200" : "bg-amber-50 border-amber-100 hover:bg-white hover:border-amber-200"
-                              )}
-                            >
-                               <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest relative z-10">CICO Daily Input</p>
-                               <p className="text-xs font-black text-gray-900 mt-1 uppercase italic tracking-tighter relative z-10">
-                                  {todayReport ? 'Update Hari Ini' : 'Input Hari Ini'}
-                               </p>
-                               {todayReport && (
-                                 <CheckCircle2 size={12} className="absolute top-2 right-2 text-emerald-500" />
-                               )}
-                            </div>
-                            <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 hover:bg-white hover:border-amber-200 transition-all cursor-pointer text-center flex flex-col justify-center items-center">
-                               <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Analytics</p>
-                               <p className="text-xs font-black text-blue-600 mt-1.5 uppercase italic tracking-tighter cursor-pointer" onClick={() => setActiveTab('cico')}>Dashboard</p>
-                            </div>
-                        </div>
-                         
-                        <div className="p-4 bg-amber-50 rounded-xl border border-amber-100 space-y-2 relative">
-                            <h5 className="text-[9px] font-black text-amber-800 uppercase tracking-widest">Behavior Contract</h5>
-                            <p className="text-xs font-semibold text-gray-800 leading-relaxed italic border-l-4 border-amber-400 pl-4">
-                               "Siswa setuju melakukan Check-In setiap pagi pkl 07:15 dengan Pak Budi dan menerapkan strategi de-eskalasi visual."
-                            </p>
+                       <div className="space-y-6">
+                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                             <button
+                               type="button"
+                               onClick={() => navigate(`/mtss/spreadsheet?studentId=${mtssCase.studentId}&classId=${mtssCase.classId}`)}
+                               className="p-4 rounded-xl border bg-gradient-to-br from-[#002366] to-blue-900 text-white hover:shadow-md transition-all text-left flex items-center justify-between group/cico-btn"
+                             >
+                                <div>
+                                   <p className="text-[9px] font-black text-blue-200 uppercase tracking-widest">Weekly Workbook</p>
+                                   <p className="text-xs font-black uppercase italic tracking-tight mt-1 flex items-center gap-1.5">
+                                      <FileSpreadsheet size={14} className="text-amber-400" />
+                                      Buka Pemantauan CICO
+                                   </p>
+                                </div>
+                                <ArrowRight size={16} className="text-blue-200 group-hover/cico-btn:translate-x-1 transition-transform" />
+                             </button>
+                             <div 
+                               onClick={() => setActiveTab('cico')}
+                               className="p-4 bg-gray-50 rounded-xl border border-gray-100 hover:bg-white hover:border-amber-200 transition-all cursor-pointer text-center flex flex-col justify-center items-center"
+                             >
+                                <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Ringkasan & Tren</p>
+                                <p className="text-xs font-black text-blue-600 mt-1 uppercase italic tracking-tighter">
+                                  {cicoStats.hasData ? `${cicoStats.overallAvg?.toFixed(1)} / 4.0 (${cicoStats.totalWeeksWithData} Minggu)` : 'Lihat Analytics'}
+                                </p>
+                             </div>
                          </div>
-                      </div>
-                   </motion.div>
+                          
+                         <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-100 space-y-2 relative">
+                             <div className="flex items-center justify-between">
+                                <h5 className="text-[9px] font-black text-amber-800 uppercase tracking-widest">Behavior Contract</h5>
+                                {(isCounselorPlus || profile?.role === 'TEACHER') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowEditContractModal(true)}
+                                    className="text-[9px] font-black text-amber-700 hover:text-amber-900 uppercase tracking-wider flex items-center gap-1 hover:underline"
+                                  >
+                                    <Edit2 size={10} /> Edit Kontrak
+                                  </button>
+                                )}
+                             </div>
+                             {(() => {
+                               const contractText = (
+                                 mtssCase.behaviorContract || 
+                                 mtssCase.tier2Meeting?.behaviorContract || 
+                                 mtssCase.tier2Meeting?.interventionDescription || 
+                                 ''
+                               ).trim();
+
+                               if (contractText) {
+                                 return (
+                                   <p className="text-xs font-semibold text-gray-800 leading-relaxed italic border-l-4 border-amber-400 pl-4 whitespace-pre-wrap">
+                                     "{contractText}"
+                                   </p>
+                                 );
+                               }
+                               return (
+                                 <p className="text-xs font-semibold text-gray-400 leading-relaxed italic border-l-4 border-gray-200 pl-4">
+                                   Kontrak perilaku belum diisi
+                                 </p>
+                               );
+                             })()}
+                          </div>
+                       </div>
+                    </motion.div>
                  )}
               </div>
             </div>
@@ -1300,79 +1648,170 @@ export default function CaseDetail() {
 
           {(activeTab === 'cico' && mtssCase.tier !== 'Tier 1') && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-5">
-              <div className="bg-white rounded-xl p-5 border border-amber-100 shadow-sm space-y-4 relative overflow-hidden group/t2">
+              {/* Header card with single input gateway button */}
+              <div className="bg-white rounded-2xl p-6 border border-amber-100 shadow-sm space-y-6 relative overflow-hidden group/t2">
                 <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none group-hover/t2:scale-150 transition-transform duration-1000">
                   <TrendingUp size={120} />
                 </div>
-                <div className="flex items-center gap-5">
-                  <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner ring-4 ring-amber-50">
-                    <TrendingUp size={24} />
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-5">
+                    <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center shadow-inner ring-4 ring-amber-50">
+                      <TrendingUp size={24} />
+                    </div>
+                    <div>
+                      <h4 className="text-lg font-black text-gray-900 italic tracking-tighter uppercase leading-none">Pemantauan CICO</h4>
+                      <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest mt-1">
+                        {((mtssCase.tier2Meeting?.cicoGoals && mtssCase.tier2Meeting.cicoGoals.length > 0) || cicoStats.hasData || (worksheets.length > 0 && worksheets.some(w => w.targets?.length > 0)))
+                          ? 'CICO Tracker Aktif (Spreadsheet Terintegrasi)'
+                          : 'CICO Belum Dikonfigurasi'}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-lg font-black text-gray-900 italic tracking-tighter uppercase leading-none">Tier 2 Support</h4>
-                    <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest mt-1">CICO Tracker Active</p>
-                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/mtss/spreadsheet?studentId=${mtssCase.studentId}&classId=${mtssCase.classId}`)}
+                    className="flex items-center gap-2 px-6 py-3 bg-[#002366] hover:bg-blue-800 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md active:scale-95 transition-all shrink-0"
+                  >
+                    <FileSpreadsheet size={16} className="text-amber-300" />
+                    Buka Pemantauan CICO
+                  </button>
                 </div>
 
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div 
-                      onClick={() => setShowCicoInputModal(true)}
-                      className={cn(
-                        "p-4 rounded-xl border transition-all cursor-pointer relative overflow-hidden group/btn text-center",
-                        todayReport ? "bg-white border-emerald-100 hover:border-emerald-200" : "bg-amber-50 border-amber-100 hover:bg-white hover:border-amber-200"
-                      )}
-                    >
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest relative z-10">CICO Daily Input</p>
-                      <p className="text-xs font-black text-gray-900 mt-1 uppercase italic tracking-tighter relative z-10">
-                        {todayReport ? 'Update Hari Ini' : 'Input Hari Ini'}
-                      </p>
-                      {todayReport && (
-                        <CheckCircle2 size={12} className="absolute top-2 right-2 text-emerald-500" />
-                      )}
-                    </div>
-                    <div 
-                      onClick={() => setShowWeeklyReflectionModal(true)}
-                      className="p-4 bg-gray-50 rounded-xl border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer text-center group/refl"
-                    >
-                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Weekly Refl.</p>
-                      <p className="text-xs font-black text-blue-600 mt-1.5 uppercase italic tracking-tighter group-hover/refl:underline decoration-2">Fill Report</p>
+                {/* KPI Metrics Cards on Scale 1-4 */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+                  <div className="p-4 bg-gray-50/70 rounded-xl border border-gray-100 space-y-1">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Rata-rata Kumulatif</p>
+                    {cicoStats.overallAvg !== null ? (
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-2xl font-black text-gray-900 italic tracking-tighter">
+                          {cicoStats.overallAvg.toFixed(1)}
+                        </span>
+                        <span className="text-xs font-bold text-gray-400">/ 4.0</span>
+                        <span className="ml-auto text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                          {cicoStats.overallPct?.toFixed(0)}%
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs font-bold text-gray-400 italic">Belum ada data</p>
+                    )}
+                  </div>
+
+                  <div className="p-4 bg-gray-50/70 rounded-xl border border-gray-100 space-y-1">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Minggu Ini</p>
+                    {cicoStats.currentWeekStats?.hasData ? (
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-2xl font-black text-gray-900 italic tracking-tighter">
+                          {cicoStats.currentWeekStats.avgScore?.toFixed(1)}
+                        </span>
+                        <span className="text-xs font-bold text-gray-400">/ 4.0</span>
+                        <span className="ml-auto text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                          {cicoStats.currentWeekStats.pct?.toFixed(0)}%
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs font-bold text-gray-400 italic">Belum ada input minggu ini</p>
+                    )}
+                  </div>
+
+                  <div className="p-4 bg-gray-50/70 rounded-xl border border-gray-100 space-y-1">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Total Periode Terdata</p>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-2xl font-black text-gray-900 italic tracking-tighter">
+                        {cicoStats.totalWeeksWithData}
+                      </span>
+                      <span className="text-xs font-bold text-gray-400">Minggu ({cicoStats.totalScoredSlots} entri nilai)</span>
                     </div>
                   </div>
-                  
-                  <Link to={`/mtss/cico/${mtssCase.id}`} className="w-full flex items-center justify-center gap-2 py-3 bg-gray-900 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-md hover:bg-blue-600 transition-all group">
-                    Open Detailed Charts <TrendingUp size={14} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
-                  </Link>
                 </div>
               </div>
 
-              <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm space-y-4">
+              {/* Recent CICO Trends on Scale 1-4 from Spreadsheet */}
+              <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm space-y-4">
                  <div className="flex items-center justify-between">
-                   <div className="flex items-center gap-4">
+                   <div className="flex items-center gap-3">
                       <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
                         <Activity size={18} />
                       </div>
-                      <h4 className="text-[10px] font-black text-gray-900 uppercase tracking-widest">Recent CICO Trends</h4>
+                      <div>
+                        <h4 className="text-xs font-black text-gray-900 uppercase tracking-widest">Tren Pemantauan Harian (Spreadsheet)</h4>
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Skala 1.0 – 4.0</p>
+                      </div>
+                   </div>
+                   <div className="flex items-center gap-3 text-[9px] font-bold">
+                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block" /> &gt;= 3.2 (Tercapai)</span>
+                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block" /> 2.5 - 3.1</span>
+                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded bg-rose-500 inline-block" /> &lt; 2.5</span>
                    </div>
                  </div>
 
-                 <div className="grid grid-cols-5 lg:grid-cols-10 gap-3">
-                   {allCicoReports.slice(0, 30).reverse().map((report) => (
+                 {cicoStats.dailyEntries.length > 0 ? (
+                   <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-2.5 pt-2">
+                     {cicoStats.dailyEntries.slice(-30).map((entry, idx) => (
+                        <div 
+                          key={`${entry.dateStr}-${idx}`}
+                          className={cn(
+                            "rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-sm transition-all hover:scale-105",
+                            entry.avgScore >= 3.2 ? "bg-emerald-50 border border-emerald-200 text-emerald-900" :
+                            entry.avgScore >= 2.5 ? "bg-amber-50 border border-amber-200 text-amber-900" : 
+                            "bg-rose-50 border border-rose-200 text-rose-900"
+                          )}
+                          title={`${entry.dayName}, ${entry.dateLabel}: Skor ${entry.avgScore.toFixed(1)} / 4.0`}
+                        >
+                          <span className="text-[9px] font-bold text-gray-500">{entry.dayName}</span>
+                          <span className="text-base font-black tracking-tight">{entry.avgScore.toFixed(1)}</span>
+                          <span className="text-[8px] font-mono opacity-60">{entry.dateLabel}</span>
+                        </div>
+                     ))}
+                   </div>
+                 ) : (
+                   <div className="p-8 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200 space-y-2">
+                     <FileSpreadsheet size={32} className="mx-auto text-gray-300" />
+                     <p className="text-xs font-bold text-gray-500">Belum ada data harian pada Spreadsheet CICO</p>
+                     <p className="text-[10px] text-gray-400">Silakan buka Pemantauan CICO untuk mulai mengisi target dan skor harian.</p>
+                   </div>
+                 )}
+              </div>
+
+              {/* Data Sesi Historis (jika ada data lama skala 1-3) */}
+              {allCicoReports.length > 0 && (
+                <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-gray-100 text-gray-600 rounded-lg">
+                        <History size={18} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-gray-700 uppercase tracking-widest">
+                          Arsip Sesi Historis ({allCicoReports.length} Sesi Tercatat)
+                        </h4>
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                          Data Historis Sesi Lama (Skala 1–3) — Tetap Dipertahankan
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-5 lg:grid-cols-10 gap-2.5">
+                    {allCicoReports.slice(0, 20).reverse().map((report) => (
                       <div 
                         key={report.id}
                         className={cn(
-                          "aspect-square rounded-xl flex items-center justify-center text-[10px] font-black shadow-sm transition-all hover:scale-110",
-                          report.isAbsent ? "bg-gray-100 text-gray-400" :
-                          report.dailyAvgScore >= 2.4 ? "bg-emerald-500 text-white" :
-                          report.dailyAvgScore >= 1.8 ? "bg-amber-400 text-white" : "bg-rose-500 text-white"
+                          "aspect-square rounded-xl flex flex-col items-center justify-center text-[10px] font-black shadow-sm transition-all hover:scale-105 border",
+                          report.isAbsent ? "bg-gray-100 text-gray-400 border-gray-200" :
+                          report.dailyAvgScore >= 2.4 ? "bg-emerald-50 text-emerald-800 border-emerald-200" :
+                          report.dailyAvgScore >= 1.8 ? "bg-amber-50 text-amber-800 border-amber-200" : 
+                          "bg-rose-50 text-rose-800 border-rose-200"
                         )}
-                        title={`${formatDate(report.date)}: ${report.dailyAvgScore.toFixed(1)}`}
+                        title={`${formatDate(report.date)}: ${report.dailyAvgScore.toFixed(1)} / 3.0`}
                       >
-                        {report.dailyAvgScore.toFixed(1)}
+                        <span>{report.dailyAvgScore.toFixed(1)}</span>
+                        <span className="text-[7px] text-gray-400">/3</span>
                       </div>
-                   ))}
-                 </div>
-              </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

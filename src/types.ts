@@ -533,6 +533,30 @@ export interface CICODailyReport {
   createdBy: string;
 }
 
+export interface BehaviorTargetRow {
+  id: string;
+  text: string;
+}
+
+export interface CICOWeeklyWorksheet {
+  studentId: string;
+  classId: string;
+  weekStartingDate: string; // Monday date string (YYYY-MM-DD)
+  targets: BehaviorTargetRow[];
+  scores: {
+    [targetId: string]: {
+      [dayIdx: number]: { // 0: Mon, 1: Tue, 2: Wed, 3: Thu, 4: Fri
+        checkIn: number | null;
+        checkOut: number | null;
+      };
+    };
+  };
+  halBaik?: string;
+  refleksi?: string;
+  teacherNotes?: string;
+  updatedAt?: number;
+}
+
 export interface CICOWeeklyReflection {
   id: string;
   caseId: string;
@@ -584,6 +608,7 @@ export interface MTSSCase {
   status: MTSSStatus;
   categoryCode?: string;
   categoryLabel?: string;
+  behaviorContract?: string;
   picId: string; // PIC Guru pengampu saat ini
   picName: string;
   initialAssets?: string; // Student strengths recorded at report time
@@ -633,6 +658,7 @@ export interface MTSSCase {
     accommodations: string;
     meetingNotes: string;
     cicoGoals: CICOGoal[];
+    behaviorContract?: string;
   };
 
   homeProgramme?: {

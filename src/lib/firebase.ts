@@ -36,6 +36,7 @@ import type {
   CICOGoalConfig, 
   CICODailyReport, 
   CICOWeeklyReflection, 
+  CICOWeeklyWorksheet,
   BIPPlan, 
   BehaviorNotification, 
   BehaviorAnalyticsFilters,
@@ -2651,6 +2652,17 @@ export async function saveCICOWeeklyReflection(reflection: Omit<CICOWeeklyReflec
     mtssSnapshotTriggerService.trigger('BEHAVIOR', reflection.caseId);
   } catch (err: any) {
     handleFirestoreError(err, 'write', 'cicoWeeklyReflections');
+  }
+}
+
+export async function getCICOWeeklyWorksheetsForStudent(studentId: string): Promise<CICOWeeklyWorksheet[]> {
+  try {
+    const q = query(collection(db, 'cicoWeeklyWorksheets'), where('studentId', '==', studentId));
+    const snap = await getDocs(q);
+    return snap.docs.map(doc => doc.data() as CICOWeeklyWorksheet).sort((a, b) => b.weekStartingDate.localeCompare(a.weekStartingDate));
+  } catch (err: any) {
+    handleFirestoreError(err, 'list', `cicoWeeklyWorksheets/${studentId}`);
+    return [];
   }
 }
 

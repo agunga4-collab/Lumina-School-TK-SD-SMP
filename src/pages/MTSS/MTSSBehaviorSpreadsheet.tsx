@@ -3,7 +3,8 @@ import { useOutletContext, useSearchParams, useNavigate, Link } from 'react-rout
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileSpreadsheet, User, Calendar, Save, Trash2, Plus, 
-  Info, Clock, BookOpen, ChevronLeft, ChevronRight, HelpCircle
+  Info, Clock, BookOpen, ChevronLeft, ChevronRight, HelpCircle,
+  FileText, ArrowLeft
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
@@ -61,6 +62,7 @@ export default function MTSSBehaviorSpreadsheet() {
   // URL parameters if navigated from elsewhere
   const urlStudentId = searchParams.get('studentId') || '';
   const urlClassId = searchParams.get('classId') || '';
+  const urlWeek = searchParams.get('week') || searchParams.get('date') || '';
 
   // Class & Student listing states
   const [classes, setClasses] = React.useState<Class[]>([]);
@@ -71,7 +73,17 @@ export default function MTSSBehaviorSpreadsheet() {
   // Selection states
   const [selectedClassId, setSelectedClassId] = React.useState<string>(urlClassId || '');
   const [selectedStudentId, setSelectedStudentId] = React.useState<string>(urlStudentId || '');
-  const [currentWeekMonday, setCurrentWeekMonday] = React.useState<Date>(getMonday(new Date()));
+  const [currentWeekMonday, setCurrentWeekMonday] = React.useState<Date>(() => {
+    if (urlWeek) {
+      try {
+        const parsed = new Date(urlWeek);
+        if (!isNaN(parsed.getTime())) return getMonday(parsed);
+      } catch (e) {
+        console.error("Invalid week param:", e);
+      }
+    }
+    return getMonday(new Date());
+  });
 
   // Core Workbook States
   const [targets, setTargets] = React.useState<BehaviorTargetRow[]>([]);
@@ -93,6 +105,17 @@ export default function MTSSBehaviorSpreadsheet() {
   React.useEffect(() => {
     if (urlStudentId) setSelectedStudentId(urlStudentId);
   }, [urlStudentId]);
+
+  React.useEffect(() => {
+    if (urlWeek) {
+      try {
+        const parsed = new Date(urlWeek);
+        if (!isNaN(parsed.getTime())) setCurrentWeekMonday(getMonday(parsed));
+      } catch (e) {
+        console.error("Invalid week param:", e);
+      }
+    }
+  }, [urlWeek]);
 
   // 1. Fetch Classes, Cases and Teachers initially
   React.useEffect(() => {
@@ -417,6 +440,21 @@ export default function MTSSBehaviorSpreadsheet() {
               })}
             </select>
           </div>
+
+          {(() => {
+            const matchedCase = cases.find(c => c.studentId === selectedStudentId && c.status !== 'CLOSED');
+            if (!matchedCase) return null;
+            return (
+              <Link
+                to={`/mtss/case/${matchedCase.id}`}
+                className="hidden xl:flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-[#002366] rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors shrink-0 border border-blue-100"
+                title="Buka Profil Kasus Siswa"
+              >
+                <FileText size={13} className="text-blue-600" />
+                Profil Kasus ({matchedCase.tier})
+              </Link>
+            );
+          })()}
         </div>
 
         {/* Week navigator */}
