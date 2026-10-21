@@ -381,7 +381,7 @@ export async function addFormativeEntry(entry: Omit<JHFormativeEntry, 'id' | 'cr
  */
 export async function correctFormativeEntry(params: {
   entryId: string;
-  comprehensionLevel: 'B' | 'D' | 'A';
+  comprehensionLevel: import('../types').JHFormativeLevel;
   formativeTask?: string;
   nextAction?: string;
   notes?: string;

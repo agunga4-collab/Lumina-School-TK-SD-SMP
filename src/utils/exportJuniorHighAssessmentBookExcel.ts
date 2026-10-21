@@ -77,7 +77,10 @@ export function exportJuniorHighAssessmentBookExcel(params: {
     for (const lo of los) {
       const f = formativeMap[`${student.id}_${lo.id}`];
       if (f) {
-        row.push(f.comprehensionLevel);
+        const scoreDisplay = ['B', 'D', 'A'].includes(f.comprehensionLevel)
+          ? `${f.comprehensionLevel} (Skala lama)`
+          : f.comprehensionLevel;
+        row.push(scoreDisplay);
         row.push(f.formativeTask || '-');
         row.push(f.nextAction || '-');
         row.push(formatDateWIB(f.date));

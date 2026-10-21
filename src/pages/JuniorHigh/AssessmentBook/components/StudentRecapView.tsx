@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { useState, useMemo } from 'react';
-import { Search, User, Award, CheckCircle2, AlertTriangle, ArrowRight, BookOpen } from 'lucide-react';
+import { Search, Award, CheckCircle2 } from 'lucide-react';
 import {
   JHAssessmentLO,
   JHFormativeEntry,
   JHSummativeEntry,
+  isLegacyScore,
   LearningGoal,
   Student
 } from '../../../../types';
-import { formatDateWIB } from '../../../../services/juniorHighAssessmentBookService';
 
 interface Props {
   students: Student[];
@@ -54,7 +54,12 @@ export function StudentRecapView({
     let result = students;
     if (search.trim()) {
       const term = search.toLowerCase();
-      result = result.filter(s => s.name?.toLowerCase().includes(term) || (s.nisn && s.nisn.includes(term)));
+      result = result.filter(
+        s =>
+          s.name?.toLowerCase().includes(term) ||
+          (s.nisn && s.nisn.includes(term)) ||
+          ((s as any).nis && String((s as any).nis).includes(term))
+      );
     }
     if (filterLevel !== 'ALL') {
       result = result.filter(s => {
@@ -76,12 +81,12 @@ export function StudentRecapView({
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Cari siswa..."
-            className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500"
+            placeholder="Cari siswa atau NIS..."
+            className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-purple-500"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 self-start sm:self-auto">
+        <div className="flex items-center gap-1.5 self-start sm:self-auto flex-wrap">
           <span className="text-[11px] font-bold text-gray-500 uppercase">Filter Sumatif:</span>
           {(['ALL', 'A', 'D', 'B', 'NONE'] as const).map(lvl => (
             <button
@@ -103,48 +108,56 @@ export function StudentRecapView({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {filteredStudents.length === 0 ? (
           <div className="col-span-2 py-12 text-center text-gray-400 bg-white rounded-2xl border border-gray-200 text-xs">
-            Tidak ada data siswa yang cocok.
+            Tidak ada data siswa yang cocok dengan filter.
           </div>
         ) : (
           filteredStudents.map((student, idx) => {
             const summative = summativeMap[student.id];
 
-            // Counts for this student
-            let countA = 0;
-            let countD = 0;
-            let countB = 0;
+            // Counts for this student (Skala lama dihitung terpisah, TIDAK otomatis Achieved)
+            let countAchieved = 0;
+            let countNotAchieved = 0;
+            let countLegacy = 0;
+
             for (const lo of los) {
               const f = latestFormativeMap[`${student.id}_${lo.id}`];
-              if (f?.comprehensionLevel === 'A') countA++;
-              else if (f?.comprehensionLevel === 'D') countD++;
-              else if (f?.comprehensionLevel === 'B') countB++;
+              if (f) {
+                if (f.comprehensionLevel === 'Achieved') {
+                  countAchieved++;
+                } else if (f.comprehensionLevel === 'Not Achieved') {
+                  countNotAchieved++;
+                } else if (isLegacyScore(f.comprehensionLevel)) {
+                  countLegacy++;
+                }
+              }
             }
-            const totalAssessed = countA + countD + countB;
-            const masteryPct = los.length > 0 ? Math.round((countA / los.length) * 100) : 0;
+
+            const totalAssessed = countAchieved + countNotAchieved + countLegacy;
+            const masteryPct = los.length > 0 ? Math.round((countAchieved / los.length) * 100) : 0;
 
             return (
               <div
                 key={student.id}
-                className="bg-white rounded-2xl border border-gray-200 shadow-xs hover:border-blue-300 transition-all p-4 space-y-3.5"
+                className="bg-white rounded-2xl border border-gray-200 shadow-xs hover:border-purple-300 transition-all p-4 space-y-3.5"
               >
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-9 h-9 rounded-xl bg-slate-100 font-bold text-slate-700 flex items-center justify-center text-xs shrink-0">
                       {student.attendanceNumber ?? (student as any).noAbsen ?? idx + 1}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <h4 className="text-xs font-bold text-gray-900 truncate" title={student.name}>
                         {student.name}
                       </h4>
-                      <p className="text-[10px] text-gray-400">
-                        {student.nisn ? `NISN: ${student.nisn}` : 'Siswa Junior High'}
+                      <p className="text-[10px] text-gray-400 font-mono">
+                        {student.nisn ? `NISN: ${student.nisn}` : ((student as any).nis ? `NIS: ${(student as any).nis}` : 'Junior High')}
                       </p>
                     </div>
                   </div>
 
-                  {/* Summative Badge */}
-                  <div className="text-right">
+                  {/* Summative Badge (Tetap skala B / D / A) */}
+                  <div className="text-right shrink-0">
                     {summative ? (
                       <button
                         onClick={() => onOpenSummativeModal(student)}
@@ -172,27 +185,36 @@ export function StudentRecapView({
 
                 {/* Formative Progress Bar */}
                 <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px] text-gray-500 font-medium">
-                    <span>Progres Tangga LO ({totalAssessed}/{los.length} dinilai)</span>
-                    <span className="font-bold text-emerald-700">{masteryPct}% Achieved</span>
+                  <div className="flex items-center justify-between text-[10px] text-gray-500 font-medium flex-wrap gap-1">
+                    <span>
+                      Progres Tangga LO ({totalAssessed}/{los.length} dinilai)
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-emerald-700">{masteryPct}% Achieved</span>
+                      {countLegacy > 0 && (
+                        <span className="text-[9px] text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200">
+                          {countLegacy} LO Skala Lama
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden flex">
                     {los.length > 0 && (
                       <>
                         <div
-                          style={{ width: `${(countA / los.length) * 100}%` }}
+                          style={{ width: `${(countAchieved / los.length) * 100}%` }}
                           className="bg-emerald-500 h-full"
-                          title={`Achieved: ${countA}`}
+                          title={`Achieved: ${countAchieved}`}
                         />
                         <div
-                          style={{ width: `${(countD / los.length) * 100}%` }}
-                          className="bg-amber-400 h-full"
-                          title={`Developing: ${countD}`}
-                        />
-                        <div
-                          style={{ width: `${(countB / los.length) * 100}%` }}
+                          style={{ width: `${(countNotAchieved / los.length) * 100}%` }}
                           className="bg-rose-400 h-full"
-                          title={`Beginning: ${countB}`}
+                          title={`Not Achieved: ${countNotAchieved}`}
+                        />
+                        <div
+                          style={{ width: `${(countLegacy / los.length) * 100}%` }}
+                          className="bg-amber-300 h-full"
+                          title={`Skala Lama: ${countLegacy}`}
                         />
                       </>
                     )}
@@ -207,15 +229,16 @@ export function StudentRecapView({
                   <div className="space-y-1">
                     {los.map(lo => {
                       const f = latestFormativeMap[`${student.id}_${lo.id}`];
+                      const isLegacy = f ? isLegacyScore(f.comprehensionLevel) : false;
 
                       return (
                         <div
                           key={lo.id}
                           onClick={() => onOpenFormativeModal(student, lo)}
-                          className="p-2 rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50/30 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
+                          className="p-2 rounded-xl border border-gray-100 hover:border-purple-200 hover:bg-purple-50/30 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2 min-w-0">
-                            <span className="font-bold text-[11px] text-purple-700 bg-purple-50 px-1 rounded shrink-0">
+                            <span className="font-bold text-[11px] text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded shrink-0 border border-purple-200">
                               {lo.code}
                             </span>
                             <span className="text-[11px] text-gray-700 truncate" title={lo.title}>
@@ -227,17 +250,17 @@ export function StudentRecapView({
                             {f ? (
                               <>
                                 <span
-                                  className={`w-5 h-5 rounded text-[10px] font-black flex items-center justify-center border ${
-                                    f.comprehensionLevel === 'A'
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                    f.comprehensionLevel === 'Achieved'
                                       ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                      : f.comprehensionLevel === 'D'
-                                      ? 'bg-amber-100 text-amber-800 border-amber-300'
-                                      : 'bg-rose-100 text-rose-800 border-rose-300'
+                                      : f.comprehensionLevel === 'Not Achieved'
+                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                      : 'bg-amber-100 text-amber-800 border-amber-300'
                                   }`}
                                 >
-                                  {f.comprehensionLevel}
+                                  {isLegacy ? `${f.comprehensionLevel} (Lama)` : f.comprehensionLevel}
                                 </span>
-                                <span className="text-[10px] text-gray-400 hidden sm:inline">
+                                <span className="text-[10px] text-gray-400 hidden sm:inline max-w-[120px] truncate" title={f.nextAction}>
                                   {f.nextAction}
                                 </span>
                               </>

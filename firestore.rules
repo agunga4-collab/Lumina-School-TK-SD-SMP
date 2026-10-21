@@ -1651,9 +1651,9 @@ service cloud.firestore {
           (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
           (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(request.resource.data.classId))
         ) &&
-        request.resource.data.comprehensionLevel in ['B', 'D', 'A'];
+        request.resource.data.comprehensionLevel in ['Achieved', 'Not Achieved', 'B', 'D', 'A'];
       allow update: if isActive() &&
-        request.resource.data.comprehensionLevel in ['B', 'D', 'A'] &&
+        request.resource.data.comprehensionLevel in ['Achieved', 'Not Achieved', 'B', 'D', 'A'] &&
         (
           resource.data.teacherId == request.auth.uid ||
           isAdmin() ||

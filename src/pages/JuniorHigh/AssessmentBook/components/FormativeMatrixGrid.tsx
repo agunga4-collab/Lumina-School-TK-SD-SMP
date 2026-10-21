@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { useState, useMemo } from 'react';
-import { Search, Plus, Filter, User, HelpCircle, Check, Award, Calendar, History, ArrowRight, Users } from 'lucide-react';
+import { Search, Plus, User, Check, X, Award, History, Users } from 'lucide-react';
 import {
   AssessmentBookOptions,
-  ComprehensionLevel,
   JHAssessmentLO,
   JHFormativeEntry,
+  JHFormativeScore,
   JHSummativeEntry,
+  isLegacyScore,
   LearningGoal,
   Student
 } from '../../../../types';
@@ -96,37 +97,59 @@ export function FormativeMatrixGrid({
     return map;
   }, [summativeEntries]);
 
-  // Compute LO column statistics
+  // Compute LO column statistics (Skala lama dihitung terpisah, TIDAK dianggap Achieved)
   const loStats = useMemo(() => {
-    const stats: Record<string, { countA: number; countD: number; countB: number; total: number }> = {};
+    const stats: Record<string, {
+      countAchieved: number;
+      countNotAchieved: number;
+      countLegacy: number;
+      countUnassessed: number;
+      totalAssessed: number;
+    }> = {};
+
     for (const lo of los) {
-      let countA = 0;
-      let countD = 0;
-      let countB = 0;
-      let total = 0;
+      let countAchieved = 0;
+      let countNotAchieved = 0;
+      let countLegacy = 0;
+      let totalAssessed = 0;
+
       for (const s of students) {
         const item = formativeMap[`${s.id}_${lo.id}`];
         if (item?.latest) {
-          total++;
-          if (item.latest.comprehensionLevel === 'A') countA++;
-          else if (item.latest.comprehensionLevel === 'D') countD++;
-          else if (item.latest.comprehensionLevel === 'B') countB++;
+          totalAssessed++;
+          if (item.latest.comprehensionLevel === 'Achieved') {
+            countAchieved++;
+          } else if (item.latest.comprehensionLevel === 'Not Achieved') {
+            countNotAchieved++;
+          } else {
+            countLegacy++;
+          }
         }
       }
-      stats[lo.id] = { countA, countD, countB, total };
+      stats[lo.id] = {
+        countAchieved,
+        countNotAchieved,
+        countLegacy,
+        countUnassessed: students.length - totalAssessed,
+        totalAssessed
+      };
     }
     return stats;
   }, [los, students, formativeMap]);
 
   // Suggest default nextAction from level
-  const getDefaultNextAction = (lvl: ComprehensionLevel) => {
-    if (lvl === 'A') return 'Lanjut ke LO Berikutnya';
-    if (lvl === 'D') return 'Tutor Sebaya';
-    return 'Bimbingan Personal Guru';
+  const getDefaultNextAction = (lvl: JHFormativeScore) => {
+    if (lvl === 'Achieved') return 'Lanjut ke LO Berikutnya';
+    return 'Refleksi & Remediasi Terfokus';
   };
 
-  // Quick inline score update with requirement G (same day + same teacher = Koreksi, Undo toast 5s)
-  const handleQuickScore = async (e: React.MouseEvent, student: Student, lo: JHAssessmentLO, level: ComprehensionLevel) => {
+  // Quick inline score update (Achieved / Not Achieved)
+  const handleQuickScore = async (
+    e: React.MouseEvent,
+    student: Student,
+    lo: JHAssessmentLO,
+    level: JHFormativeScore
+  ) => {
     e.stopPropagation();
     if (isReadOnly) return;
     if (quickSavingKey) return; // prevent double click
@@ -151,7 +174,7 @@ export function FormativeMatrixGrid({
         await correctFormativeEntry({
           entryId: existingSameDay.id,
           comprehensionLevel: level,
-          nextAction: defaultNextAction,
+          nextAction: existingSameDay.nextAction || defaultNextAction,
           correctedBy: teacherId,
           correctedByName: teacherName,
           correctionReason: 'Klik Cepat (Koreksi Hari Ini)'
@@ -240,7 +263,7 @@ export function FormativeMatrixGrid({
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Cari nama atau NIS siswa..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-500"
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-purple-500"
             />
           </div>
         </div>
@@ -287,13 +310,21 @@ export function FormativeMatrixGrid({
                   <th className="py-3 px-3 w-48 min-w-[190px] sticky left-10 bg-slate-50 z-20 border-r border-gray-200">
                     Nama Siswa
                   </th>
+
                   {/* Dynamic LO Columns */}
                   {los.map(lo => {
-                    const st = loStats[lo.id] || { countA: 0, countD: 0, countB: 0, total: 0 };
+                    const st = loStats[lo.id] || {
+                      countAchieved: 0,
+                      countNotAchieved: 0,
+                      countLegacy: 0,
+                      countUnassessed: students.length,
+                      totalAssessed: 0
+                    };
+
                     return (
                       <th
                         key={lo.id}
-                        className="py-3 px-3 min-w-[185px] max-w-[220px] border-r border-gray-200 align-top group/col"
+                        className="py-3 px-3 min-w-[200px] max-w-[240px] border-r border-gray-200 align-top group/col"
                       >
                         <div className="flex items-center justify-between gap-1 mb-1">
                           <span className="font-extrabold text-purple-700 bg-purple-100/70 px-1.5 py-0.5 rounded text-[10px]">
@@ -303,38 +334,54 @@ export function FormativeMatrixGrid({
                             <button
                               type="button"
                               onClick={() => onOpenBulkModal(lo)}
-                              className="px-1.5 py-0.5 bg-purple-50 hover:bg-purple-200 text-purple-700 rounded text-[9px] font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
-                              title={`Isi massal nilai untuk seluruh kelas di ${lo.code}`}
+                              className="px-2 py-0.5 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-md text-[9px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                              title={`Buka asesmen satu sesi kelas untuk ${lo.code}`}
                             >
-                              <Users size={10} /> Isi Massal
+                              <Users size={11} /> Asesmen Kelas
                             </button>
                           )}
                         </div>
+
                         <p className="text-[11px] font-medium text-gray-800 line-clamp-2 normal-case tracking-normal mb-1.5" title={lo.title}>
                           {lo.title}
                         </p>
-                        {/* Mini progress stats bar */}
-                        <div className="flex items-center justify-between text-[9px] font-mono">
-                          <span className="text-gray-400 font-sans">{st.total}/{students.length} dinilai</span>
-                          {st.total > 0 && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-emerald-700 bg-emerald-50 px-1 rounded">A:{st.countA}</span>
-                              <span className="text-amber-700 bg-amber-50 px-1 rounded">D:{st.countD}</span>
-                              <span className="text-rose-700 bg-rose-50 px-1 rounded">B:{st.countB}</span>
+
+                        {/* Progress stats bar */}
+                        <div className="flex items-center justify-between text-[9px] font-mono flex-wrap gap-1">
+                          <span className="text-gray-400 font-sans">
+                            {st.totalAssessed}/{students.length} dinilai
+                          </span>
+                          {st.totalAssessed > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="text-emerald-800 bg-emerald-50 px-1 py-0.2 rounded font-bold border border-emerald-200">
+                                {st.countAchieved} Ach
+                              </span>
+                              <span className="text-rose-800 bg-rose-50 px-1 py-0.2 rounded font-bold border border-rose-200">
+                                {st.countNotAchieved} Not
+                              </span>
+                              {st.countLegacy > 0 && (
+                                <span
+                                  className="text-amber-800 bg-amber-50 px-1 py-0.2 rounded font-bold border border-amber-200"
+                                  title="Data skala lama (B/D/A)"
+                                >
+                                  {st.countLegacy} Lama
+                                </span>
+                              )}
                             </div>
                           )}
                         </div>
                       </th>
                     );
                   })}
-                  {/* Summative Column */}
+
+                  {/* Summative Column (tetap skala B/D/A) */}
                   <th className="py-3 px-4 w-44 min-w-[160px] bg-emerald-50/60 text-emerald-900 border-l border-emerald-200 align-top">
                     <div className="flex items-center gap-1.5 mb-1">
                       <Award size={14} className="text-emerald-700" />
-                      <span className="font-extrabold text-[11px]">Nilai Sumatif</span>
+                      <span className="font-extrabold text-[11px]">Nilai Sumatif LG</span>
                     </div>
                     <p className="text-[10px] normal-case tracking-normal text-emerald-800">
-                      Capaian Akhir LG
+                      Capaian Akhir (Skala B / D / A)
                     </p>
                   </th>
                 </tr>
@@ -364,7 +411,7 @@ export function FormativeMatrixGrid({
                           <div className="font-semibold text-gray-900 truncate" title={student.name}>
                             {student.name}
                           </div>
-                          <div className="text-[10px] text-gray-400 flex items-center gap-1.5">
+                          <div className="text-[10px] text-gray-400 flex items-center gap-1.5 font-mono">
                             {student.nisn && <span>NISN: {student.nisn}</span>}
                             {(student as any).nis && <span>NIS: {(student as any).nis}</span>}
                           </div>
@@ -376,29 +423,35 @@ export function FormativeMatrixGrid({
                           const latest = item?.latest;
                           const historyCount = item?.history?.length || 0;
                           const isCurrentCellSaving = quickSavingKey === `${student.id}_${lo.id}`;
+                          const isLegacy = latest ? isLegacyScore(latest.comprehensionLevel) : false;
 
                           return (
                             <td
                               key={lo.id}
                               onClick={() => onOpenFormativeModal(student, lo)}
-                              className="py-2 px-2.5 border-r border-gray-200 cursor-pointer hover:bg-blue-50/40 transition-colors group/cell"
+                              className="py-2 px-2.5 border-r border-gray-200 cursor-pointer hover:bg-purple-50/40 transition-colors group/cell"
                             >
                               {latest ? (
                                 <div className="flex items-center justify-between gap-1.5">
                                   <div className="flex items-center gap-1.5 min-w-0">
+                                    {/* Score badge */}
                                     <span
-                                      className={`w-7 h-7 rounded-lg font-black text-xs flex items-center justify-center shrink-0 border ${
-                                        latest.comprehensionLevel === 'A'
+                                      className={`px-1.5 py-0.5 rounded-md font-bold text-[10px] flex items-center justify-center shrink-0 border ${
+                                        latest.comprehensionLevel === 'Achieved'
                                           ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                          : latest.comprehensionLevel === 'D'
-                                          ? 'bg-amber-100 text-amber-800 border-amber-300'
-                                          : 'bg-rose-100 text-rose-800 border-rose-300'
+                                          : latest.comprehensionLevel === 'Not Achieved'
+                                          ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                          : 'bg-amber-100 text-amber-800 border-amber-300'
                                       }`}
                                     >
-                                      {latest.comprehensionLevel}
+                                      {isLegacy ? `${latest.comprehensionLevel} (Lama)` : latest.comprehensionLevel}
                                     </span>
+
                                     <div className="min-w-0">
-                                      <div className="text-[10px] font-semibold text-gray-800 truncate" title={latest.formativeTask || 'Asesmen Cepat'}>
+                                      <div
+                                        className="text-[10px] font-semibold text-gray-800 truncate max-w-[90px]"
+                                        title={latest.formativeTask || 'Asesmen Cepat'}
+                                      >
                                         {latest.formativeTask || 'Asesmen Cepat'}
                                       </div>
                                       <div className="text-[9px] text-gray-400">
@@ -416,48 +469,36 @@ export function FormativeMatrixGrid({
                                         <button
                                           type="button"
                                           disabled={isCurrentCellSaving}
-                                          onClick={e => handleQuickScore(e, student, lo, 'B')}
-                                          className={`w-4.5 h-4.5 rounded text-[9px] font-black border cursor-pointer flex items-center justify-center disabled:opacity-50 ${
-                                            latest.comprehensionLevel === 'B'
-                                              ? 'bg-rose-200 text-rose-900 border-rose-400 font-extrabold'
-                                              : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200'
-                                          }`}
-                                          title="Ubah / Koreksi cepat ke B (Beginning)"
-                                        >
-                                          B
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={isCurrentCellSaving}
-                                          onClick={e => handleQuickScore(e, student, lo, 'D')}
-                                          className={`w-4.5 h-4.5 rounded text-[9px] font-black border cursor-pointer flex items-center justify-center disabled:opacity-50 ${
-                                            latest.comprehensionLevel === 'D'
-                                              ? 'bg-amber-200 text-amber-900 border-amber-400 font-extrabold'
-                                              : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200'
-                                          }`}
-                                          title="Ubah / Koreksi cepat ke D (Developing)"
-                                        >
-                                          D
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={isCurrentCellSaving}
-                                          onClick={e => handleQuickScore(e, student, lo, 'A')}
-                                          className={`w-4.5 h-4.5 rounded text-[9px] font-black border cursor-pointer flex items-center justify-center disabled:opacity-50 ${
-                                            latest.comprehensionLevel === 'A'
-                                              ? 'bg-emerald-200 text-emerald-900 border-emerald-400 font-extrabold'
+                                          onClick={e => handleQuickScore(e, student, lo, 'Achieved')}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer flex items-center gap-0.5 disabled:opacity-50 ${
+                                            latest.comprehensionLevel === 'Achieved'
+                                              ? 'bg-emerald-600 text-white border-emerald-700'
                                               : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200'
                                           }`}
-                                          title="Ubah / Koreksi cepat ke A (Achieved)"
+                                          title="Ubah / Koreksi cepat ke Achieved"
                                         >
-                                          A
+                                          <Check size={10} /> Ach
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isCurrentCellSaving}
+                                          onClick={e => handleQuickScore(e, student, lo, 'Not Achieved')}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer flex items-center gap-0.5 disabled:opacity-50 ${
+                                            latest.comprehensionLevel === 'Not Achieved'
+                                              ? 'bg-rose-600 text-white border-rose-700'
+                                              : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200'
+                                          }`}
+                                          title="Ubah / Koreksi cepat ke Not Achieved"
+                                        >
+                                          <X size={10} /> Not
                                         </button>
                                       </div>
                                     )}
+
                                     {historyCount > 1 && (
                                       <span
-                                        className="inline-flex items-center gap-0.5 text-[9px] font-bold text-blue-600 bg-blue-50 px-1 rounded"
-                                        title={`${historyCount} kali asesmen`}
+                                        className="inline-flex items-center gap-0.5 text-[9px] font-bold text-purple-700 bg-purple-50 px-1 rounded"
+                                        title={`${historyCount} kali riwayat asesmen`}
                                       >
                                         <History size={10} /> {historyCount}
                                       </span>
@@ -467,7 +508,6 @@ export function FormativeMatrixGrid({
                               ) : (
                                 <div className="flex items-center justify-between gap-1 py-1">
                                   <span className="text-[11px] text-gray-400 font-medium">Belum dinilai</span>
-                                  {/* Quick inline 1-click marking buttons */}
                                   {!isReadOnly && (
                                     <div
                                       className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity"
@@ -476,29 +516,20 @@ export function FormativeMatrixGrid({
                                       <button
                                         type="button"
                                         disabled={isCurrentCellSaving}
-                                        onClick={e => handleQuickScore(e, student, lo, 'B')}
-                                        className="w-5 h-5 rounded text-[10px] font-black bg-rose-50 text-rose-700 hover:bg-rose-200 border border-rose-200 cursor-pointer flex items-center justify-center disabled:opacity-50"
-                                        title="Beri nilai B (Beginning)"
+                                        onClick={e => handleQuickScore(e, student, lo, 'Achieved')}
+                                        className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-200 border border-emerald-200 cursor-pointer flex items-center gap-0.5 disabled:opacity-50"
+                                        title="Beri nilai Achieved"
                                       >
-                                        B
+                                        <Check size={10} /> Ach
                                       </button>
                                       <button
                                         type="button"
                                         disabled={isCurrentCellSaving}
-                                        onClick={e => handleQuickScore(e, student, lo, 'D')}
-                                        className="w-5 h-5 rounded text-[10px] font-black bg-amber-50 text-amber-700 hover:bg-amber-200 border border-amber-200 cursor-pointer flex items-center justify-center disabled:opacity-50"
-                                        title="Beri nilai D (Developing)"
+                                        onClick={e => handleQuickScore(e, student, lo, 'Not Achieved')}
+                                        className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-50 text-rose-700 hover:bg-rose-200 border border-rose-200 cursor-pointer flex items-center gap-0.5 disabled:opacity-50"
+                                        title="Beri nilai Not Achieved"
                                       >
-                                        D
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={isCurrentCellSaving}
-                                        onClick={e => handleQuickScore(e, student, lo, 'A')}
-                                        className="w-5 h-5 rounded text-[10px] font-black bg-emerald-50 text-emerald-700 hover:bg-emerald-200 border border-emerald-200 cursor-pointer flex items-center justify-center disabled:opacity-50"
-                                        title="Beri nilai A (Achieved)"
-                                      >
-                                        A
+                                        <X size={10} /> Not
                                       </button>
                                     </div>
                                   )}
@@ -508,7 +539,7 @@ export function FormativeMatrixGrid({
                           );
                         })}
 
-                        {/* Summative Cell */}
+                        {/* Summative Cell (Tetap skala B / D / A) */}
                         <td
                           onClick={() => onOpenSummativeModal(student)}
                           className="py-2 px-3 border-l border-emerald-200 bg-emerald-50/20 group-hover:bg-emerald-50/50 cursor-pointer transition-colors"

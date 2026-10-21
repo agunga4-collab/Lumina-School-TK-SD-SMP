@@ -1,11 +1,24 @@
 import * as React from 'react';
 import { useState } from 'react';
-import { X, Check, Calendar, History, Trash2, Save, ArrowRight, User, Target, Clock, Edit3, AlertCircle } from 'lucide-react';
+import {
+  X,
+  Check,
+  Calendar,
+  History,
+  Trash2,
+  Save,
+  User,
+  Target,
+  Edit3,
+  AlertCircle
+} from 'lucide-react';
 import {
   AssessmentBookOptions,
-  ComprehensionLevel,
   JHAssessmentLO,
   JHFormativeEntry,
+  JHFormativeLevel,
+  JHFormativeScore,
+  isLegacyScore,
   Student
 } from '../../../../types';
 import {
@@ -55,15 +68,43 @@ export function FormativeAssessmentModal({
   const latestEntry = historyEntries[historyEntries.length - 1];
 
   const [date, setDate] = useState<string>(() => getTodayWIB());
-  const [task, setTask] = useState<string>(() => {
-    return latestEntry?.formativeTask || options.formativeTasks[0] || 'Lembar Kerja (LKPD)';
+  const [taskChoice, setTaskChoice] = useState<string>(() => {
+    if (latestEntry?.formativeTask) {
+      return options.formativeTasks.includes(latestEntry.formativeTask)
+        ? latestEntry.formativeTask
+        : '__CUSTOM__';
+    }
+    return options.formativeTasks[0] || 'Lembar Kerja (LKPD)';
   });
-  const [level, setLevel] = useState<ComprehensionLevel>(() => {
-    return latestEntry?.comprehensionLevel || 'A';
+  const [customTaskText, setCustomTaskText] = useState<string>(() => {
+    if (latestEntry?.formativeTask && !options.formativeTasks.includes(latestEntry.formativeTask)) {
+      return latestEntry.formativeTask;
+    }
+    return '';
   });
-  const [nextAction, setNextAction] = useState<string>(() => {
-    return latestEntry?.nextAction || options.nextActions[0] || 'Lanjut ke LO Berikutnya';
+
+  const [level, setLevel] = useState<JHFormativeLevel>(() => {
+    if (latestEntry?.comprehensionLevel) {
+      return latestEntry.comprehensionLevel;
+    }
+    return 'Achieved';
   });
+
+  const [nextActionChoice, setNextActionChoice] = useState<string>(() => {
+    if (latestEntry?.nextAction) {
+      return options.nextActions.includes(latestEntry.nextAction)
+        ? latestEntry.nextAction
+        : '__CUSTOM__';
+    }
+    return options.nextActions[0] || 'Lanjut ke LO Berikutnya';
+  });
+  const [customNextActionText, setCustomNextActionText] = useState<string>(() => {
+    if (latestEntry?.nextAction && !options.nextActions.includes(latestEntry.nextAction)) {
+      return latestEntry.nextAction;
+    }
+    return '';
+  });
+
   const [notes, setNotes] = useState<string>('');
   const [correctionReason, setCorrectionReason] = useState<string>('');
   const [correctingEntryId, setCorrectingEntryId] = useState<string | null>(null);
@@ -75,14 +116,23 @@ export function FormativeAssessmentModal({
       setDate(getTodayWIB());
       setCorrectingEntryId(null);
       setCorrectionReason('');
+
       if (latestEntry) {
-        setTask(latestEntry.formativeTask || options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
-        setLevel(latestEntry.comprehensionLevel || 'A');
-        setNextAction(latestEntry.nextAction || options.nextActions[0] || 'Lanjut ke LO Berikutnya');
+        const isKnownTask = options.formativeTasks.includes(latestEntry.formativeTask);
+        setTaskChoice(isKnownTask ? latestEntry.formativeTask : (latestEntry.formativeTask ? '__CUSTOM__' : options.formativeTasks[0]));
+        setCustomTaskText(isKnownTask ? '' : (latestEntry.formativeTask || ''));
+
+        setLevel(latestEntry.comprehensionLevel || 'Achieved');
+
+        const isKnownAction = options.nextActions.includes(latestEntry.nextAction);
+        setNextActionChoice(isKnownAction ? latestEntry.nextAction : (latestEntry.nextAction ? '__CUSTOM__' : options.nextActions[0]));
+        setCustomNextActionText(isKnownAction ? '' : (latestEntry.nextAction || ''));
       } else {
-        setTask(options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
-        setLevel('A');
-        setNextAction(options.nextActions[0] || 'Lanjut ke LO Berikutnya');
+        setTaskChoice(options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
+        setCustomTaskText('');
+        setLevel('Achieved');
+        setNextActionChoice(options.nextActions[0] || 'Lanjut ke LO Berikutnya');
+        setCustomNextActionText('');
       }
       setNotes('');
     }
@@ -90,35 +140,58 @@ export function FormativeAssessmentModal({
 
   if (!isOpen) return null;
 
-  // Auto suggest nextAction when level changes
-  const handleLevelChange = (lvl: ComprehensionLevel) => {
-    setLevel(lvl);
-    if (lvl === 'A') {
-      setNextAction('Lanjut ke LO Berikutnya');
-    } else if (lvl === 'D') {
-      setNextAction('Tutor Sebaya');
-    } else {
-      setNextAction('Bimbingan Personal Guru');
+  // Change score - DO NOT auto-overwrite Next Action if already chosen
+  const handleScoreChange = (newLevel: JHFormativeScore) => {
+    setLevel(newLevel);
+    // Only suggest if Next Action is completely empty
+    if (!nextActionChoice || (nextActionChoice === '__CUSTOM__' && !customNextActionText)) {
+      if (newLevel === 'Achieved') {
+        setNextActionChoice('Lanjut ke LO Berikutnya');
+      } else {
+        setNextActionChoice('Refleksi & Remediasi Terfokus');
+      }
     }
   };
 
   const handleStartCorrection = (entry: JHFormativeEntry) => {
     setCorrectingEntryId(entry.id);
     setDate(entry.date);
-    setTask(entry.formativeTask || '');
+
+    const isKnownTask = options.formativeTasks.includes(entry.formativeTask);
+    setTaskChoice(isKnownTask ? entry.formativeTask : (entry.formativeTask ? '__CUSTOM__' : ''));
+    setCustomTaskText(isKnownTask ? '' : (entry.formativeTask || ''));
+
     setLevel(entry.comprehensionLevel);
-    setNextAction(entry.nextAction || '');
+
+    const isKnownAction = options.nextActions.includes(entry.nextAction);
+    setNextActionChoice(isKnownAction ? entry.nextAction : (entry.nextAction ? '__CUSTOM__' : ''));
+    setCustomNextActionText(isKnownAction ? '' : (entry.nextAction || ''));
+
     setNotes(entry.notes || '');
     setCorrectionReason('');
-    toast.info('Mode Koreksi Riwayat aktif. Silakan ubah data lalu simpan koreksi.');
+    toast.info('Mode Koreksi Riwayat aktif. Mengedit riwayat asesmen yang dipilih.');
   };
 
   const handleCancelCorrection = () => {
     setCorrectingEntryId(null);
     setDate(getTodayWIB());
-    setTask(latestEntry?.formativeTask || options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
-    setLevel(latestEntry?.comprehensionLevel || 'A');
-    setNextAction(latestEntry?.nextAction || options.nextActions[0] || 'Lanjut ke LO Berikutnya');
+    if (latestEntry) {
+      const isKnownTask = options.formativeTasks.includes(latestEntry.formativeTask);
+      setTaskChoice(isKnownTask ? latestEntry.formativeTask : (latestEntry.formativeTask ? '__CUSTOM__' : options.formativeTasks[0]));
+      setCustomTaskText(isKnownTask ? '' : (latestEntry.formativeTask || ''));
+
+      setLevel(latestEntry.comprehensionLevel || 'Achieved');
+
+      const isKnownAction = options.nextActions.includes(latestEntry.nextAction);
+      setNextActionChoice(isKnownAction ? latestEntry.nextAction : (latestEntry.nextAction ? '__CUSTOM__' : options.nextActions[0]));
+      setCustomNextActionText(isKnownAction ? '' : (latestEntry.nextAction || ''));
+    } else {
+      setTaskChoice(options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
+      setCustomTaskText('');
+      setLevel('Achieved');
+      setNextActionChoice(options.nextActions[0] || 'Lanjut ke LO Berikutnya');
+      setCustomNextActionText('');
+    }
     setNotes('');
     setCorrectionReason('');
   };
@@ -129,8 +202,23 @@ export function FormativeAssessmentModal({
       toast.warning('Mata pelajaran tidak boleh kosong');
       return;
     }
+
+    // Resolve Formative Task
+    const resolvedTask = taskChoice === '__CUSTOM__' ? customTaskText.trim() : taskChoice.trim();
+    if (taskChoice === '__CUSTOM__' && !resolvedTask) {
+      toast.warning('Silakan tuliskan nama Formative Task kustom');
+      return;
+    }
+
+    // Resolve Next Action
+    const resolvedNextAction = nextActionChoice === '__CUSTOM__' ? customNextActionText.trim() : nextActionChoice.trim();
+    if (nextActionChoice === '__CUSTOM__' && !resolvedNextAction) {
+      toast.warning('Silakan tuliskan Next Action kustom');
+      return;
+    }
+
     if (!level) {
-      toast.warning('Pilih Tingkat Pemahaman (B/D/A)');
+      toast.warning('Pilih Capaian LO (Achieved / Not Achieved)');
       return;
     }
 
@@ -141,8 +229,8 @@ export function FormativeAssessmentModal({
         await correctFormativeEntry({
           entryId: correctingEntryId,
           comprehensionLevel: level,
-          formativeTask: task,
-          nextAction,
+          formativeTask: resolvedTask,
+          nextAction: resolvedNextAction,
           notes: notes.trim(),
           date,
           correctedBy: teacherId,
@@ -162,9 +250,9 @@ export function FormativeAssessmentModal({
           studentId: student.id,
           studentName: student.name,
           date,
-          formativeTask: task,
+          formativeTask: resolvedTask,
           comprehensionLevel: level,
-          nextAction,
+          nextAction: resolvedNextAction || 'Lanjut ke LO Berikutnya',
           notes: notes.trim(),
           teacherId,
           teacherName
@@ -203,12 +291,13 @@ export function FormativeAssessmentModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-xs">
       <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-gray-100 flex flex-col max-h-[92vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-slate-50">
           <div className="flex items-center gap-2.5">
-            <div className={`p-2 rounded-xl ${correctingEntryId ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+            <div className={`p-2 rounded-xl ${correctingEntryId ? 'bg-amber-100 text-amber-700' : 'bg-purple-100 text-purple-700'}`}>
               {correctingEntryId ? <Edit3 size={20} /> : <Target size={20} />}
             </div>
             <div>
@@ -239,7 +328,7 @@ export function FormativeAssessmentModal({
           <div className="bg-amber-50 px-6 py-2.5 border-b border-amber-200 flex items-center justify-between text-xs text-amber-900">
             <div className="flex items-center gap-2">
               <AlertCircle size={15} className="text-amber-600 shrink-0" />
-              <span>Anda sedang mengoreksi entri riwayat sebelumnya.</span>
+              <span>Mode Koreksi: Mengubah data riwayat tanpa mengubah identitas pembuat awal.</span>
             </div>
             <button
               type="button"
@@ -271,104 +360,130 @@ export function FormativeAssessmentModal({
                   value={date}
                   onChange={e => setDate(e.target.value)}
                   disabled={isReadOnly}
-                  className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+                  className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 bg-white disabled:opacity-50"
                   required
                 />
               </div>
 
-              {/* Formative Task */}
+              {/* Formative Task with Lainnya option */}
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Formative Task (Bentuk Tugas)
+                  Formative Task (Bentuk Kegiatan)
                 </label>
                 <select
-                  value={task}
-                  onChange={e => setTask(e.target.value)}
+                  value={taskChoice}
+                  onChange={e => setTaskChoice(e.target.value)}
                   disabled={isReadOnly}
-                  className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+                  className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 bg-white disabled:opacity-50"
                 >
                   <option value="">(Boleh Kosong / Entri Cepat)</option>
                   {options.formativeTasks.map(t => (
                     <option key={t} value={t}>{t}</option>
                   ))}
+                  <option value="__CUSTOM__">✍️ Lainnya — Tulis sendiri...</option>
                 </select>
+
+                {taskChoice === '__CUSTOM__' && (
+                  <div className="mt-2">
+                    <input
+                      type="text"
+                      value={customTaskText}
+                      onChange={e => setCustomTaskText(e.target.value)}
+                      placeholder="Tuliskan nama bentuk tugas... *"
+                      disabled={isReadOnly}
+                      className="w-full text-xs px-3 py-2 border border-purple-300 rounded-xl focus:ring-2 focus:ring-purple-500 bg-purple-50/40"
+                      required
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Comprehension Level (B / D / A) */}
+            {/* Capaian LO: Achieved vs Not Achieved */}
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                Tingkat Pemahaman (Comprehension Level) <span className="text-red-500">*</span>
-              </label>
-              <div className="grid grid-cols-3 gap-3">
-                {/* B */}
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
+                  Capaian LO (Tingkat Pemahaman) <span className="text-red-500">*</span>
+                </label>
+                {isLegacyScore(level) && (
+                  <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                    Skala lama: {level}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Achieved */}
                 <button
                   type="button"
                   disabled={isReadOnly}
-                  onClick={() => handleLevelChange('B')}
+                  onClick={() => handleScoreChange('Achieved')}
                   className={`p-3.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                    level === 'B'
-                      ? 'bg-rose-50 border-rose-400 text-rose-900 ring-2 ring-rose-400 shadow-xs'
+                    level === 'Achieved'
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-950 ring-2 ring-emerald-500 shadow-xs'
                       : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                   }`}
                 >
-                  <span className="text-lg font-black">B</span>
-                  <span className="text-[11px] font-bold">Beginning</span>
-                  <span className="text-[10px] text-gray-500 leading-tight">Perlu bimbingan mendasar</span>
+                  <div className="flex items-center gap-1.5">
+                    <Check size={18} className={level === 'Achieved' ? 'text-emerald-700' : 'text-gray-400'} />
+                    <span className="text-sm font-black">Achieved</span>
+                  </div>
+                  <span className="text-[11px] text-gray-500">Mencapai / Tuntas LO</span>
                 </button>
 
-                {/* D */}
+                {/* Not Achieved */}
                 <button
                   type="button"
                   disabled={isReadOnly}
-                  onClick={() => handleLevelChange('D')}
+                  onClick={() => handleScoreChange('Not Achieved')}
                   className={`p-3.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                    level === 'D'
-                      ? 'bg-amber-50 border-amber-400 text-amber-900 ring-2 ring-amber-400 shadow-xs'
+                    level === 'Not Achieved'
+                      ? 'bg-rose-50 border-rose-500 text-rose-950 ring-2 ring-rose-500 shadow-xs'
                       : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                   }`}
                 >
-                  <span className="text-lg font-black">D</span>
-                  <span className="text-[11px] font-bold">Developing</span>
-                  <span className="text-[10px] text-gray-500 leading-tight">Sedang berkembang</span>
-                </button>
-
-                {/* A */}
-                <button
-                  type="button"
-                  disabled={isReadOnly}
-                  onClick={() => handleLevelChange('A')}
-                  className={`p-3.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                    level === 'A'
-                      ? 'bg-emerald-50 border-emerald-400 text-emerald-900 ring-2 ring-emerald-400 shadow-xs'
-                      : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  <span className="text-lg font-black">A</span>
-                  <span className="text-[11px] font-bold">Achieved</span>
-                  <span className="text-[10px] text-gray-500 leading-tight">Mencapai / Proficient</span>
+                  <div className="flex items-center gap-1.5">
+                    <X size={18} className={level === 'Not Achieved' ? 'text-rose-700' : 'text-gray-400'} />
+                    <span className="text-sm font-black">Not Achieved</span>
+                  </div>
+                  <span className="text-[11px] text-gray-500">Belum mencapai / Perlu bimbingan</span>
                 </button>
               </div>
             </div>
 
-            {/* Next Action */}
+            {/* Next Action with Lainnya option */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">
                 Next Action (Tindak Lanjut)
               </label>
               <select
-                value={nextAction}
-                onChange={e => setNextAction(e.target.value)}
+                value={nextActionChoice}
+                onChange={e => setNextActionChoice(e.target.value)}
                 disabled={isReadOnly}
-                className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+                className="w-full text-xs px-3 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 bg-white disabled:opacity-50"
               >
                 {options.nextActions.map(a => (
                   <option key={a} value={a}>{a}</option>
                 ))}
+                <option value="__CUSTOM__">✍️ Lainnya — Tulis sendiri...</option>
               </select>
+
+              {nextActionChoice === '__CUSTOM__' && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={customNextActionText}
+                    onChange={e => setCustomNextActionText(e.target.value)}
+                    placeholder="Tuliskan Next Action kustom... *"
+                    disabled={isReadOnly}
+                    className="w-full text-xs px-3 py-2 border border-purple-300 rounded-xl focus:ring-2 focus:ring-purple-500 bg-purple-50/40"
+                    required
+                  />
+                </div>
+              )}
             </div>
 
-            {/* Catatan Tindak Lanjut / Observasi */}
+            {/* Catatan Observasi */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">
                 Catatan Observasi / Kendala Siswa (Opsional)
@@ -379,11 +494,11 @@ export function FormativeAssessmentModal({
                 onChange={e => setNotes(e.target.value)}
                 disabled={isReadOnly}
                 placeholder="misal: Masih keliru di tanda negatif persamaan linear..."
-                className="w-full text-xs px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
+                className="w-full text-xs px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 bg-white disabled:opacity-50"
               />
             </div>
 
-            {/* Alasan Koreksi (hanya tampil jika mode koreksi) */}
+            {/* Alasan Koreksi (Audit Trail) */}
             {correctingEntryId && (
               <div>
                 <label className="block text-xs font-semibold text-amber-900 mb-1">
@@ -401,51 +516,56 @@ export function FormativeAssessmentModal({
           </form>
 
           {/* Section: Riwayat Asesmen untuk LO ini */}
-          <div className="pt-2 border-t border-gray-100">
+          <div className="pt-3 border-t border-gray-100">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-gray-700 flex items-center gap-1.5">
-                <History size={14} className="text-blue-600" />
+                <History size={14} className="text-purple-600" />
                 Riwayat Asesmen Siswa pada LO Ini ({historyEntries.length})
               </h3>
-              <span className="text-[11px] text-gray-400">Nilai saat ini = entri paling akhir</span>
+              <span className="text-[11px] text-gray-400">Nilai aktif = entri paling akhir</span>
             </div>
 
             {historyEntries.length === 0 ? (
               <div className="text-center py-5 border border-dashed border-gray-200 rounded-xl bg-gray-50/50 text-xs text-gray-500">
-                Belum ada riwayat asesmen sebelumnya untuk siswa ini.
+                Belum ada riwayat asesmen sebelumnya untuk siswa ini pada LO ini.
               </div>
             ) : (
               <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                 {historyEntries.map((h, index) => {
                   const isLatest = index === historyEntries.length - 1;
                   const isOwnEntry = h.teacherId === teacherId;
+                  const isLegacy = isLegacyScore(h.comprehensionLevel);
 
                   return (
                     <div
                       key={h.id}
                       className={`p-3 rounded-xl border flex items-center justify-between gap-3 text-xs transition-colors ${
                         isLatest
-                          ? 'bg-blue-50/50 border-blue-200'
+                          ? 'bg-purple-50/40 border-purple-200'
                           : 'bg-white border-gray-200'
                       }`}
                     >
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {/* Score Badge */}
                         <span
-                          className={`w-7 h-7 rounded-lg font-black text-xs flex items-center justify-center shrink-0 border ${
-                            h.comprehensionLevel === 'A'
+                          className={`px-2 py-1 rounded-lg font-bold text-[11px] flex items-center justify-center shrink-0 border ${
+                            h.comprehensionLevel === 'Achieved'
                               ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                              : h.comprehensionLevel === 'D'
-                              ? 'bg-amber-100 text-amber-800 border-amber-300'
-                              : 'bg-rose-100 text-rose-800 border-rose-300'
+                              : h.comprehensionLevel === 'Not Achieved'
+                              ? 'bg-rose-100 text-rose-800 border-rose-300'
+                              : 'bg-amber-100 text-amber-800 border-amber-300'
                           }`}
                         >
-                          {h.comprehensionLevel}
+                          {isLegacy ? `${h.comprehensionLevel} (Lama)` : h.comprehensionLevel}
                         </span>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-gray-900">{h.formativeTask || 'Asesmen Cepat'}</span>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-gray-900 truncate">
+                              {h.formativeTask || 'Asesmen Cepat'}
+                            </span>
                             {isLatest && (
-                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-600 text-white">
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-700 text-white">
                                 Terkini
                               </span>
                             )}
@@ -454,8 +574,13 @@ export function FormativeAssessmentModal({
                                 Dikoreksi
                               </span>
                             )}
+                            {h.sessionId && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-gray-100 text-gray-600">
+                                Sesi
+                              </span>
+                            )}
                           </div>
-                          <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
+                          <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5 flex-wrap">
                             <span>{formatDateWIB(h.date)}</span>
                             <span>•</span>
                             <span className="text-gray-700 font-medium">{h.nextAction}</span>
@@ -470,14 +595,16 @@ export function FormativeAssessmentModal({
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] text-gray-400">Oleh: {h.teacherName || 'Guru'}</span>
+                        <span className="text-[10px] text-gray-400 hidden sm:inline">
+                          Oleh: {h.teacherName || 'Guru'}
+                        </span>
 
-                        {/* Koreksi button (for entry owner or admin) */}
+                        {/* Koreksi button */}
                         {!isReadOnly && (isOwnEntry || isSuperAdmin) && (
                           <button
                             type="button"
                             onClick={() => handleStartCorrection(h)}
-                            className="px-2 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                            className="px-2 py-1 text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
                             title="Koreksi data riwayat ini"
                           >
                             <Edit3 size={12} /> Koreksi
@@ -522,7 +649,7 @@ export function FormativeAssessmentModal({
               className={`px-5 py-2 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50 ${
                 correctingEntryId
                   ? 'bg-amber-600 hover:bg-amber-700'
-                  : 'bg-slate-900 hover:bg-slate-800'
+                  : 'bg-purple-600 hover:bg-purple-700'
               }`}
             >
               <Save size={14} />

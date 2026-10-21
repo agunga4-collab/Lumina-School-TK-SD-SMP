@@ -1,4 +1,16 @@
-export type ComprehensionLevel = 'B' | 'D' | 'A';
+export type JHFormativeScore = 'Achieved' | 'Not Achieved';
+export type JHLegacyScore = 'B' | 'D' | 'A';
+export type JHFormativeLevel = JHFormativeScore | JHLegacyScore;
+
+// Backward-compatible alias
+export type ComprehensionLevel = JHFormativeLevel;
+
+// Nilai sumatif LG tetap skala B/D/A
+export type JHSummativeScore = 'B' | 'D' | 'A';
+
+export function isLegacyScore(val: any): val is JHLegacyScore {
+  return val === 'B' || val === 'D' || val === 'A';
+}
 
 export interface AssessmentBookOptions {
   formativeTasks: string[];
@@ -63,9 +75,10 @@ export interface JHFormativeEntry {
   studentName: string;
   date: string; // YYYY-MM-DD (WIB)
   formativeTask: string;
-  comprehensionLevel: ComprehensionLevel;
+  comprehensionLevel: JHFormativeLevel;
   nextAction: string;
   notes?: string;
+  sessionId?: string; // Identitas sesi bersama asesmen kelas
   teacherId: string;
   teacherName: string;
   createdAt: number;
@@ -87,7 +100,7 @@ export interface JHSummativeEntry {
   studentName: string;
   date: string; // YYYY-MM-DD (WIB)
   summativeTask: string;
-  summativeScore: ComprehensionLevel;
+  summativeScore: JHSummativeScore;
   notes?: string;
   teacherId: string;
   teacherName: string;

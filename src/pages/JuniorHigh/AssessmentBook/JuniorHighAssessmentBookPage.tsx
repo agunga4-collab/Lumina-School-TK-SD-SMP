@@ -330,6 +330,16 @@ export default function JuniorHighAssessmentBookPage() {
     }
   }, [selectedClassId, selectedSubject, selectedYear, selectedSemester, selectedLGId]);
 
+  // Saat filter kelas/mapel/LG/periode berganti, bersihkan data dan modal untuk mencegah draft/data tercampur
+  useEffect(() => {
+    setBulkModalState({ isOpen: false, lo: null });
+    setFormativeModalState({ isOpen: false, student: null, lo: null });
+    setSummativeModalState({ isOpen: false, student: null });
+    setLOs([]);
+    setFormativeEntries([]);
+    setSummativeEntries([]);
+  }, [selectedClassId, selectedSubject, selectedYear, selectedSemester, selectedLGId]);
+
   useEffect(() => {
     loadAssessmentData();
   }, [loadAssessmentData]);

@@ -3,9 +3,11 @@ import { useState } from 'react';
 import { X, Award, CheckCircle2, User, Save, Target, AlertCircle } from 'lucide-react';
 import {
   AssessmentBookOptions,
-  ComprehensionLevel,
+  JHFormativeLevel,
+  JHSummativeScore,
   JHAssessmentLO,
   JHSummativeEntry,
+  isLegacyScore,
   LearningGoal,
   Student
 } from '../../../../types';
@@ -22,7 +24,7 @@ interface Props {
   student: Student;
   lg: LearningGoal;
   los: JHAssessmentLO[];
-  loScores: Record<string, ComprehensionLevel | undefined>;
+  loScores: Record<string, JHFormativeLevel | undefined>;
   existingSummative?: JHSummativeEntry;
   classId: string;
   subjectId: string;
@@ -165,6 +167,8 @@ export function SummativeModal({
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {los.map(lo => {
                   const s = loScores[lo.id];
+                  const isLegacy = s ? isLegacyScore(s) : false;
+
                   return (
                     <div
                       key={lo.id}
@@ -175,15 +179,15 @@ export function SummativeModal({
                       </span>
                       {s ? (
                         <span
-                          className={`w-6 h-6 rounded-md font-black text-xs flex items-center justify-center shrink-0 ${
-                            s === 'A'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : s === 'D'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold flex items-center justify-center shrink-0 border ${
+                            s === 'Achieved' || s === 'A'
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                              : s === 'Not Achieved' || s === 'B'
+                              ? 'bg-rose-100 text-rose-800 border-rose-300'
+                              : 'bg-amber-100 text-amber-800 border-amber-300'
                           }`}
                         >
-                          {s}
+                          {isLegacy ? `${s} (Lama)` : s}
                         </span>
                       ) : (
                         <span className="text-[11px] text-gray-400 font-medium">Belum</span>
