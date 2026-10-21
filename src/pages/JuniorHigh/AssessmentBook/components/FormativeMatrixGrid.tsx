@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useMemo } from 'react';
-import { Search, Plus, User, Check, X, Award, History, Users } from 'lucide-react';
+import { Search, Plus, Check, X, Award, History, Users } from 'lucide-react';
 import {
   AssessmentBookOptions,
   JHAssessmentLO,
@@ -64,16 +64,16 @@ export function FormativeMatrixGrid({
   const [searchTerm, setSearchTerm] = useState('');
   const [quickSavingKey, setQuickSavingKey] = useState<string | null>(null);
 
-  // Filter students
   const filteredStudents = useMemo(() => {
     if (!searchTerm.trim()) return students;
     const term = searchTerm.toLowerCase();
     return students.filter(
-      s => s.name?.toLowerCase().includes(term) || (s.nisn && s.nisn.includes(term)) || ((s as any).nis && String((s as any).nis).includes(term))
+      s => s.name?.toLowerCase().includes(term) ||
+        (s.nisn && s.nisn.includes(term)) ||
+        ((s as any).nis && String((s as any).nis).includes(term))
     );
   }, [students, searchTerm]);
 
-  // Index formative entries by `${studentId}_${loId}` -> latest entry and history
   const formativeMap = useMemo(() => {
     const map: Record<string, { latest: JHFormativeEntry; history: JHFormativeEntry[] }> = {};
     for (const entry of formativeEntries) {
@@ -88,7 +88,6 @@ export function FormativeMatrixGrid({
     return map;
   }, [formativeEntries]);
 
-  // Index summative entries by studentId
   const summativeMap = useMemo(() => {
     const map: Record<string, JHSummativeEntry> = {};
     for (const entry of summativeEntries) {
@@ -97,7 +96,6 @@ export function FormativeMatrixGrid({
     return map;
   }, [summativeEntries]);
 
-  // Compute LO column statistics (Skala lama dihitung terpisah, TIDAK dianggap Achieved)
   const loStats = useMemo(() => {
     const stats: Record<string, {
       countAchieved: number;
@@ -137,13 +135,11 @@ export function FormativeMatrixGrid({
     return stats;
   }, [los, students, formativeMap]);
 
-  // Suggest default nextAction from level
   const getDefaultNextAction = (lvl: JHFormativeScore) => {
     if (lvl === 'Achieved') return 'Lanjut ke LO Berikutnya';
     return 'Refleksi & Remediasi Terfokus';
   };
 
-  // Quick inline score update (Achieved / Not Achieved)
   const handleQuickScore = async (
     e: React.MouseEvent,
     student: Student,
@@ -152,7 +148,7 @@ export function FormativeMatrixGrid({
   ) => {
     e.stopPropagation();
     if (isReadOnly) return;
-    if (quickSavingKey) return; // prevent double click
+    if (quickSavingKey) return;
 
     const cellKey = `${student.id}_${lo.id}`;
     setQuickSavingKey(cellKey);
@@ -162,12 +158,10 @@ export function FormativeMatrixGrid({
     const existingSameDay = existingGroup?.history.find(
       h => h.date === today && h.teacherId === teacherId
     );
-
     const defaultNextAction = getDefaultNextAction(level);
 
     try {
       if (existingSameDay) {
-        // Koreksi entri hari ini
         const prevLevel = existingSameDay.comprehensionLevel;
         const prevNextAction = existingSameDay.nextAction;
 
@@ -179,10 +173,8 @@ export function FormativeMatrixGrid({
           correctedByName: teacherName,
           correctionReason: 'Klik Cepat (Koreksi Hari Ini)'
         });
-
         onRefreshData();
 
-        // Toast with Undo action for 5 seconds
         toast.success(`Nilai [${level}] tersimpan (koreksi hari ini)`, {
           duration: 5000,
           action: {
@@ -206,7 +198,6 @@ export function FormativeMatrixGrid({
           }
         });
       } else {
-        // Entri baru hari ini
         const createdId = await addFormativeEntry({
           loId: lo.id,
           lgId: lo.lgId,
@@ -217,16 +208,14 @@ export function FormativeMatrixGrid({
           studentId: student.id,
           studentName: student.name,
           date: today,
-          formativeTask: '', // Boleh kosong untuk entri cepat
+          formativeTask: '',
           comprehensionLevel: level,
           nextAction: defaultNextAction,
           teacherId,
           teacherName
         });
-
         onRefreshData();
 
-        // Toast with Undo action for 5 seconds
         toast.success(`Nilai [${level}] tersimpan untuk ${student.name}`, {
           duration: 5000,
           action: {
@@ -267,7 +256,6 @@ export function FormativeMatrixGrid({
             />
           </div>
         </div>
-
         <div className="flex items-center gap-2">
           {!isReadOnly && (
             <button
@@ -280,7 +268,6 @@ export function FormativeMatrixGrid({
         </div>
       </div>
 
-      {/* Main Table / Grid Container */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden">
         {los.length === 0 ? (
           <div className="py-14 text-center px-4">
@@ -303,15 +290,12 @@ export function FormativeMatrixGrid({
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
-              {/* Table Header */}
               <thead>
                 <tr className="bg-slate-50 border-b border-gray-200 text-gray-600 uppercase text-[10px] tracking-wider font-bold">
                   <th className="py-3 px-3 w-10 text-center sticky left-0 bg-slate-50 z-20">No</th>
                   <th className="py-3 px-3 w-48 min-w-[190px] sticky left-10 bg-slate-50 z-20 border-r border-gray-200">
                     Nama Siswa
                   </th>
-
-                  {/* Dynamic LO Columns */}
                   {los.map(lo => {
                     const st = loStats[lo.id] || {
                       countAchieved: 0,
@@ -320,11 +304,10 @@ export function FormativeMatrixGrid({
                       countUnassessed: students.length,
                       totalAssessed: 0
                     };
-
                     return (
                       <th
                         key={lo.id}
-                        className="py-3 px-3 min-w-[200px] max-w-[240px] border-r border-gray-200 align-top group/col"
+                        className="py-3 px-3 min-w-[240px] max-w-[300px] border-r border-gray-200 align-top group/col"
                       >
                         <div className="flex items-center justify-between gap-1 mb-1">
                           <span className="font-extrabold text-purple-700 bg-purple-100/70 px-1.5 py-0.5 rounded text-[10px]">
@@ -341,12 +324,9 @@ export function FormativeMatrixGrid({
                             </button>
                           )}
                         </div>
-
                         <p className="text-[11px] font-medium text-gray-800 line-clamp-2 normal-case tracking-normal mb-1.5" title={lo.title}>
                           {lo.title}
                         </p>
-
-                        {/* Progress stats bar */}
                         <div className="flex items-center justify-between text-[9px] font-mono flex-wrap gap-1">
                           <span className="text-gray-400 font-sans">
                             {st.totalAssessed}/{students.length} dinilai
@@ -373,8 +353,6 @@ export function FormativeMatrixGrid({
                       </th>
                     );
                   })}
-
-                  {/* Summative Column (tetap skala B/D/A) */}
                   <th className="py-3 px-4 w-44 min-w-[160px] bg-emerald-50/60 text-emerald-900 border-l border-emerald-200 align-top">
                     <div className="flex items-center gap-1.5 mb-1">
                       <Award size={14} className="text-emerald-700" />
@@ -387,7 +365,6 @@ export function FormativeMatrixGrid({
                 </tr>
               </thead>
 
-              {/* Table Body */}
               <tbody className="divide-y divide-gray-100">
                 {filteredStudents.length === 0 ? (
                   <tr>
@@ -398,15 +375,11 @@ export function FormativeMatrixGrid({
                 ) : (
                   filteredStudents.map((student, index) => {
                     const summativeEntry = summativeMap[student.id];
-
                     return (
                       <tr key={student.id} className="hover:bg-slate-50/60 transition-colors group">
-                        {/* No */}
                         <td className="py-2.5 px-3 text-center text-gray-400 font-mono sticky left-0 bg-white group-hover:bg-slate-50 z-10 border-r border-gray-100">
                           {student.attendanceNumber ?? (student as any).noAbsen ?? index + 1}
                         </td>
-
-                        {/* Nama Siswa */}
                         <td className="py-2.5 px-3 sticky left-10 bg-white group-hover:bg-slate-50 z-10 border-r border-gray-200">
                           <div className="font-semibold text-gray-900 truncate" title={student.name}>
                             {student.name}
@@ -417,92 +390,106 @@ export function FormativeMatrixGrid({
                           </div>
                         </td>
 
-                        {/* LO Columns */}
                         {los.map(lo => {
                           const item = formativeMap[`${student.id}_${lo.id}`];
                           const latest = item?.latest;
                           const historyCount = item?.history?.length || 0;
                           const isCurrentCellSaving = quickSavingKey === `${student.id}_${lo.id}`;
                           const isLegacy = latest ? isLegacyScore(latest.comprehensionLevel) : false;
+                          const nextActionText = typeof latest?.nextAction === 'string'
+                            ? latest.nextAction.trim()
+                            : '';
 
                           return (
                             <td
                               key={lo.id}
                               onClick={() => onOpenFormativeModal(student, lo)}
-                              className="py-2 px-2.5 border-r border-gray-200 cursor-pointer hover:bg-purple-50/40 transition-colors group/cell"
+                              className="py-3 px-2.5 border-r border-gray-200 cursor-pointer hover:bg-purple-50/40 transition-colors group/cell align-top"
                             >
                               {latest ? (
-                                <div className="flex items-center justify-between gap-1.5">
-                                  <div className="flex items-center gap-1.5 min-w-0">
-                                    {/* Score badge */}
-                                    <span
-                                      className={`px-1.5 py-0.5 rounded-md font-bold text-[10px] flex items-center justify-center shrink-0 border ${
-                                        latest.comprehensionLevel === 'Achieved'
-                                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                          : latest.comprehensionLevel === 'Not Achieved'
-                                          ? 'bg-rose-100 text-rose-800 border-rose-300'
-                                          : 'bg-amber-100 text-amber-800 border-amber-300'
-                                      }`}
-                                    >
-                                      {isLegacy ? `${latest.comprehensionLevel} (Lama)` : latest.comprehensionLevel}
-                                    </span>
-
-                                    <div className="min-w-0">
-                                      <div
-                                        className="text-[10px] font-semibold text-gray-800 truncate max-w-[90px]"
-                                        title={latest.formativeTask || 'Asesmen Cepat'}
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between gap-1.5">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded-md font-bold text-[10px] flex items-center justify-center shrink-0 border ${
+                                          latest.comprehensionLevel === 'Achieved'
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : latest.comprehensionLevel === 'Not Achieved'
+                                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                            : 'bg-amber-100 text-amber-800 border-amber-300'
+                                        }`}
                                       >
-                                        {latest.formativeTask || 'Asesmen Cepat'}
+                                        {isLegacy ? `${latest.comprehensionLevel} (Lama)` : latest.comprehensionLevel}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <div
+                                          className="text-[10px] font-semibold text-gray-800 truncate max-w-[110px]"
+                                          title={latest.formativeTask || 'Asesmen Cepat'}
+                                        >
+                                          {latest.formativeTask || 'Asesmen Cepat'}
+                                        </div>
+                                        <div className="text-[9px] text-gray-400">
+                                          {formatDateWIB(latest.date)}
+                                        </div>
                                       </div>
-                                      <div className="text-[9px] text-gray-400">
-                                        {formatDateWIB(latest.date)}
-                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {!isReadOnly && (
+                                        <div
+                                          className="opacity-0 group-hover/cell:opacity-100 transition-opacity flex items-center gap-0.5"
+                                          onClick={e => e.stopPropagation()}
+                                        >
+                                          <button
+                                            type="button"
+                                            disabled={isCurrentCellSaving}
+                                            onClick={e => handleQuickScore(e, student, lo, 'Achieved')}
+                                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer flex items-center gap-0.5 disabled:opacity-50 ${
+                                              latest.comprehensionLevel === 'Achieved'
+                                                ? 'bg-emerald-600 text-white border-emerald-700'
+                                                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200'
+                                            }`}
+                                            title="Ubah / Koreksi cepat ke Achieved"
+                                          >
+                                            <Check size={10} /> Ach
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={isCurrentCellSaving}
+                                            onClick={e => handleQuickScore(e, student, lo, 'Not Achieved')}
+                                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer flex items-center gap-0.5 disabled:opacity-50 ${
+                                              latest.comprehensionLevel === 'Not Achieved'
+                                                ? 'bg-rose-600 text-white border-rose-700'
+                                                : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200'
+                                            }`}
+                                            title="Ubah / Koreksi cepat ke Not Achieved"
+                                          >
+                                            <X size={10} /> Not
+                                          </button>
+                                        </div>
+                                      )}
+                                      {historyCount > 1 && (
+                                        <span
+                                          className="inline-flex items-center gap-0.5 text-[9px] font-bold text-purple-700 bg-purple-50 px-1 rounded"
+                                          title={`${historyCount} kali riwayat asesmen`}
+                                        >
+                                          <History size={10} /> {historyCount}
+                                        </span>
+                                      )}
                                     </div>
                                   </div>
 
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {!isReadOnly && (
-                                      <div
-                                        className="opacity-0 group-hover/cell:opacity-100 transition-opacity flex items-center gap-0.5"
-                                        onClick={e => e.stopPropagation()}
-                                      >
-                                        <button
-                                          type="button"
-                                          disabled={isCurrentCellSaving}
-                                          onClick={e => handleQuickScore(e, student, lo, 'Achieved')}
-                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer flex items-center gap-0.5 disabled:opacity-50 ${
-                                            latest.comprehensionLevel === 'Achieved'
-                                              ? 'bg-emerald-600 text-white border-emerald-700'
-                                              : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200'
-                                          }`}
-                                          title="Ubah / Koreksi cepat ke Achieved"
-                                        >
-                                          <Check size={10} /> Ach
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={isCurrentCellSaving}
-                                          onClick={e => handleQuickScore(e, student, lo, 'Not Achieved')}
-                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold border cursor-pointer flex items-center gap-0.5 disabled:opacity-50 ${
-                                            latest.comprehensionLevel === 'Not Achieved'
-                                              ? 'bg-rose-600 text-white border-rose-700'
-                                              : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200'
-                                          }`}
-                                          title="Ubah / Koreksi cepat ke Not Achieved"
-                                        >
-                                          <X size={10} /> Not
-                                        </button>
-                                      </div>
-                                    )}
-
-                                    {historyCount > 1 && (
-                                      <span
-                                        className="inline-flex items-center gap-0.5 text-[9px] font-bold text-purple-700 bg-purple-50 px-1 rounded"
-                                        title={`${historyCount} kali riwayat asesmen`}
-                                      >
-                                        <History size={10} /> {historyCount}
-                                      </span>
-                                    )}
+                                  {/* Next Action ditampilkan langsung, bukan hanya di modal. */}
+                                  <div className="rounded-lg border border-purple-100 bg-purple-50/60 px-2.5 py-2">
+                                    <p className="text-[9px] font-bold uppercase tracking-wider text-purple-600 mb-1">
+                                      Next Action
+                                    </p>
+                                    <p
+                                      className={`text-[11px] leading-relaxed whitespace-pre-wrap break-words ${
+                                        nextActionText ? 'font-medium text-gray-800' : 'italic text-gray-400'
+                                      }`}
+                                    >
+                                      {nextActionText || 'Belum diisi'}
+                                    </p>
                                   </div>
                                 </div>
                               ) : (
@@ -539,7 +526,6 @@ export function FormativeMatrixGrid({
                           );
                         })}
 
-                        {/* Summative Cell (Tetap skala B / D / A) */}
                         <td
                           onClick={() => onOpenSummativeModal(student)}
                           className="py-2 px-3 border-l border-emerald-200 bg-emerald-50/20 group-hover:bg-emerald-50/50 cursor-pointer transition-colors"
