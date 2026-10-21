@@ -34,6 +34,10 @@ interface Props {
   teacherId: string;
   teacherName: string;
   isReadOnly?: boolean;
+  mode?: 'SUBJECT' | 'UNIT_ACTIVITY';
+  unitActivityName?: string;
+  unitActivityCategory?: string;
+  targetGrade?: string;
   onSaved: () => void;
 }
 
@@ -53,8 +57,13 @@ export function SummativeModal({
   teacherId,
   teacherName,
   isReadOnly = false,
+  mode = 'SUBJECT',
+  unitActivityName = '',
+  unitActivityCategory = '',
+  targetGrade = 'ALL',
   onSaved
 }: Props) {
+
   const [date, setDate] = useState<string>(() => existingSummative?.date || getTodayWIB());
   const [task, setTask] = useState<string>(() => {
     return existingSummative?.summativeTask || options.summativeTasks[0] || 'Proyek Pembelajaran (LJ)';
@@ -92,7 +101,7 @@ export function SummativeModal({
       await saveSummativeEntry({
         id: existingSummative?.id,
         lgId: lg.id,
-        classId,
+        classId: student.classId || classId,
         subjectId,
         academicYear,
         semester,
@@ -105,8 +114,14 @@ export function SummativeModal({
         teacherId,
         teacherName,
         updatedBy: teacherId,
-        updatedByName: teacherName
+        updatedByName: teacherName,
+        assessmentMode: mode,
+        unitActivityId: unitActivityName || undefined,
+        unitActivityName: unitActivityName || undefined,
+        unitActivityCategory: unitActivityCategory || undefined,
+        targetGrade: targetGrade !== 'ALL' ? targetGrade : undefined
       });
+
       toast.success(`Nilai Sumatif LG untuk ${student.name} berhasil disimpan!`);
       onSaved();
       onClose();

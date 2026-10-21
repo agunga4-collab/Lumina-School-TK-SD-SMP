@@ -34,6 +34,9 @@ interface Props {
   teacherId: string;
   teacherName: string;
   isReadOnly?: boolean;
+  mode?: 'SUBJECT' | 'UNIT_ACTIVITY';
+  showClassColumn?: boolean;
+  classesMap?: Record<string, string>;
   onOpenFormativeModal: (student: Student, lo: JHAssessmentLO) => void;
   onOpenSummativeModal: (student: Student) => void;
   onOpenManageLOModal: () => void;
@@ -55,6 +58,9 @@ export function FormativeMatrixGrid({
   teacherId,
   teacherName,
   isReadOnly = false,
+  mode = 'SUBJECT',
+  showClassColumn = false,
+  classesMap = {},
   onOpenFormativeModal,
   onOpenSummativeModal,
   onOpenManageLOModal,
@@ -63,6 +69,8 @@ export function FormativeMatrixGrid({
 }: Props) {
   const [searchTerm, setSearchTerm] = useState('');
   const [quickSavingKey, setQuickSavingKey] = useState<string | null>(null);
+  const isUAMode = mode === 'UNIT_ACTIVITY' || showClassColumn;
+
 
   const filteredStudents = useMemo(() => {
     if (!searchTerm.trim()) return students;
@@ -201,7 +209,7 @@ export function FormativeMatrixGrid({
         const createdId = await addFormativeEntry({
           loId: lo.id,
           lgId: lo.lgId,
-          classId,
+          classId: student.classId || classId,
           subjectId,
           academicYear,
           semester,
@@ -214,6 +222,7 @@ export function FormativeMatrixGrid({
           teacherId,
           teacherName
         });
+
         onRefreshData();
 
         toast.success(`Nilai [${level}] tersimpan untuk ${student.name}`, {
@@ -296,6 +305,11 @@ export function FormativeMatrixGrid({
                   <th className="py-3 px-3 w-48 min-w-[190px] sticky left-10 bg-slate-50 z-20 border-r border-gray-200">
                     Nama Siswa
                   </th>
+                  {isUAMode && (
+                    <th className="py-3 px-3 w-24 min-w-[85px] bg-slate-50 border-r border-gray-200 text-center">
+                      Kelas
+                    </th>
+                  )}
                   {los.map(lo => {
                     const st = loStats[lo.id] || {
                       countAchieved: 0,
@@ -318,9 +332,9 @@ export function FormativeMatrixGrid({
                               type="button"
                               onClick={() => onOpenBulkModal(lo)}
                               className="px-2 py-0.5 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-md text-[9px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                              title={`Buka asesmen satu sesi kelas untuk ${lo.code}`}
+                              title={isUAMode ? `Buka asesmen satu sesi peserta UA untuk ${lo.code}` : `Buka asesmen satu sesi kelas untuk ${lo.code}`}
                             >
-                              <Users size={11} /> Asesmen Kelas
+                              <Users size={11} /> {isUAMode ? 'Asesmen Peserta UA' : 'Asesmen Kelas'}
                             </button>
                           )}
                         </div>
@@ -368,7 +382,7 @@ export function FormativeMatrixGrid({
               <tbody className="divide-y divide-gray-100">
                 {filteredStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={los.length + 3} className="py-8 text-center text-gray-400">
+                    <td colSpan={los.length + (isUAMode ? 4 : 3)} className="py-8 text-center text-gray-400">
                       Tidak ada siswa yang sesuai dengan pencarian.
                     </td>
                   </tr>
@@ -389,6 +403,13 @@ export function FormativeMatrixGrid({
                             {(student as any).nis && <span>NIS: {(student as any).nis}</span>}
                           </div>
                         </td>
+                        {isUAMode && (
+                          <td className="py-2.5 px-3 border-r border-gray-200 text-center">
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded font-bold text-[10px] whitespace-nowrap">
+                              {(student as any).className || classesMap[student.classId] || student.classId || '-'}
+                            </span>
+                          </td>
+                        )}
 
                         {los.map(lo => {
                           const item = formativeMap[`${student.id}_${lo.id}`];

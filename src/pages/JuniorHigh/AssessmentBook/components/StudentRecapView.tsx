@@ -16,6 +16,9 @@ interface Props {
   los: JHAssessmentLO[];
   formativeEntries: JHFormativeEntry[];
   summativeEntries: JHSummativeEntry[];
+  mode?: 'SUBJECT' | 'UNIT_ACTIVITY';
+  showClassColumn?: boolean;
+  classesMap?: Record<string, string>;
   onOpenFormativeModal: (student: Student, lo: JHAssessmentLO) => void;
   onOpenSummativeModal: (student: Student) => void;
 }
@@ -26,11 +29,16 @@ export function StudentRecapView({
   los,
   formativeEntries,
   summativeEntries,
+  mode = 'SUBJECT',
+  showClassColumn = false,
+  classesMap = {},
   onOpenFormativeModal,
   onOpenSummativeModal
 }: Props) {
   const [search, setSearch] = useState('');
   const [filterLevel, setFilterLevel] = useState<'ALL' | 'A' | 'D' | 'B' | 'NONE'>('ALL');
+  const isUAMode = mode === 'UNIT_ACTIVITY' || showClassColumn;
+
 
   // Map latest formative entry per student per LO
   const latestFormativeMap = useMemo(() => {
@@ -150,9 +158,17 @@ export function StudentRecapView({
                       <h4 className="text-xs font-bold text-gray-900 truncate" title={student.name}>
                         {student.name}
                       </h4>
-                      <p className="text-[10px] text-gray-400 font-mono">
-                        {student.nisn ? `NISN: ${student.nisn}` : ((student as any).nis ? `NIS: ${(student as any).nis}` : 'Junior High')}
-                      </p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-gray-400 font-mono">
+                          {student.nisn ? `NISN: ${student.nisn}` : ((student as any).nis ? `NIS: ${(student as any).nis}` : 'Junior High')}
+                        </span>
+                        {isUAMode && ((student as any).className || classesMap[student.classId] || student.classId) && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            {(student as any).className || classesMap[student.classId] || student.classId}
+                          </span>
+                        )}
+                      </div>
+
                     </div>
                   </div>
 

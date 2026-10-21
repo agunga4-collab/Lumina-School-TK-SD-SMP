@@ -18,6 +18,11 @@ export function exportJuniorHighAssessmentBookExcel(params: {
   students: Student[];
   formativeEntries: JHFormativeEntry[];
   summativeEntries: JHSummativeEntry[];
+  mode?: 'SUBJECT' | 'UNIT_ACTIVITY';
+  unitActivityName?: string;
+  categoryName?: string;
+  targetGrade?: string;
+  classesMap?: Record<string, string>;
 }) {
   const {
     className,
@@ -28,8 +33,15 @@ export function exportJuniorHighAssessmentBookExcel(params: {
     los,
     students,
     formativeEntries,
-    summativeEntries
+    summativeEntries,
+    mode = 'SUBJECT',
+    unitActivityName,
+    categoryName,
+    targetGrade = 'ALL',
+    classesMap = {}
   } = params;
+
+  const isUAMode = mode === 'UNIT_ACTIVITY';
 
   // Build maps
   const formativeMap: Record<string, JHFormativeEntry> = {};
@@ -43,16 +55,28 @@ export function exportJuniorHighAssessmentBookExcel(params: {
   }
 
   // Header metadata rows
-  const rows: any[][] = [
-    ['LUMINA JUNIOR HIGH - ASSESSMENT BOOK (REKAP FORMATIF & SUMATIF)'],
-    [`Kelas: ${className}`, `Mata Pelajaran: ${subjectName}`],
-    [`Tahun Ajaran: ${academicYear}`, `Semester: ${semester}`],
-    [`Learning Goal (LG): [${lg.code || 'LG'}] ${lg.goalText}`],
-    [], // empty row
-  ];
+  const rows: any[][] = isUAMode
+    ? [
+        ['LUMINA JUNIOR HIGH - ASSESSMENT BOOK (UNIT AKTIVITAS)'],
+        [`Kategori UA: ${categoryName || '-'}`, `Unit Aktivitas: ${unitActivityName || subjectName}`],
+        [`Target Kelompok/Grade: ${targetGrade === 'ALL' ? 'Semua Grade' : `Grade ${targetGrade}`}`, `Tahun Ajaran: ${academicYear}`, `Semester: ${semester}`],
+        [`Learning Goal (LG): [${lg.code || 'LG'}] ${lg.goalText}`],
+        [], // empty row
+      ]
+    : [
+        ['LUMINA JUNIOR HIGH - ASSESSMENT BOOK (REKAP FORMATIF & SUMATIF)'],
+        [`Kelas: ${className}`, `Mata Pelajaran: ${subjectName}`],
+        [`Tahun Ajaran: ${academicYear}`, `Semester: ${semester}`],
+        [`Learning Goal (LG): [${lg.code || 'LG'}] ${lg.goalText}`],
+        [], // empty row
+      ];
 
   // Table header
   const tableHeader = ['No', 'NIS / NISN', 'Nama Siswa'];
+  if (isUAMode) {
+    tableHeader.push('Kelas Asal');
+  }
+
   for (const lo of los) {
     tableHeader.push(`${lo.code} (Skor)`);
     tableHeader.push(`${lo.code} (Tugas)`);
@@ -73,6 +97,11 @@ export function exportJuniorHighAssessmentBookExcel(params: {
       student.nisn || (student as any).nis || '-',
       student.name
     ];
+
+    if (isUAMode) {
+      const cls = (student as any).className || classesMap[student.classId] || student.classId || '-';
+      row.push(cls);
+    }
 
     for (const lo of los) {
       const f = formativeMap[`${student.id}_${lo.id}`];
@@ -115,6 +144,7 @@ export function exportJuniorHighAssessmentBookExcel(params: {
     { wch: 6 },
     { wch: 16 },
     { wch: 28 },
+    ...(isUAMode ? [{ wch: 14 }] : []),
     ...los.flatMap(() => [{ wch: 10 }, { wch: 18 }, { wch: 22 }, { wch: 14 }]),
     { wch: 12 },
     { wch: 20 },
@@ -123,11 +153,17 @@ export function exportJuniorHighAssessmentBookExcel(params: {
   ];
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Assessment Book');
+  const sheetName = isUAMode ? 'UA Assessment Book' : 'Assessment Book';
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
+  const cleanYear = academicYear.replace(/[^a-zA-Z0-9]/g, '-');
+  const cleanSubject = (unitActivityName || subjectName || '').replace(/[^a-zA-Z0-9]/g, '_');
   const cleanClassName = className.replace(/[^a-zA-Z0-9]/g, '_');
-  const cleanSubject = subjectName.replace(/[^a-zA-Z0-9]/g, '_');
-  const filename = `AssessmentBook_${cleanClassName}_${cleanSubject}_Sem${semester}.xlsx`;
+
+  const filename = isUAMode
+    ? `AssessmentBook_UA_${cleanSubject}_${cleanYear}_Sem${semester}.xlsx`
+    : `AssessmentBook_${cleanClassName}_${cleanSubject}_${cleanYear}_Sem${semester}.xlsx`;
 
   XLSX.writeFile(wb, filename);
 }
+

@@ -10,7 +10,9 @@ import {
   CheckCheck,
   AlertCircle,
   HelpCircle,
-  Edit2
+  Edit2,
+  Search,
+  Filter
 } from 'lucide-react';
 import {
   AssessmentBookOptions,
@@ -45,6 +47,12 @@ interface Props {
   teacherId: string;
   teacherName: string;
   onSuccess: () => void;
+  mode?: 'SUBJECT' | 'UNIT_ACTIVITY';
+  showClassColumn?: boolean;
+  classesMap?: Record<string, string>;
+  unitActivityName?: string;
+  unitActivityCategory?: string;
+  targetGrade?: string;
 }
 
 export function BulkFormativeModal({
@@ -59,8 +67,16 @@ export function BulkFormativeModal({
   options,
   teacherId,
   teacherName,
-  onSuccess
+  onSuccess,
+  mode = 'SUBJECT',
+  showClassColumn = false,
+  classesMap = {},
+  unitActivityName = '',
+  unitActivityCategory = '',
+  targetGrade = 'ALL'
 }: Props) {
+  const isUAMode = mode === 'UNIT_ACTIVITY' || showClassColumn;
+
   // Session-wide fields (filled once for the whole class session)
   const [date, setDate] = useState<string>(() => getTodayWIB());
   const [taskChoice, setTaskChoice] = useState<string>(() => options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
@@ -71,6 +87,11 @@ export function BulkFormativeModal({
   const [selectedForNextAction, setSelectedForNextAction] = useState<string[]>([]);
   const [bulkNextActionChoice, setBulkNextActionChoice] = useState<string>(() => options.nextActions[0] || 'Lanjut ke LO Berikutnya');
   const [bulkCustomNextActionText, setBulkCustomNextActionText] = useState<string>('');
+
+  // Modal in-table filters
+  const [modalSearch, setModalSearch] = useState('');
+  const [modalGradeFilter, setModalGradeFilter] = useState<'ALL' | '7' | '8' | '9'>('ALL');
+  const [modalClassFilter, setModalClassFilter] = useState<string>('ALL');
 
   // Per-student rows (initialized with null score so unassessed students remain blank)
   const [studentRows, setStudentRows] = useState<Record<string, StudentRowState>>(() => {
@@ -89,6 +110,18 @@ export function BulkFormativeModal({
 
   const [saving, setSaving] = useState(false);
 
+  // Available classes in the current student list for filtering in UA mode
+  const availableModalClasses = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of students) {
+      if (s.classId) {
+        const name = (s as any).className || classesMap[s.classId] || s.classId;
+        map.set(s.classId, name);
+      }
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [students, classesMap]);
+
   // Reset or reinitialize when modal opens
   React.useEffect(() => {
     if (isOpen) {
@@ -98,6 +131,9 @@ export function BulkFormativeModal({
       setSelectedForNextAction([]);
       setBulkNextActionChoice(options.nextActions[0] || 'Lanjut ke LO Berikutnya');
       setBulkCustomNextActionText('');
+      setModalSearch('');
+      setModalGradeFilter('ALL');
+      setModalClassFilter('ALL');
 
       const init: Record<string, StudentRowState> = {};
       for (const s of students) {
@@ -113,7 +149,28 @@ export function BulkFormativeModal({
     }
   }, [isOpen, students, options]);
 
-  // Statistics
+  // Filtered visible students based on in-modal search & filters
+  const visibleStudents = useMemo(() => {
+    return students.filter(s => {
+      if (modalSearch.trim()) {
+        const term = modalSearch.toLowerCase();
+        const matchName = s.name?.toLowerCase().includes(term);
+        const matchNis = (s as any).nis && String((s as any).nis).includes(term);
+        const matchNisn = s.nisn && s.nisn.includes(term);
+        if (!matchName && !matchNis && !matchNisn) return false;
+      }
+      if (modalGradeFilter !== 'ALL') {
+        const g = (s as any).grade;
+        if (g && String(g) !== String(modalGradeFilter)) return false;
+      }
+      if (modalClassFilter !== 'ALL') {
+        if (s.classId !== modalClassFilter) return false;
+      }
+      return true;
+    });
+  }, [students, modalSearch, modalGradeFilter, modalClassFilter]);
+
+  // Statistics across all students
   const { countAchieved, countNotAchieved, countUnassessed, countAssessed } = useMemo(() => {
     let achieved = 0;
     let notAchieved = 0;
@@ -142,12 +199,20 @@ export function BulkFormativeModal({
     );
   };
 
-  // Toggle select all / deselect all
+  // Toggle select all / deselect all for VISIBLE students only
+  const isAllVisibleSelected =
+    visibleStudents.length > 0 && visibleStudents.every(s => selectedForNextAction.includes(s.id));
+
   const handleToggleSelectAll = () => {
-    if (selectedForNextAction.length === students.length) {
-      setSelectedForNextAction([]);
+    if (isAllVisibleSelected) {
+      // Deselect only the currently visible students
+      const visibleIds = new Set(visibleStudents.map(s => s.id));
+      setSelectedForNextAction(prev => prev.filter(id => !visibleIds.has(id)));
     } else {
-      setSelectedForNextAction(students.map(s => s.id));
+      // Select all visible students
+      const set = new Set(selectedForNextAction);
+      visibleStudents.forEach(s => set.add(s.id));
+      setSelectedForNextAction(Array.from(set));
     }
   };
 
@@ -254,17 +319,35 @@ export function BulkFormativeModal({
       return;
     }
 
+    // Get selected students info
+    const selectedStudentsList = students.filter(s => selectedForNextAction.includes(s.id));
+    const studentNames = selectedStudentsList.map(s => s.name);
+    const namesPreview =
+      studentNames.slice(0, 5).join(', ') +
+      (studentNames.length > 5 ? ` dan ${studentNames.length - 5} lainnya` : '');
+
     // Check if any selected student already has a non-empty next action different from target
-    const studentsWithExistingAction = selectedForNextAction.filter(sid => {
-      const row = studentRows[sid];
+    const studentsWithExistingAction = selectedStudentsList.filter(s => {
+      const row = studentRows[s.id];
       if (!row) return false;
       const currentText = row.isCustomNextAction ? row.customNextActionText.trim() : row.nextAction;
       return Boolean(currentText && currentText !== targetText);
     });
 
     if (studentsWithExistingAction.length > 0) {
+      const existingNames = studentsWithExistingAction
+        .map(s => s.name)
+        .slice(0, 4)
+        .join(', ');
       const confirmed = window.confirm(
-        `Sebanyak ${studentsWithExistingAction.length} siswa terpilih sudah memiliki Next Action terisi.\nApakah Anda yakin ingin menimpa Next Action mereka dengan "${targetText}"?`
+        `Sebanyak ${studentsWithExistingAction.length} peserta terpilih (${existingNames}${
+          studentsWithExistingAction.length > 4 ? '...' : ''
+        }) sudah memiliki Next Action terisi.\n\nApakah Anda yakin ingin menimpa Next Action mereka dengan "${targetText}"?\n(Capaian LO tidak akan diubah)`
+      );
+      if (!confirmed) return;
+    } else {
+      const confirmed = window.confirm(
+        `Terapkan Next Action "${targetText}" kepada ${selectedForNextAction.length} peserta terpilih:\n(${namesPreview})?\n\n(Capaian LO tidak akan diubah)`
       );
       if (!confirmed) return;
     }
@@ -282,7 +365,7 @@ export function BulkFormativeModal({
       return updated;
     });
 
-    toast.success(`Next Action berhasil diterapkan ke ${selectedForNextAction.length} siswa terpilih!`);
+    toast.success(`Next Action berhasil diterapkan ke ${selectedForNextAction.length} peserta terpilih!`);
   };
 
   // Form Submit
@@ -320,10 +403,24 @@ export function BulkFormativeModal({
     for (const s of assessedStudents) {
       const row = studentRows[s.id];
       if (row.isCustomNextAction && !row.customNextActionText.trim()) {
-        toast.warning(`Siswa ${s.name} memilih "Lainnya" pada Next Action tapi teksnya masih kosong.`);
+        toast.warning(`Peserta ${s.name} memilih "Lainnya" pada Next Action tapi teksnya masih kosong.`);
         return;
       }
     }
+
+    const assessedNamesPreview =
+      assessedStudents.map(s => s.name).slice(0, 5).join(', ') +
+      (assessedStudents.length > 5 ? ` dan ${assessedStudents.length - 5} lainnya` : '');
+
+    const confirmSave = window.confirm(
+      `Konfirmasi Simpan Sesi Asesmen:\n\n` +
+      `• Tanggal: ${date}\n` +
+      `• Kegiatan: ${resolvedTask}\n` +
+      `• Peserta dinilai: ${assessedStudents.length} peserta (${assessedNamesPreview})\n` +
+      `• Peserta belum dinilai: ${students.length - assessedStudents.length} (tetap kosong/tidak disimpan)\n\n` +
+      `Lanjutkan simpan?`
+    );
+    if (!confirmSave) return;
 
     setSaving(true);
     try {
@@ -336,7 +433,7 @@ export function BulkFormativeModal({
         return {
           loId: lo.id,
           lgId: lo.lgId,
-          classId,
+          classId: s.classId || classId, // Origin classId strictly preserved
           subjectId,
           academicYear,
           semester,
@@ -349,13 +446,18 @@ export function BulkFormativeModal({
           notes: (row.notes || '').trim(),
           sessionId,
           teacherId,
-          teacherName
+          teacherName,
+          assessmentMode: mode,
+          unitActivityId: unitActivityName || undefined,
+          unitActivityName: unitActivityName || undefined,
+          unitActivityCategory: unitActivityCategory || undefined,
+          targetGrade: targetGrade !== 'ALL' ? targetGrade : undefined
         };
       });
 
       await bulkAddFormativeEntries(payloadEntries);
       toast.success(
-        `Berhasil menyimpan sesi asesmen untuk ${assessedStudents.length} siswa! (${students.length - assessedStudents.length} siswa belum dinilai tetap kosong)`
+        `Berhasil menyimpan sesi asesmen untuk ${assessedStudents.length} peserta! (${students.length - assessedStudents.length} peserta belum dinilai tetap kosong)`
       );
       onSuccess();
       onClose();
@@ -379,10 +481,17 @@ export function BulkFormativeModal({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-gray-900">Asesmen Satu Sesi Kelas</h2>
+                <h2 className="text-base font-bold text-gray-900">
+                  {isUAMode ? 'Asesmen Satu Sesi Peserta UA' : 'Asesmen Satu Sesi Kelas'}
+                </h2>
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                   {lo.code}
                 </span>
+                {isUAMode && unitActivityName && (
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {unitActivityName}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-gray-500 line-clamp-1 max-w-2xl" title={lo.title}>
                 {lo.title}
@@ -405,12 +514,15 @@ export function BulkFormativeModal({
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
                 <Target size={14} className="text-purple-600" />
-                Informasi Sesi Pembelajaran (Berlaku Satu Kelas)
+                {isUAMode
+                  ? 'Informasi Sesi Pembelajaran (Berlaku untuk Peserta UA Terpilih)'
+                  : 'Informasi Sesi Pembelajaran (Berlaku Satu Kelas)'}
               </span>
               <span className="text-[11px] text-gray-400 font-mono">
                 ID Sesi: {sessionId.substring(0, 14)}...
               </span>
             </div>
+
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Tanggal Asesmen */}
@@ -463,12 +575,58 @@ export function BulkFormativeModal({
             </div>
           </div>
 
+          {/* Modal Filter and Search Bar */}
+          <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="flex items-center gap-2 flex-1 min-w-[220px]">
+              <div className="relative flex-1 max-w-xs">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={modalSearch}
+                  onChange={e => setModalSearch(e.target.value)}
+                  placeholder="Cari peserta dalam sesi ini..."
+                  className="w-full pl-8 pr-2.5 py-1 text-xs border border-gray-200 rounded-lg bg-white focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
+              {isUAMode && (
+                <>
+                  <select
+                    value={modalGradeFilter}
+                    onChange={e => setModalGradeFilter(e.target.value as any)}
+                    className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white"
+                  >
+                    <option value="ALL">Semua Grade</option>
+                    <option value="7">Grade 7</option>
+                    <option value="8">Grade 8</option>
+                    <option value="9">Grade 9</option>
+                  </select>
+                  {availableModalClasses.length > 1 && (
+                    <select
+                      value={modalClassFilter}
+                      onChange={e => setModalClassFilter(e.target.value)}
+                      className="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white"
+                    >
+                      <option value="ALL">Semua Kelas Asal</option>
+                      {availableModalClasses.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="text-[11px] text-gray-500 font-medium">
+              Menampilkan <strong className="text-gray-900">{visibleStudents.length}</strong> dari {students.length} peserta
+            </div>
+          </div>
+
           {/* Bulk Next Action Bar */}
           <div className="px-4 py-3 bg-slate-50 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2">
               <span className="font-bold text-gray-700">Terapkan Next Action Cepat:</span>
               <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-semibold text-[11px]">
-                {selectedForNextAction.length} siswa dipilih
+                {selectedForNextAction.length} peserta terpilih
               </span>
             </div>
 
@@ -500,7 +658,7 @@ export function BulkFormativeModal({
                 disabled={selectedForNextAction.length === 0}
                 className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors disabled:opacity-50"
               >
-                <CheckCheck size={14} /> Terapkan ke Siswa Terpilih
+                <CheckCheck size={14} /> Terapkan ke Peserta Terpilih
               </button>
             </div>
           </div>
@@ -513,14 +671,17 @@ export function BulkFormativeModal({
                   <th className="py-2.5 px-3 w-10 text-center">
                     <input
                       type="checkbox"
-                      checked={selectedForNextAction.length === students.length && students.length > 0}
+                      checked={isAllVisibleSelected}
                       onChange={handleToggleSelectAll}
-                      title="Pilih / Batal Pilih Semua untuk Next Action"
+                      title="Pilih / Batal Pilih Semua peserta yang tampil untuk Next Action"
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                   </th>
                   <th className="py-2.5 px-2 w-10 text-center font-mono">No</th>
                   <th className="py-2.5 px-3 min-w-[170px] max-w-[210px]">Nama Siswa</th>
+                  {isUAMode && (
+                    <th className="py-2.5 px-3 w-24 text-center">Kelas</th>
+                  )}
                   <th className="py-2.5 px-3 min-w-[210px] text-center">
                     Capaian LO <span className="text-gray-400 normal-case font-normal">(Klik untuk menilai)</span>
                   </th>
@@ -529,47 +690,64 @@ export function BulkFormativeModal({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {students.map((student, idx) => {
-                  const row = studentRows[student.id] || {
-                    comprehensionLevel: null,
-                    nextAction: '',
-                    isCustomNextAction: false,
-                    customNextActionText: '',
-                    notes: ''
-                  };
-                  const isChecked = selectedForNextAction.includes(student.id);
+                {visibleStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={isUAMode ? 7 : 6} className="py-8 text-center text-gray-400">
+                      Tidak ada peserta yang sesuai filter pencarian di modal ini.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleStudents.map((student, idx) => {
+                    const row = studentRows[student.id] || {
+                      comprehensionLevel: null,
+                      nextAction: '',
+                      isCustomNextAction: false,
+                      customNextActionText: '',
+                      notes: ''
+                    };
+                    const isChecked = selectedForNextAction.includes(student.id);
 
-                  return (
-                    <tr
-                      key={student.id}
-                      className={`hover:bg-slate-50/70 transition-colors ${
-                        row.comprehensionLevel ? 'bg-white' : 'bg-gray-50/40 text-gray-500'
-                      }`}
-                    >
-                      {/* Checkbox for bulk Next Action */}
-                      <td className="py-2 px-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleSelectForNextAction(student.id)}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        />
-                      </td>
+                    return (
+                      <tr
+                        key={student.id}
+                        className={`hover:bg-slate-50/70 transition-colors ${
+                          row.comprehensionLevel ? 'bg-white' : 'bg-gray-50/40 text-gray-500'
+                        }`}
+                      >
+                        {/* Checkbox for bulk Next Action */}
+                        <td className="py-2 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleSelectForNextAction(student.id)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          />
+                        </td>
 
-                      {/* No Absen */}
-                      <td className="py-2 px-2 text-center text-gray-400 font-mono">
-                        {student.attendanceNumber ?? (student as any).noAbsen ?? idx + 1}
-                      </td>
+                        {/* No Absen */}
+                        <td className="py-2 px-2 text-center text-gray-400 font-mono">
+                          {student.attendanceNumber ?? (student as any).noAbsen ?? idx + 1}
+                        </td>
 
-                      {/* Nama Siswa */}
-                      <td className="py-2 px-3">
-                        <div className="font-semibold text-gray-900 truncate" title={student.name}>
-                          {student.name}
-                        </div>
-                        <div className="text-[10px] text-gray-400 font-mono">
-                          {student.nisn ? `NISN: ${student.nisn}` : ((student as any).nis ? `NIS: ${(student as any).nis}` : '')}
-                        </div>
-                      </td>
+                        {/* Nama Siswa */}
+                        <td className="py-2 px-3">
+                          <div className="font-semibold text-gray-900 truncate" title={student.name}>
+                            {student.name}
+                          </div>
+                          <div className="text-[10px] text-gray-400 font-mono">
+                            {student.nisn ? `NISN: ${student.nisn}` : ((student as any).nis ? `NIS: ${(student as any).nis}` : '')}
+                          </div>
+                        </td>
+
+                        {/* Kelas Asal (UA mode) */}
+                        {isUAMode && (
+                          <td className="py-2 px-3 text-center">
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded font-bold text-[10px] whitespace-nowrap">
+                              {(student as any).className || classesMap[student.classId] || student.classId || '-'}
+                            </span>
+                          </td>
+                        )}
+
 
                       {/* Capaian LO: Achieved vs Not Achieved vs Belum dinilai */}
                       <td className="py-2 px-3">
@@ -647,7 +825,7 @@ export function BulkFormativeModal({
                       </td>
                     </tr>
                   );
-                })}
+                }))}
               </tbody>
             </table>
           </div>
@@ -657,7 +835,7 @@ export function BulkFormativeModal({
             {/* Live Stats */}
             <div className="flex items-center gap-3 text-xs">
               <span className="font-semibold text-gray-700">
-                {countAssessed} dari {students.length} siswa dinilai:
+                {countAssessed} dari {students.length} {isUAMode ? 'peserta' : 'siswa'} dinilai:
               </span>
               <span className="px-2 py-0.5 rounded-md font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                 {countAchieved} Achieved
@@ -689,7 +867,7 @@ export function BulkFormativeModal({
                 className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
               >
                 <Save size={15} />
-                {saving ? 'Menyimpan Sesi...' : `Simpan Sesi Asesmen (${countAssessed} Siswa)`}
+                {saving ? 'Menyimpan Sesi...' : `Simpan Sesi Asesmen (${countAssessed} ${isUAMode ? 'Peserta' : 'Siswa'})`}
               </button>
             </div>
           </div>

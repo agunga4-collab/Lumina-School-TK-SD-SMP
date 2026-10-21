@@ -1,14 +1,11 @@
 export type JHFormativeScore = 'Achieved' | 'Not Achieved';
 export type JHLegacyScore = 'B' | 'D' | 'A';
 export type JHFormativeLevel = JHFormativeScore | JHLegacyScore;
-
-// Backward-compatible alias
 export type ComprehensionLevel = JHFormativeLevel;
-
-// Nilai sumatif LG tetap skala B/D/A
 export type JHSummativeScore = 'B' | 'D' | 'A';
+export type JHAssessmentMode = 'SUBJECT' | 'UNIT_ACTIVITY';
 
-export function isLegacyScore(val: any): val is JHLegacyScore {
+export function isLegacyScore(val: unknown): val is JHLegacyScore {
   return val === 'B' || val === 'D' || val === 'A';
 }
 
@@ -17,43 +14,28 @@ export interface AssessmentBookOptions {
   nextActions: string[];
   summativeTasks: string[];
 }
-
 export const DEFAULT_ASSESSMENT_BOOK_OPTIONS: AssessmentBookOptions = {
-  formativeTasks: [
-    'Lembar Kerja (LKPD)',
-    'Latihan Mandiri',
-    'Kuis Singkat',
-    'Diskusi Terbimbing',
-    'Presentasi Mini',
-    'Praktik / Eksperimen',
-    'Tanya Jawab Lisan',
-    'Observasi Kelas'
-  ],
-  nextActions: [
-    'Lanjut ke LO Berikutnya',
-    'Pengayaan Mandiri',
-    'Tutor Sebaya',
-    'Bimbingan Personal Guru',
-    'Latihan Soal Bertingkat',
-    'Refleksi & Remediasi Terfokus'
-  ],
-  summativeTasks: [
-    'Proyek Pembelajaran (LJ)',
-    'Tes Tertulis Sumatif',
-    'Unjuk Kerja / Praktik',
-    'Portofolio Karya',
-    'Presentasi Akhir LJ'
-  ]
+  formativeTasks: ['Lembar Kerja (LKPD)', 'Latihan Mandiri', 'Kuis Singkat', 'Diskusi Terbimbing', 'Presentasi Mini', 'Praktik / Eksperimen', 'Tanya Jawab Lisan', 'Observasi Kelas'],
+  nextActions: ['Lanjut ke LO Berikutnya', 'Pengayaan Mandiri', 'Tutor Sebaya', 'Bimbingan Personal Guru', 'Latihan Soal Bertingkat', 'Refleksi & Remediasi Terfokus'],
+  summativeTasks: ['Proyek Pembelajaran (LJ)', 'Tes Tertulis Sumatif', 'Unjuk Kerja / Praktik', 'Portofolio Karya', 'Presentasi Akhir LJ']
 };
 
-export interface JHAssessmentLO {
+export interface JHAssessmentUAContext {
+  assessmentMode?: JHAssessmentMode;
+  unitActivityId?: string;
+  unitActivityName?: string;
+  unitActivityCategory?: string;
+  targetGrade?: string;
+  assessmentGroupId?: string;
+}
+export interface JHAssessmentLO extends JHAssessmentUAContext {
   id: string;
   lgId: string;
   classId: string;
   subjectId: string;
   academicYear: string;
   semester: string;
-  code: string; // e.g. "LO 1", "LO 2"
+  code: string;
   title: string;
   order: number;
   isActive: boolean;
@@ -62,8 +44,7 @@ export interface JHAssessmentLO {
   createdAt: number;
   updatedAt: number;
 }
-
-export interface JHFormativeEntry {
+export interface JHFormativeEntry extends JHAssessmentUAContext {
   id: string;
   loId: string;
   lgId: string;
@@ -73,12 +54,12 @@ export interface JHFormativeEntry {
   semester: string;
   studentId: string;
   studentName: string;
-  date: string; // YYYY-MM-DD (WIB)
+  date: string;
   formativeTask: string;
   comprehensionLevel: JHFormativeLevel;
   nextAction: string;
   notes?: string;
-  sessionId?: string; // Identitas sesi bersama asesmen kelas
+  sessionId?: string;
   teacherId: string;
   teacherName: string;
   createdAt: number;
@@ -88,8 +69,7 @@ export interface JHFormativeEntry {
   correctedByName?: string;
   correctionReason?: string;
 }
-
-export interface JHSummativeEntry {
+export interface JHSummativeEntry extends JHAssessmentUAContext {
   id: string;
   lgId: string;
   classId: string;
@@ -98,7 +78,7 @@ export interface JHSummativeEntry {
   semester: string;
   studentId: string;
   studentName: string;
-  date: string; // YYYY-MM-DD (WIB)
+  date: string;
   summativeTask: string;
   summativeScore: JHSummativeScore;
   notes?: string;

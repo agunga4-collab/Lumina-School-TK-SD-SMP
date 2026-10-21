@@ -45,6 +45,10 @@ interface Props {
   teacherName: string;
   isSuperAdmin?: boolean;
   isReadOnly?: boolean;
+  mode?: 'SUBJECT' | 'UNIT_ACTIVITY';
+  unitActivityName?: string;
+  unitActivityCategory?: string;
+  targetGrade?: string;
   onSaved: () => void;
 }
 
@@ -63,8 +67,13 @@ export function FormativeAssessmentModal({
   teacherName,
   isSuperAdmin = false,
   isReadOnly = false,
+  mode = 'SUBJECT',
+  unitActivityName = '',
+  unitActivityCategory = '',
+  targetGrade = 'ALL',
   onSaved
 }: Props) {
+
   const latestEntry = historyEntries[historyEntries.length - 1];
 
   const [date, setDate] = useState<string>(() => getTodayWIB());
@@ -243,7 +252,7 @@ export function FormativeAssessmentModal({
         await addFormativeEntry({
           loId: lo.id,
           lgId: lo.lgId,
-          classId,
+          classId: student.classId || classId,
           subjectId,
           academicYear,
           semester,
@@ -255,8 +264,14 @@ export function FormativeAssessmentModal({
           nextAction: resolvedNextAction || 'Lanjut ke LO Berikutnya',
           notes: notes.trim(),
           teacherId,
-          teacherName
+          teacherName,
+          assessmentMode: mode,
+          unitActivityId: unitActivityName || undefined,
+          unitActivityName: unitActivityName || undefined,
+          unitActivityCategory: unitActivityCategory || undefined,
+          targetGrade: targetGrade !== 'ALL' ? targetGrade : undefined
         });
+
         toast.success(`Asesmen formatif untuk ${student.name} berhasil disimpan!`);
       }
 
