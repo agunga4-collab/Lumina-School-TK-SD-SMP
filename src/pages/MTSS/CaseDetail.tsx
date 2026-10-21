@@ -20,14 +20,13 @@ import {
   handleFirestoreError, 
   getCICODailyReport, 
   getCICODailyReports,
-  getCICOWeeklyWorksheetsForStudent,
   getBehaviorNotifications,
   deleteMTSSConcern,
   getTeachers
 } from '../../lib/firebase';
 import { SEVERE_BEHAVIOR_CATEGORIES } from '../../constants/mtssSevereCategories';
 import { getBehaviorStudentAcademicContext } from '../../services/mtssAcademicContextService';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { AddDataForm, Tier2MeetingForm, CloseCaseForm } from '../../components/MTSS/BehaviorForms';
 import { 
   generateWeeklyCICOReport, 
@@ -342,6 +341,21 @@ export default function CaseDetail() {
   const { profile } = useAuth();
   
   const [mtssCase, setMtssCase] = React.useState<MTSSCase | null>(null);
+  const handleOpenCICOWorkbook = () => {
+    if (!mtssCase?.studentId || !mtssCase?.classId || !mtssCase?.id) {
+      toast.error('Identitas siswa, kelas, atau kasus belum lengkap.');
+      return;
+    }
+    const params = new URLSearchParams({
+      studentId: String(mtssCase.studentId),
+      classId: String(mtssCase.classId),
+      caseId: String(mtssCase.id),
+    });
+    if (mtssCase.academicYear) params.set('academicYear', mtssCase.academicYear);
+    if (mtssCase.semester) params.set('semester', String(mtssCase.semester));
+    navigate(`/junior-high/behavior/mtss/spreadsheet?${params.toString()}`);
+  };
+
   const [concerns, setConcerns] = React.useState<MTSSConcern[]>([]);
   const [bipPlan, setBipPlan] = React.useState<BIPPlan | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -374,6 +388,8 @@ export default function CaseDetail() {
   const [activeTab, setActiveTab] = React.useState<'overview' | 'concerns' | 'cico' | 'bip' | 'home-programme'>('overview');
 
   const [worksheets, setWorksheets] = React.useState<CICOWeeklyWorksheet[]>([]);
+  const [worksheetError, setWorksheetError] = React.useState('');
+  const [worksheetsLoading, setWorksheetsLoading] = React.useState(false);
 
   const [todayReport, setTodayReport] = React.useState<CICODailyReport | null>(null);
   const [allCicoReports, setAllCicoReports] = React.useState<CICODailyReport[]>([]);
@@ -490,12 +506,6 @@ export default function CaseDetail() {
         // Fetch academic context
         getBehaviorStudentAcademicContext(caseData.studentId).then(setAcademicContext);
 
-        // Fetch weekly worksheets from the primary spreadsheet data source
-        if (caseData.studentId) {
-          getCICOWeeklyWorksheetsForStudent(caseData.studentId)
-            .then(ws => setWorksheets(ws || []))
-            .catch(err => console.error("Error loading CICO worksheets:", err));
-        }
         
         // Refresh concerns
         const concernsData = await getMTSSConcerns(id);
@@ -511,6 +521,31 @@ export default function CaseDetail() {
       unsubscribeCase();
     };
   }, [id]);
+
+  React.useEffect(() => {
+    setWorksheets([]);
+    setWorksheetError('');
+    const studentId = mtssCase?.studentId;
+    if (!studentId) { setWorksheetsLoading(false); return; }
+    let cancelled = false;
+    setWorksheetsLoading(true);
+    const unsubscribe = onSnapshot(
+      query(collection(db, 'cicoWeeklyWorksheets'), where('studentId', '==', studentId)),
+      snapshot => {
+        if (cancelled) return;
+        const list = snapshot.docs.map(item => ({ ...item.data(), id: item.id })) as unknown as CICOWeeklyWorksheet[];
+        setWorksheets(list.filter(item => item.classId === mtssCase?.classId && typeof item.weekStartingDate === 'string'));
+        setWorksheetsLoading(false);
+      },
+      error => {
+        if (cancelled) return;
+        setWorksheets([]);
+        setWorksheetError(`Data CICO gagal dimuat: ${error.message}. Ini bukan berarti belum ada data.`);
+        setWorksheetsLoading(false);
+      }
+    );
+    return () => { cancelled = true; unsubscribe(); };
+  }, [mtssCase?.studentId, mtssCase?.classId]);
 
   // Derived CICO statistics from Spreadsheet / Weekly Worksheets on Scale 1-4
   const cicoStats = React.useMemo(() => {
@@ -572,7 +607,8 @@ export default function CaseDetail() {
     }> = [];
 
     const today = new Date();
-    const thisMonday = getMonday(today).toISOString().split('T')[0];
+    const currentMonday = getMonday(today);
+    const thisMonday = `${currentMonday.getFullYear()}-${String(currentMonday.getMonth() + 1).padStart(2, '0')}-${String(currentMonday.getDate()).padStart(2, '0')}`;
     let currentWeekStats: {
       weekStartingDate: string;
       avgScore: number | null;
@@ -596,14 +632,14 @@ export default function CaseDetail() {
         let dayEarned = 0;
         let daySlots = 0;
 
-        (ws.targets || []).forEach(t => {
+        (ws.targets || []).filter(t => typeof t.text === 'string' && t.text.trim()).forEach(t => {
           const scoreObj = ws.scores?.[t.id]?.[dayIdx];
           if (scoreObj) {
-            if (scoreObj.checkIn !== null && scoreObj.checkIn !== undefined && scoreObj.checkIn > 0) {
+            if (typeof scoreObj.checkIn === 'number' && Number.isInteger(scoreObj.checkIn) && scoreObj.checkIn >= 1 && scoreObj.checkIn <= 4) {
               dayEarned += scoreObj.checkIn;
               daySlots += 1;
             }
-            if (scoreObj.checkOut !== null && scoreObj.checkOut !== undefined && scoreObj.checkOut > 0) {
+            if (typeof scoreObj.checkOut === 'number' && Number.isInteger(scoreObj.checkOut) && scoreObj.checkOut >= 1 && scoreObj.checkOut <= 4) {
               dayEarned += scoreObj.checkOut;
               daySlots += 1;
             }
@@ -819,6 +855,8 @@ export default function CaseDetail() {
 
   return (
     <div className="max-w-7xl mx-auto pb-24 space-y-10 group/page">
+      {worksheetError && <div role="alert" className="p-4 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-800">{worksheetError}</div>}
+      {worksheetsLoading && <div role="status" className="text-xs text-blue-700">Memuat ringkasan CICO...</div>}
       {/* Modals */}
       <AnimatePresence>
         {showAddDataModal && (
@@ -1192,13 +1230,7 @@ export default function CaseDetail() {
                    </div>
 
                    {/* Tombol menuju Spreadsheet Siswa */}
-                   <button 
-                     type="button"
-                     onClick={() => navigate(`/mtss/spreadsheet?studentId=${mtssCase.studentId}&classId=${mtssCase.classId}`)}
-                     className="w-full bg-[#002366] hover:bg-blue-800 text-white py-3 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98]"
-                   >
-                      <FileSpreadsheet size={13} /> Buka Pemantauan CICO
-                   </button>
+                   
                 </div>
               </div>
             )}
@@ -1360,7 +1392,7 @@ export default function CaseDetail() {
                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                              <button
                                type="button"
-                               onClick={() => navigate(`/mtss/spreadsheet?studentId=${mtssCase.studentId}&classId=${mtssCase.classId}`)}
+                               onClick={handleOpenCICOWorkbook}
                                className="p-4 rounded-xl border bg-gradient-to-br from-[#002366] to-blue-900 text-white hover:shadow-md transition-all text-left flex items-center justify-between group/cico-btn"
                              >
                                 <div>
@@ -1670,7 +1702,7 @@ export default function CaseDetail() {
 
                   <button
                     type="button"
-                    onClick={() => navigate(`/mtss/spreadsheet?studentId=${mtssCase.studentId}&classId=${mtssCase.classId}`)}
+                    onClick={handleOpenCICOWorkbook}
                     className="flex items-center gap-2 px-6 py-3 bg-[#002366] hover:bg-blue-800 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md active:scale-95 transition-all shrink-0"
                   >
                     <FileSpreadsheet size={16} className="text-amber-300" />

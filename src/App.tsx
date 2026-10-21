@@ -5,6 +5,10 @@ const LegacyCaseRedirect = () => {
   const { id } = useParams();
   return <Navigate to={`/junior-high/behavior/mtss/cases/${id}`} replace />;
 };
+const LegacySpreadsheetRedirect = () => {
+  const location = useLocation();
+  return <Navigate to={{ pathname: '/junior-high/behavior/mtss/spreadsheet', search: location.search, hash: location.hash }} replace />;
+};
 import { Layout } from './components/Layout';
 import { useAuth } from './context/AuthContext';
 import LoginPage from './pages/Auth/LoginPage';
@@ -715,7 +719,7 @@ export default function App() {
             <Route path="concern/new/:caseId" element={<AddConcern />} />
             <Route path="intervention/:id" element={<InterventionPlan />} />
             <Route path="cico/:caseId" element={<CICOTracker />} />
-            <Route path="spreadsheet" element={<Navigate to="/junior-high/behavior/mtss/spreadsheet" replace />} />
+            <Route path="spreadsheet" element={<LegacySpreadsheetRedirect />} />
           </Route>
           
           <Route path="self-exploration">
