@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { X, Check, Loader2, AlertCircle } from 'lucide-react';
+import { X, Check, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { AssessmentBookOptions, JHAssessmentLO, JHFormativeEntry, JHFormativeLevel, JHAssessmentUAContext, Student, isLegacyScore } from '../../../../types';
 import { addFormativeEntry, correctFormativeEntry, hardDeleteFormativeEntry, formatDateWIB, getTodayWIB, getUAContextForLO, getAssignedFormativeTask } from '../../../../services/juniorHighAssessmentBookService';
@@ -43,27 +43,36 @@ export function FormativeAssessmentModal(props: Props) {
   } = props;
 
   const assigned = getAssignedFormativeTask(lo, student.id);
-  const [date, setDate] = React.useState(() => assigned?.date || getTodayWIB());
-  const [task, setTask] = React.useState(() => assigned?.formativeTask || '');
-  const [level, setLevel] = React.useState<JHFormativeLevel | ''>('');
-  const [action, setAction] = React.useState('');
-  const [notes, setNotes] = React.useState('');
+  const latestEntry = React.useMemo(() => {
+    const sorted = [...historyEntries]
+      .filter(item => item.studentId === student.id && item.loId === lo.id)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id));
+    return sorted[sorted.length - 1];
+  }, [historyEntries, student.id, lo.id]);
+
+  const [date, setDate] = React.useState(() => latestEntry?.date || assigned?.date || getTodayWIB());
+  const [task, setTask] = React.useState(() => latestEntry?.formativeTask || assigned?.formativeTask || '');
+  const [level, setLevel] = React.useState<JHFormativeLevel | ''>(() => latestEntry?.comprehensionLevel || '');
+  const [action, setAction] = React.useState(() => latestEntry?.nextAction || '');
+  const [notes, setNotes] = React.useState(() => latestEntry?.notes || '');
   const [reason, setReason] = React.useState('');
   const [correction, setCorrection] = React.useState<string | null>(null);
+  const [actionOpen, setActionOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const lock = React.useRef(false);
 
   React.useEffect(() => {
     if (isOpen) {
-      setDate(assigned?.date || getTodayWIB());
-      setTask(assigned?.formativeTask || '');
-      setLevel('');
-      setAction('');
-      setNotes('');
+      setDate(latestEntry?.date || assigned?.date || getTodayWIB());
+      setTask(latestEntry?.formativeTask || assigned?.formativeTask || '');
+      setLevel(latestEntry?.comprehensionLevel || '');
+      setAction(latestEntry?.nextAction || '');
+      setNotes(latestEntry?.notes || '');
       setReason('');
       setCorrection(null);
+      setActionOpen(false);
     }
-  }, [isOpen, student.id, lo.id, assigned?.id]);
+  }, [isOpen, student.id, lo.id, latestEntry?.id, assigned?.id]);
 
   if (!isOpen) return null;
 
@@ -75,16 +84,18 @@ export function FormativeAssessmentModal(props: Props) {
     setAction(entry.nextAction || '');
     setNotes(entry.notes || '');
     setReason('');
+    setActionOpen(false);
   };
 
   const reset = () => {
     setCorrection(null);
-    setDate(assigned?.date || getTodayWIB());
-    setTask(assigned?.formativeTask || '');
-    setLevel('');
-    setAction('');
-    setNotes('');
+    setDate(latestEntry?.date || assigned?.date || getTodayWIB());
+    setTask(latestEntry?.formativeTask || assigned?.formativeTask || '');
+    setLevel(latestEntry?.comprehensionLevel || '');
+    setAction(latestEntry?.nextAction || '');
+    setNotes(latestEntry?.notes || '');
     setReason('');
+    setActionOpen(false);
   };
 
   const save = async (event: React.FormEvent) => {
@@ -286,19 +297,55 @@ export function FormativeAssessmentModal(props: Props) {
               )}
             </div>
 
-            <label className="block text-xs font-semibold text-slate-700">
-              Next Action (Tindak Lanjut)
-              <input
-                list="individual-next-options"
-                value={action}
-                onChange={event => setAction(event.target.value)}
-                className={control}
-                placeholder="Tindak lanjut individual"
-              />
-              <datalist id="individual-next-options">
-                {options.nextActions.map(value => <option key={value} value={value} />)}
-              </datalist>
-            </label>
+            <div className="relative">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Next Action (Tindak Lanjut)
+              </label>
+              <button
+                type="button"
+                onClick={() => setActionOpen(!actionOpen)}
+                className="w-full flex items-center justify-between border border-slate-300 rounded-xl p-2.5 text-xs bg-slate-50/50 hover:bg-white focus:bg-white focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-500 transition-colors text-left"
+              >
+                <span className={action ? 'text-slate-900 font-medium' : 'text-slate-400'}>
+                  {action || 'Pilih tindak lanjut atau ketik manual...'}
+                </span>
+                <ChevronDown size={14} className="text-slate-400 shrink-0 ml-2" />
+              </button>
+              {actionOpen && (
+                <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto p-1.5 space-y-1">
+                  {options.nextActions.map(opt => {
+                    const isSelected = action === opt;
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => {
+                          setAction(opt);
+                          setActionOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-50 text-purple-900 font-semibold'
+                            : 'hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <span className="break-words">{opt}</span>
+                        {isSelected && <Check size={14} className="text-purple-700 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                  <div className="pt-2 border-t border-slate-100 px-2 pb-1">
+                    <input
+                      type="text"
+                      value={action}
+                      onChange={e => setAction(e.target.value)}
+                      placeholder="Atau ketik tindak lanjut kustom..."
+                      className="w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:bg-white focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-400"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             <label className="block text-xs font-semibold text-slate-700">
               Catatan observasi (opsional)

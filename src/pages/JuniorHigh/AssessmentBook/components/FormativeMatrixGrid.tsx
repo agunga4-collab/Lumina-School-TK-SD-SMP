@@ -138,17 +138,17 @@ export function FormativeMatrixGrid(props: Props) {
                     </div>
                     <p className="font-semibold text-slate-800 text-xs leading-snug break-words">{lo.title}</p>
                     {!isReadOnly && (
-                      <div className="mt-3 flex flex-col gap-1.5">
+                      <div className="mt-3 flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
-                          className="w-full py-1.5 px-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold shadow-xs flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-500"
+                          className="py-1.5 px-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold shadow-xs inline-flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-500 whitespace-nowrap"
                           onClick={() => onOpenSharedTaskModal(lo)}
                         >
                           Tetapkan Task Kelas
                         </button>
                         <button
                           type="button"
-                          className="w-full py-1 px-2.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-400"
+                          className="py-1.5 px-2.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-semibold inline-flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-400 whitespace-nowrap"
                           onClick={() => onOpenBulkModal(lo)}
                         >
                           Nilai massal — nilai sama
@@ -237,9 +237,9 @@ export function FormativeMatrixGrid(props: Props) {
                               e.stopPropagation();
                               void quick(student, lo, 'Achieved');
                             }}
-                            className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] font-bold rounded-lg px-2 py-1 bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400 active:scale-95 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-emerald-500"
+                            className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400 active:scale-95 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-emerald-500 shadow-2xs"
                           >
-                            <Check size={11} /> Achieved
+                            <Check size={12} /> Achieved
                           </button>
                           <button
                             type="button"
@@ -248,9 +248,9 @@ export function FormativeMatrixGrid(props: Props) {
                               e.stopPropagation();
                               void quick(student, lo, 'Not Achieved');
                             }}
-                            className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] font-bold rounded-lg px-2 py-1 bg-rose-50 text-rose-800 border border-rose-300 hover:bg-rose-100 hover:border-rose-400 active:scale-95 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-500"
+                            className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5 bg-rose-50 text-rose-800 border border-rose-300 hover:bg-rose-100 hover:border-rose-400 active:scale-95 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-500 shadow-2xs"
                           >
-                            <X size={11} /> Not Achieved
+                            <X size={12} /> Not Achieved
                           </button>
                         </div>
                       )}
