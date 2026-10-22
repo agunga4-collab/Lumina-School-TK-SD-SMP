@@ -121,14 +121,15 @@ service cloud.firestore {
         get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH';
     }
 
-function isJuniorHighClassId(classId) {
-  return classId is string && (
-    classId.matches('JUNIOR_HIGH_.*') || (
-      exists(/databases/$(database)/documents/classes/$(classId)) &&
-      get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH'
-    )
-  );
-}
+    function isJuniorHighClassId(classId) {
+      return classId is string && (
+        classId.matches('JUNIOR_HIGH_.*') || (
+          exists(/databases/$(database)/documents/classes/$(classId)) &&
+          get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH'
+        )
+      );
+    }
+
     function isJuniorHighLPUStaff() {
       return isActive() && userRole() in [
         'TEACHER', 'HOMEROOM_TEACHER', 'BK_MENTOR',
@@ -298,7 +299,7 @@ function isJuniorHighClassId(classId) {
     function isLpuBatchJHList(data) {
       return data.unit == 'JUNIOR_HIGH' || (
         !('unit' in data) && (
-          (data.classId != null && data.classId.startsWith('JUNIOR_HIGH_')) ||
+          (data.classId != null && data.classId.matches('JUNIOR_HIGH_.*')) ||
           (data.classIds != null && data.classIds.size() > 0) ||
           (data.targetClassIds != null && data.targetClassIds.size() > 0)
         )
@@ -308,20 +309,20 @@ function isJuniorHighClassId(classId) {
     function isLpuBatchJHGet(data) {
       return data.unit == 'JUNIOR_HIGH' || (
         !('unit' in data) && (
-          (data.classId != null && data.classId.startsWith('JUNIOR_HIGH_')) ||
+          (data.classId != null && data.classId.matches('JUNIOR_HIGH_.*')) ||
           (data.classIds != null && data.classIds.size() > 0 && (
-            data.classIds[0].startsWith('JUNIOR_HIGH_') ||
-            (data.classIds.size() > 1 && data.classIds[1].startsWith('JUNIOR_HIGH_')) ||
-            (data.classIds.size() > 2 && data.classIds[2].startsWith('JUNIOR_HIGH_')) ||
-            (data.classIds.size() > 3 && data.classIds[3].startsWith('JUNIOR_HIGH_')) ||
-            (data.classIds.size() > 4 && data.classIds[4].startsWith('JUNIOR_HIGH_'))
+            data.classIds[0].matches('JUNIOR_HIGH_.*') ||
+            (data.classIds.size() > 1 && data.classIds[1].matches('JUNIOR_HIGH_.*')) ||
+            (data.classIds.size() > 2 && data.classIds[2].matches('JUNIOR_HIGH_.*')) ||
+            (data.classIds.size() > 3 && data.classIds[3].matches('JUNIOR_HIGH_.*')) ||
+            (data.classIds.size() > 4 && data.classIds[4].matches('JUNIOR_HIGH_.*'))
           )) ||
           (data.targetClassIds != null && data.targetClassIds.size() > 0 && (
-            data.targetClassIds[0].startsWith('JUNIOR_HIGH_') ||
-            (data.targetClassIds.size() > 1 && data.targetClassIds[1].startsWith('JUNIOR_HIGH_')) ||
-            (data.targetClassIds.size() > 2 && data.targetClassIds[2].startsWith('JUNIOR_HIGH_')) ||
-            (data.targetClassIds.size() > 3 && data.targetClassIds[3].startsWith('JUNIOR_HIGH_')) ||
-            (data.targetClassIds.size() > 4 && data.targetClassIds[4].startsWith('JUNIOR_HIGH_'))
+            data.targetClassIds[0].matches('JUNIOR_HIGH_.*') ||
+            (data.targetClassIds.size() > 1 && data.targetClassIds[1].matches('JUNIOR_HIGH_.*')) ||
+            (data.targetClassIds.size() > 2 && data.targetClassIds[2].matches('JUNIOR_HIGH_.*')) ||
+            (data.targetClassIds.size() > 3 && data.targetClassIds[3].matches('JUNIOR_HIGH_.*')) ||
+            (data.targetClassIds.size() > 4 && data.targetClassIds[4].matches('JUNIOR_HIGH_.*'))
           ))
         )
       );
@@ -651,7 +652,7 @@ function isJuniorHighClassId(classId) {
       allow update: if isAdmin() || isMTSSAcademicManager() || (
         isSignedIn() &&
         existing().homeroomTeacherId is string &&
-        existing().homeroomTeacherId.startsWith('INVITE_') &&
+        existing().homeroomTeacherId.matches('INVITE_.*') &&
         incoming().homeroomTeacherId == request.auth.uid &&
         incoming().diff(existing()).affectedKeys().hasOnly(['homeroomTeacherId', 'homeroomTeacherName'])
       );
@@ -1620,6 +1621,64 @@ function isJuniorHighClassId(classId) {
       );
       allow create, update: if isActive() && (isJuniorHighStaffAuthorized() || isJuniorHighTeacher() || isJuniorHighStaff());
       allow delete: if isActive() && isAdmin();
+    }
+
+
+    // Shared task headers are separate from grades. Only staff may access them.
+    match /jh_ab_shared_tasks/{taskId} {
+      allow read: if isActive() && isJuniorHighStaff();
+      allow create: if isActive() && (
+        isAdmin() || isJuniorHighTeacher() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
+      ) && request.resource.data.keys().hasAll([
+        'id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId',
+        'academicYear', 'semester', 'date', 'formativeTask', 'studentIds',
+        'teacherId', 'teacherName', 'createdAt', 'updatedAt'
+      ]) && request.resource.data.keys().hasOnly([
+        'id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId',
+        'academicYear', 'semester', 'date', 'formativeTask', 'studentIds',
+        'teacherId', 'teacherName', 'createdAt', 'updatedAt', 'assessmentMode',
+        'unitActivityId', 'unitActivityName', 'unitActivityCategory',
+        'assessmentGroupId', 'targetGrade'
+      ]) && request.resource.data.id == taskId
+      && request.resource.data.loId is string
+      && request.resource.data.teacherId == request.auth.uid
+      && request.resource.data.teacherName is string
+      && request.resource.data.formativeTask is string
+      && request.resource.data.formativeTask.size() > 0
+      && request.resource.data.formativeTask.size() <= 2000
+      && request.resource.data.date is string
+      && request.resource.data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+      && request.resource.data.studentIds is list
+      && request.resource.data.studentIds.size() > 0
+      && request.resource.data.studentIds.size() <= 400
+      && request.resource.data.createdAt is number
+      && request.resource.data.updatedAt == request.resource.data.createdAt
+      && exists(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId))
+      && request.resource.data.lgId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.lgId
+      && request.resource.data.subjectId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.subjectId
+      && request.resource.data.academicYear == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.academicYear
+      && request.resource.data.semester == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.semester
+      && request.resource.data.sourceLoClassId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.classId
+      && (
+        (
+          !('assessmentMode' in request.resource.data)
+          && request.resource.data.classId == request.resource.data.sourceLoClassId
+          && (!('assessmentMode' in get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data)
+            || get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.assessmentMode != 'UNIT_ACTIVITY')
+        ) || (
+          request.resource.data.assessmentMode == 'UNIT_ACTIVITY'
+          && get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.assessmentMode == 'UNIT_ACTIVITY'
+          && request.resource.data.unitActivityId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.unitActivityId
+          && request.resource.data.unitActivityName == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.unitActivityName
+          && request.resource.data.unitActivityCategory == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.unitActivityCategory
+          && request.resource.data.targetGrade == 'ALL'
+          && request.resource.data.classId == request.resource.data.assessmentGroupId
+          && request.resource.data.assessmentGroupId is string
+          && request.resource.data.assessmentGroupId.matches('JUNIOR_HIGH_UA_V2_.*~ALL')
+        )
+      );
+      allow update, delete: if false;
     }
 
     // Junior High Assessment Book Rules (Fase 1)
