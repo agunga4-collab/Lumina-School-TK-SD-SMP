@@ -1,5 +1,5 @@
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, writeBatch } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, getActiveStudents } from '../lib/firebase';
 import { AssessmentBookOptions, DEFAULT_ASSESSMENT_BOOK_OPTIONS, JHAssessmentLO, JHFormativeEntry, JHSummativeEntry, JHFormativeLevel, JHAssessmentUAContext, LearningGoal, ReportConfig } from '../types';
 import { isSameJHSubject, getJHSubjectLegacyValue } from '../constants/juniorHighSubjectCatalog';
 
@@ -325,10 +325,25 @@ export async function saveSharedFormativeTask(params: { id: string; loId: string
     if (ids.some(id => !eligible.has(id))) throw new Error('Ada penerima task yang bukan peserta UA aktif.');
   } else {
     if (lo.classId !== params.classId) throw new Error('Kelas task tidak sesuai LO.');
-    const snapshots = await Promise.all(ids.map(id => getDoc(doc(db, 'students', id))));
-    if (snapshots.some(item => !item.exists() || item.data().classId !== params.classId)) throw new Error('Ada penerima task yang bukan siswa kelas ini.');
-  }
-  const ref = doc(db, 'jh_ab_shared_tasks', `TASK_${segment(params.id)}`);
+const activeStudents = await getActiveStudents(
+  params.classId,
+  params.academicYear
+);
+
+const eligibleStudentIds = new Set(
+  activeStudents.map(student => String(student.id).trim())
+);
+
+const invalidStudentIds = ids.filter(
+  studentId => !eligibleStudentIds.has(studentId)
+);
+
+if (invalidStudentIds.length > 0) {
+  throw new Error(
+    `${invalidStudentIds.length} penerima task tidak ditemukan ` +
+    'dalam enrollment aktif kelas dan tahun ajaran ini.'
+  );
+}  const ref = doc(db, 'jh_ab_shared_tasks', `TASK_${segment(params.id)}`);
   const existing = await getDoc(ref);
   if (existing.exists()) {
     const old = existing.data();
