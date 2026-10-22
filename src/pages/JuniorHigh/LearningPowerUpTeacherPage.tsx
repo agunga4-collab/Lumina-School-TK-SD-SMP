@@ -170,13 +170,14 @@ function HeaderEditor({
   const [periodLabel, setPeriodLabel] = React.useState(column?.periodLabel || '');
   const [order, setOrder] = React.useState(column?.order ?? defaultOrder);
   const [valueType, setValueType] = React.useState<'FREE' | 'NUMBER'>(column?.valueType || 'FREE');
-  // A new header always starts with ALL students of this class, not the filtered table rows.
   const [ids, setIds] = React.useState(() => new Set(column?.studentIds || students.map(student => student.id)));
+  const [showRecipients, setShowRecipients] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState('');
   const lock = React.useRef(false);
   const visible = students.filter(student => `${student.name} ${student.nis}`.toLowerCase().includes(search.toLowerCase()));
+
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     if (lock.current) return;
@@ -216,27 +217,126 @@ function HeaderEditor({
       setSaving(false);
     }
   };
-  return <div className="fixed inset-0 z-50 bg-black/40 flex justify-center items-center p-4">
-    <form onSubmit={save} className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col shadow-xl">
-      <header className="p-5 border-b flex justify-between gap-4"><div><h2 className="font-bold">{column ? 'Edit Header Kolom' : 'Tambah Header Kolom'}</h2><p className="text-xs text-slate-500 mt-1">Kelas: {className} · Semester {semester}</p></div><button type="button" disabled={saving} onClick={onClose}>Tutup</button></header>
-      <fieldset disabled={saving} className="p-5 overflow-y-auto space-y-4">
-        <label className="block text-xs">Judul header<input required maxLength={200} value={label} onChange={event => setLabel(event.target.value)} className={inputClass} placeholder="Judul Buku / AAP / Jurnal 1 / Pekan 1 / lainnya" /></label>
-        <label className="block text-xs">Keterangan periode (opsional)<input maxLength={200} value={periodLabel} onChange={event => setPeriodLabel(event.target.value)} className={inputClass} placeholder="Bebas; tidak wajib tanggal atau pekan" /></label>
-        <div className="grid grid-cols-2 gap-3"><label className="text-xs">Urutan<input type="number" required value={order} onChange={event => setOrder(Number(event.target.value))} className={inputClass} /></label><label className="text-xs">Format<select value={valueType} onChange={event => setValueType(event.target.value as 'FREE' | 'NUMBER')} className={inputClass}><option value="FREE">Bebas — teks atau angka</option><option value="NUMBER">Angka / skor</option></select></label></div>
-        <div className="bg-blue-50 text-blue-900 text-xs p-3 rounded-lg">Header ini khusus kelas {className}. Default header baru berlaku untuk seluruh siswa kelas ini, meskipun tabel sedang difilter level, coach, atau nama. Anda boleh memilih sebagian siswa. Perubahan level/coach tidak otomatis memindahkan penerima.</div>
-        <p className="text-xs font-semibold">{ids.size} dari {students.length} siswa kelas {className} dipilih.</p>
-        <input value={search} onChange={event => setSearch(event.target.value)} className={inputClass} placeholder={`Cari siswa di kelas ${className}`} />
-        <div className="flex gap-4 text-xs"><button type="button" className="underline" onClick={() => setIds(new Set(students.map(student => student.id)))}>Pilih Semua Siswa Kelas</button><button type="button" className="underline" onClick={() => setIds(new Set())}>Kosongkan pilihan</button></div>
-        <div className="border rounded-xl divide-y max-h-64 overflow-y-auto">{visible.map(student => <label key={student.id} className="flex gap-3 items-center p-3 text-xs"><input type="checkbox" checked={ids.has(student.id)} onChange={() => setIds(previous => {
-              const next = new Set(previous);
-              if (next.has(student.id)) next.delete(student.id);else next.add(student.id);
-              return next;
-            })} /><span>{student.name}<span className="block text-slate-400">{className}</span></span></label>)}</div>
-        {error && <p role="alert" className="text-xs text-rose-700 bg-rose-50 p-3 rounded">{error}</p>}
-      </fieldset>
-      <footer className="p-4 border-t flex justify-end"><button type="submit" disabled={saving} className="bg-emerald-700 text-white rounded-xl px-5 py-2 text-sm disabled:opacity-40">{saving ? 'Menyimpan…' : 'Simpan Header & Penerima Kelas'}</button></footer>
-    </form>
-  </div>;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex justify-center items-center p-4">
+      <form onSubmit={save} className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl border border-slate-200">
+        <header className="p-5 border-b border-slate-200 flex justify-between items-center bg-slate-50/50 shrink-0">
+          <div>
+            <h2 className="font-bold text-slate-900 text-base">{column ? 'Edit Header Kolom' : 'Tambah Header Kolom'}</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Kelas: <strong className="text-slate-800">{className}</strong> · Semester {semester}</p>
+          </div>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-40"
+          >
+            Tutup
+          </button>
+        </header>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
+          <fieldset disabled={saving} className="space-y-4">
+            <label className="block text-xs font-semibold text-slate-700">
+              Judul header <span className="text-rose-500">*</span>
+              <input required maxLength={200} value={label} onChange={event => setLabel(event.target.value)} className={inputClass} placeholder="Judul Buku / AAP / Jurnal 1 / Pekan 1 / lainnya" />
+            </label>
+
+            <label className="block text-xs font-semibold text-slate-700">
+              Keterangan periode (opsional)
+              <input maxLength={200} value={periodLabel} onChange={event => setPeriodLabel(event.target.value)} className={inputClass} placeholder="Bebas; tidak wajib tanggal atau pekan" />
+            </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs font-semibold text-slate-700">
+                Urutan <span className="text-rose-500">*</span>
+                <input type="number" required value={order} onChange={event => setOrder(Number(event.target.value))} className={inputClass} />
+              </label>
+              <label className="text-xs font-semibold text-slate-700">
+                Format Isian <span className="text-rose-500">*</span>
+                <select value={valueType} onChange={event => setValueType(event.target.value as 'FREE' | 'NUMBER')} className={inputClass}>
+                  <option value="FREE">Bebas — teks atau angka</option>
+                  <option value="NUMBER">Angka / skor</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 text-blue-900 text-xs p-3.5 rounded-xl leading-relaxed">
+              Header ini khusus kelas <strong>{className}</strong>. Default header berlaku untuk seluruh siswa kelas ini. Anda dapat mengubah penerima jika diperlukan.
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+              <div>
+                <span className="font-bold text-slate-800"><strong className="text-emerald-700">{ids.size}</strong> dari {students.length} siswa</span> kelas {className} dipilih sebagai penerima.
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRecipients(prev => !prev)}
+                className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-400"
+              >
+                {showRecipients ? 'Sembunyikan daftar penerima' : 'Ubah penerima / pilih sebagian'}
+              </button>
+            </div>
+
+            {showRecipients && (
+              <div className="space-y-3 pt-2 border-t border-slate-100 animate-fadeIn">
+                <input value={search} onChange={event => setSearch(event.target.value)} className={inputClass} placeholder={`Cari siswa di kelas ${className}...`} />
+                <div className="flex gap-4 text-xs">
+                  <button type="button" className="text-emerald-800 font-semibold hover:underline cursor-pointer" onClick={() => setIds(new Set(students.map(student => student.id)))}>Pilih Semua Siswa Kelas</button>
+                  <button type="button" className="text-slate-500 font-semibold hover:underline cursor-pointer" onClick={() => setIds(new Set())}>Kosongkan pilihan</button>
+                </div>
+                <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-56 overflow-y-auto bg-slate-50/50">
+                  {visible.map(student => {
+                    const isChecked = ids.has(student.id);
+                    return (
+                      <label key={student.id} className={`flex gap-3 items-center p-2.5 text-xs cursor-pointer transition-colors ${isChecked ? 'bg-purple-50/50 hover:bg-purple-50' : 'hover:bg-slate-100'}`}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => setIds(previous => {
+                            const next = new Set(previous);
+                            if (next.has(student.id)) next.delete(student.id);
+                            else next.add(student.id);
+                            return next;
+                          })}
+                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                        />
+                        <div>
+                          <span className="font-semibold text-slate-800">{student.name}</span>
+                          <span className="text-[10px] text-slate-400 block font-mono">NIS: {student.nis} · {className}</span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {error && <p role="alert" className="text-xs text-rose-800 bg-rose-50 border border-rose-200 p-3 rounded-xl font-medium">{error}</p>}
+          </fieldset>
+        </div>
+
+        <footer className="p-4 border-t border-slate-200 bg-slate-50/50 flex justify-end gap-3 shrink-0">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onClose}
+            className="px-4 py-2 border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-slate-400"
+          >
+            Batal
+          </button>
+          <button
+            type="submit"
+            disabled={saving || !ids.size || !label.trim()}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-5 py-2 text-xs font-bold shadow-xs cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            {saving ? 'Menyimpan…' : 'Simpan Header & Penerima'}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
 }
 export default function LearningPowerUpTeacherPage() {
   const {
