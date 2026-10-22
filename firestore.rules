@@ -121,15 +121,14 @@ service cloud.firestore {
         get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH';
     }
 
-    function isJuniorHighClassId(classId) {
-      return classId is string && (
-        classId.startsWith('JUNIOR_HIGH_') || (
-          exists(/databases/$(database)/documents/classes/$(classId)) &&
-          get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH'
-        )
-      );
-    }
-
+function isJuniorHighClassId(classId) {
+  return classId is string && (
+    classId.matches('JUNIOR_HIGH_.*') || (
+      exists(/databases/$(database)/documents/classes/$(classId)) &&
+      get(/databases/$(database)/documents/classes/$(classId)).data.unitId == 'JUNIOR_HIGH'
+    )
+  );
+}
     function isJuniorHighLPUStaff() {
       return isActive() && userRole() in [
         'TEACHER', 'HOMEROOM_TEACHER', 'BK_MENTOR',
