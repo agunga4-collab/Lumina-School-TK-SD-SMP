@@ -313,47 +313,110 @@ async function loadEntryLO(entry: { loId: string; lgId: string; academicYear: st
   if (lo.isActive === false || lo.lgId !== entry.lgId || lo.academicYear !== entry.academicYear || String(lo.semester) !== String(entry.semester)) throw new Error('Konteks LO dan entri tidak sesuai atau LO tidak aktif.');
   return lo;
 }
-export async function saveSharedFormativeTask(params: { id: string; loId: string; lgId: string; classId: string; subjectId: string; academicYear: string; semester: string; date: string; formativeTask: string; studentIds: string[]; teacherId: string; teacherName: string }): Promise<string> {
+
+export async function saveSharedFormativeTask(params: {
+  id: string;
+  loId: string;
+  lgId: string;
+  classId: string;
+  subjectId: string;
+  academicYear: string;
+  semester: string;
+  date: string;
+  formativeTask: string;
+  studentIds: string[];
+  teacherId: string;
+  teacherName: string;
+}): Promise<string> {
   const ids = [...new Set(params.studentIds.map(clean).filter(Boolean))];
-  if (!ids.length || ids.length > 400 || !clean(params.formativeTask) || !/^\d{4}-\d{2}-\d{2}$/.test(params.date) || !clean(params.teacherId) || !clean(params.id)) throw new Error('Isi tanggal, task, identitas guru, dan pilih 1–400 peserta.');
+
+  if (
+    !ids.length || ids.length > 400 || !clean(params.formativeTask) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(params.date) ||
+    !clean(params.teacherId) || !clean(params.id)
+  ) {
+    throw new Error('Isi tanggal, task, identitas guru, dan pilih 1–400 peserta.');
+  }
+
   const lo = await loadEntryLO(params);
-  if (lo.subjectId !== params.subjectId) throw new Error('Mata pelajaran task tidak sesuai LO.');
+  if (lo.subjectId !== params.subjectId) {
+    throw new Error('Mata pelajaran task tidak sesuai LO.');
+  }
+
   const context = getUAContextForLO(lo, params.classId);
+
   if (context.assessmentMode === 'UNIT_ACTIVITY') {
-    const roster = await getJHUnitActivityEnrolledStudents({ academicYear: params.academicYear, semester: params.semester, category: context.unitActivityCategory, unitActivityName: context.unitActivityName! });
-    const eligible = new Set(roster.map(item => item.id));
-    if (ids.some(id => !eligible.has(id))) throw new Error('Ada penerima task yang bukan peserta UA aktif.');
+    const roster = await getJHUnitActivityEnrolledStudents({
+      academicYear: params.academicYear,
+      semester: params.semester,
+      category: context.unitActivityCategory,
+      unitActivityName: context.unitActivityName!
+    });
+    const eligible = new Set(roster.map(item => String(item.id).trim()));
+    if (ids.some(id => !eligible.has(id))) {
+      throw new Error('Ada penerima task yang bukan peserta UA aktif.');
+    }
   } else {
-    if (lo.classId !== params.classId) throw new Error('Kelas task tidak sesuai LO.');
-const activeStudents = await getActiveStudents(
-  params.classId,
-  params.academicYear
-);
+    if (lo.classId !== params.classId) {
+      throw new Error('Kelas task tidak sesuai LO.');
+    }
 
-const eligibleStudentIds = new Set(
-  activeStudents.map(student => String(student.id).trim())
-);
+    // Use the same active enrollment roster as the class page, including legacy class-name aliases.
+    const activeStudents = await getActiveStudents(
+      params.classId,
+      params.academicYear
+    );
+    const eligibleStudentIds = new Set(
+      activeStudents.map(student => String(student.id).trim())
+    );
+    const invalidStudentIds = ids.filter(
+      studentId => !eligibleStudentIds.has(studentId)
+    );
+    if (invalidStudentIds.length > 0) {
+      throw new Error(
+        `${invalidStudentIds.length} penerima task tidak ditemukan ` +
+        'dalam enrollment aktif kelas dan tahun ajaran ini.'
+      );
+    }
+  }
 
-const invalidStudentIds = ids.filter(
-  studentId => !eligibleStudentIds.has(studentId)
-);
-
-if (invalidStudentIds.length > 0) {
-  throw new Error(
-    `${invalidStudentIds.length} penerima task tidak ditemukan ` +
-    'dalam enrollment aktif kelas dan tahun ajaran ini.'
-  );
-}  const ref = doc(db, 'jh_ab_shared_tasks', `TASK_${segment(params.id)}`);
+  // Both the regular-class and UA branches reach this save operation.
+  const ref = doc(db, 'jh_ab_shared_tasks', `TASK_${segment(params.id)}`);
   const existing = await getDoc(ref);
   if (existing.exists()) {
     const old = existing.data();
-    if (old.loId === params.loId && old.teacherId === params.teacherId && old.date === params.date && old.formativeTask === clean(params.formativeTask) && JSON.stringify(old.studentIds) === JSON.stringify(ids)) return ref.id;
+    const isSameTask =
+      old.loId === params.loId &&
+      old.teacherId === params.teacherId &&
+      old.date === params.date &&
+      old.formativeTask === clean(params.formativeTask) &&
+      JSON.stringify(old.studentIds) === JSON.stringify(ids);
+    if (isSameTask) return ref.id;
     throw new Error('Draft task ini sudah disimpan dengan isi berbeda. Buka draft baru.');
   }
+
   const now = Date.now();
-  await setDoc(ref, { id: ref.id, loId: lo.id, lgId: lo.lgId, classId: context.assessmentGroupId || params.classId, sourceLoClassId: lo.classId, subjectId: params.subjectId, academicYear: params.academicYear, semester: params.semester, date: params.date, formativeTask: clean(params.formativeTask), studentIds: ids, teacherId: params.teacherId, teacherName: params.teacherName || '', createdAt: now, updatedAt: now, ...context });
+  await setDoc(ref, {
+    id: ref.id,
+    loId: lo.id,
+    lgId: lo.lgId,
+    classId: context.assessmentGroupId || params.classId,
+    sourceLoClassId: lo.classId,
+    subjectId: params.subjectId,
+    academicYear: params.academicYear,
+    semester: params.semester,
+    date: params.date,
+    formativeTask: clean(params.formativeTask),
+    studentIds: ids,
+    teacherId: params.teacherId,
+    teacherName: params.teacherName || '',
+    createdAt: now,
+    updatedAt: now,
+    ...context
+  });
   return ref.id;
 }
+
 function checkLevel(level: JHFormativeLevel): void {
   if (!['Achieved', 'Not Achieved', 'B', 'D', 'A'].includes(level)) throw new Error('Nilai LO tidak valid.');
 }
