@@ -97,3 +97,17 @@ export async function updateQuranParticipantStatus(
     updatedAt: serverTimestamp()
   });
 }
+
+export async function getQuranReadingLogs(): Promise<QuranReadingLog[]> {
+  try {
+    const snap = await getDocs(collection(db, 'elementary_quran_reading_logs'));
+    const list: QuranReadingLog[] = [];
+    snap.forEach(docSnap => {
+      list.push({ id: docSnap.id, ...(docSnap.data() as any) });
+    });
+    return list;
+  } catch (err) {
+    console.error('Error fetching quran reading logs:', err);
+    throw err;
+  }
+}
