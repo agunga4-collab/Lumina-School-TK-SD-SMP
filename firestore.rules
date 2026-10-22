@@ -792,14 +792,16 @@ service cloud.firestore {
     }
 
     match /junior_high_literacy_numeracy_records/{recordId} {
+      // Students may query their own canonical level records only.
+      allow read: if isActive() && isOwnStudentData(existing().studentId);
       allow read: if isActive() && isJuniorHighStaff();
       allow read: if isActive() && isLinkedStudent(existing().studentId);
       allow write: if isJuniorHighStaff();
     }
 
     match /learning_power_up_completion/{completionId} {
-      allow read: if isActive();
-      allow write: if isJuniorHighStaff() || isAdmin();
+      allow read: if isActive() && (isAdmin() || isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
+      allow create, update, delete: if isAdmin() || isJuniorHighLPUStaff();
     }
 
     match /cicoWeeklyReflections/{reflectionId} {
@@ -1270,19 +1272,8 @@ service cloud.firestore {
     }
 
     match /learning_power_up_progress/{progressId} {
-      allow read: if isActive() && (
-        isAdmin() ||
-        isJuniorHighStaff() ||
-        isStudent() ||
-        isParent()
-      );
-      allow create: if isAdmin() || isOwnStudentData(request.resource.data.studentId) || isJuniorHighStaff();
-      allow update: if isAdmin() || isJuniorHighStaff() || (
-        isOwnStudentData(resource.data.studentId) && isOwnStudentData(request.resource.data.studentId) &&
-        request.resource.data.status == "SUBMITTED" &&
-        (resource.data.status == "NOT_STARTED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED")
-      );
-      allow delete: if isAdmin() || isJuniorHighStaff();
+      allow read: if isActive() && (isAdmin() || isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
+      allow create, update, delete: if isAdmin() || isJuniorHighLPUStaff();
     }
 
     match /learning_power_up_task_batches/{batchId} {
@@ -1298,24 +1289,8 @@ service cloud.firestore {
     }
 
     match /learning_power_up_assignments/{assignmentId} {
-      allow read: if isActive() && (
-        isAdmin() ||
-        isJuniorHighLPUStaff() ||
-        isStudent() ||
-        isParent()
-      );
-      allow create: if isJuniorHighLPUStaff() || isAdmin();
-      allow update: if isActive() && (
-        isAdmin() ||
-        isJuniorHighLPUStaff() ||
-        (
-          isOwnStudentData(resource.data.studentId) &&
-          isOwnStudentData(request.resource.data.studentId) &&
-          request.resource.data.status == "SUBMITTED" &&
-          (resource.data.status == "ASSIGNED" || resource.data.status == "REVISION_REQUIRED" || resource.data.status == "SUBMITTED")
-        )
-      );
-      allow delete: if isJuniorHighLPUStaff() || isAdmin();
+      allow read: if isActive() && (isAdmin() || isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
+      allow create, update, delete: if isAdmin() || isJuniorHighLPUStaff();
     }
 
     match /learning_power_up_activity_logs/{logId} {
@@ -1624,60 +1599,139 @@ service cloud.firestore {
     }
 
 
-    // Shared task headers are separate from grades. Only staff may access them.
+    // Learning Power-Up spreadsheet tracker: private headers, own-row student reports.
+    function isLpuTrackerReader() {
+      return isActive() && (
+        isAdmin() || (userRole() in [
+          'TEACHER', 'HOMEROOM_TEACHER', 'HEAD_JUNIOR', 'HEAD_UNIT',
+          'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'COUNSELOR', 'COORDINATOR',
+          'SECRETARY_JH', 'PRINCIPAL', 'VICE_PRINCIPAL'
+        ] && (
+          ('unitId' in currentUser() && currentUser().unitId in ['JUNIOR_HIGH', 'ALL']) ||
+          ('unit' in currentUser() && currentUser().unit in ['JUNIOR_HIGH', 'ALL'])
+        ))
+      );
+    }
+    function isLpuTrackerWriter() {
+      return isLpuTrackerReader() && !(userRole() in ['PRINCIPAL', 'VICE_PRINCIPAL']);
+    }
+    function lpuTrackerParent(columnId) {
+      return getAfter(/databases/$(database)/documents/lpu_tracker_columns/$(columnId)).data;
+    }
+    function isValidLpuTrackerColumn(data, columnId) {
+      return data.keys().hasAll(['id', 'unit', 'academicYear', 'semester', 'subjectKey', 'label', 'periodLabel', 'order', 'valueType', 'studentIds', 'archived', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'version'])
+        && data.keys().hasOnly(['id', 'unit', 'academicYear', 'semester', 'subjectKey', 'label', 'periodLabel', 'order', 'valueType', 'studentIds', 'archived', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'version'])
+        && data.id == columnId && data.unit == 'JUNIOR_HIGH'
+        && data.academicYear is string && data.academicYear.size() > 0
+        && data.semester in ['1', '2']
+        && data.subjectKey in ['bahasaIndonesia', 'english', 'mengaji', 'numerasi']
+        && data.label is string && data.label.size() > 0 && data.label.size() <= 200
+        && data.periodLabel is string && data.periodLabel.size() <= 200
+        && data.order is number && data.valueType in ['FREE', 'NUMBER']
+        && data.studentIds is list && data.studentIds.size() > 0 && data.studentIds.size() <= 400
+        && data.archived is bool && data.createdBy is string && data.createdAt is number
+        && data.updatedBy == request.auth.uid && data.updatedAt is number && data.version is int;
+    }
+    function isValidLpuTrackerCell(data, cellId) {
+      let parent = lpuTrackerParent(data.columnId);
+      return data.keys().hasAll(['id', 'unit', 'academicYear', 'semester', 'subjectKey', 'columnId', 'studentId', 'studentName', 'classId', 'className', 'label', 'periodLabel', 'order', 'valueType', 'visible', 'value', 'valueVersion', 'valueUpdatedAt', 'valueUpdatedBy', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'unit', 'academicYear', 'semester', 'subjectKey', 'columnId', 'studentId', 'studentName', 'classId', 'className', 'label', 'periodLabel', 'order', 'valueType', 'visible', 'value', 'valueVersion', 'valueUpdatedAt', 'valueUpdatedBy', 'updatedBy', 'updatedAt'])
+        && data.id == cellId && data.unit == 'JUNIOR_HIGH'
+        && data.columnId is string && data.studentId is string && data.studentId.size() > 0
+        && data.studentName is string && data.classId is string && data.className is string
+        && data.academicYear == parent.academicYear && data.semester == parent.semester
+        && data.subjectKey == parent.subjectKey && parent.unit == 'JUNIOR_HIGH'
+        && data.label == parent.label && data.periodLabel == parent.periodLabel
+        && data.order == parent.order && data.valueType == parent.valueType
+        && data.visible is bool && data.visible == (!parent.archived && data.studentId in parent.studentIds)
+        && ((data.value is string && data.value.size() <= 5000) || data.value is number)
+        && (data.valueType != 'NUMBER' || data.value == '' || data.value is number)
+        && data.valueVersion is int && data.valueVersion >= 0
+        && data.valueUpdatedAt is number && data.valueUpdatedBy is string
+        && data.updatedAt is number && data.updatedBy == request.auth.uid;
+    }
+    match /lpu_tracker_columns/{columnId} {
+      allow read: if isLpuTrackerReader();
+      allow create: if isLpuTrackerWriter() && isValidLpuTrackerColumn(incoming(), columnId)
+        && incoming().createdBy == request.auth.uid && incoming().version == 1;
+      allow update: if isLpuTrackerWriter() && isValidLpuTrackerColumn(incoming(), columnId)
+        && incoming().academicYear == existing().academicYear && incoming().semester == existing().semester
+        && incoming().subjectKey == existing().subjectKey && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt && incoming().version == existing().version + 1;
+      allow delete: if false;
+    }
+    match /lpu_tracker_cells/{cellId} {
+      allow read: if isLpuTrackerReader() || (isActive() && isOwnStudentData(existing().studentId) && existing().visible == true);
+      allow create: if isLpuTrackerWriter() && isValidLpuTrackerCell(incoming(), cellId)
+        && incoming().value == '' && incoming().valueVersion == 0
+        && incoming().valueUpdatedAt == 0 && incoming().valueUpdatedBy == '';
+      allow update: if isLpuTrackerWriter() && isValidLpuTrackerCell(incoming(), cellId)
+        && incoming().studentId == existing().studentId && incoming().classId == existing().classId
+        && incoming().academicYear == existing().academicYear && incoming().semester == existing().semester
+        && incoming().subjectKey == existing().subjectKey && incoming().columnId == existing().columnId
+        && (
+          (incoming().diff(existing()).affectedKeys().hasOnly(['value', 'valueVersion', 'valueUpdatedAt', 'valueUpdatedBy', 'updatedBy', 'updatedAt'])
+            && incoming().valueVersion == existing().valueVersion + 1 && incoming().valueUpdatedBy == request.auth.uid)
+          || (incoming().diff(existing()).affectedKeys().hasOnly(['studentName', 'className', 'label', 'periodLabel', 'order', 'valueType', 'visible', 'updatedBy', 'updatedAt'])
+            && incoming().value == existing().value && incoming().valueVersion == existing().valueVersion)
+        );
+      allow delete: if false;
+    }
+    function isValidLpuTrackerCoach(data, recordId) {
+      return data.keys().hasAll(['id', 'unit', 'academicYear', 'semester', 'studentId', 'classId', 'coachId', 'coachName', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'unit', 'academicYear', 'semester', 'studentId', 'classId', 'coachId', 'coachName', 'updatedBy', 'updatedAt'])
+        && data.id == recordId && data.unit == 'JUNIOR_HIGH' && data.academicYear is string
+        && data.semester in ['1', '2'] && data.studentId is string && data.classId is string
+        && data.coachId is string && data.coachName is string && data.updatedBy == request.auth.uid && data.updatedAt is number
+        && ((data.coachId == '' && data.coachName == '') || (
+          exists(/databases/$(database)/documents/users/$(data.coachId))
+          && get(/databases/$(database)/documents/users/$(data.coachId)).data.status == 'active'
+          && get(/databases/$(database)/documents/users/$(data.coachId)).data.role in ['TEACHER', 'HOMEROOM_TEACHER']
+          && (
+            ('unitId' in get(/databases/$(database)/documents/users/$(data.coachId)).data && get(/databases/$(database)/documents/users/$(data.coachId)).data.unitId in ['JUNIOR_HIGH', 'ALL'])
+            || ('unit' in get(/databases/$(database)/documents/users/$(data.coachId)).data && get(/databases/$(database)/documents/users/$(data.coachId)).data.unit in ['JUNIOR_HIGH', 'ALL'])
+          )
+        ));
+    }
+    match /lpu_tracker_coaches/{recordId} {
+      allow read: if isLpuTrackerReader() || (isActive() && isOwnStudentData(existing().studentId));
+      allow create: if isLpuTrackerWriter() && isValidLpuTrackerCoach(incoming(), recordId);
+      allow update: if isLpuTrackerWriter() && isValidLpuTrackerCoach(incoming(), recordId)
+        && incoming().studentId == existing().studentId && incoming().academicYear == existing().academicYear
+        && incoming().semester == existing().semester;
+      allow delete: if false;
+    }
+
+
+    // Assessment Book shared tasks retained from the prior correction package.
     match /jh_ab_shared_tasks/{taskId} {
       allow read: if isActive() && isJuniorHighStaff();
-      allow create: if isActive() && (
-        isAdmin() || isJuniorHighTeacher() ||
-        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
-      ) && request.resource.data.keys().hasAll([
-        'id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId',
-        'academicYear', 'semester', 'date', 'formativeTask', 'studentIds',
-        'teacherId', 'teacherName', 'createdAt', 'updatedAt'
-      ]) && request.resource.data.keys().hasOnly([
-        'id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId',
-        'academicYear', 'semester', 'date', 'formativeTask', 'studentIds',
-        'teacherId', 'teacherName', 'createdAt', 'updatedAt', 'assessmentMode',
-        'unitActivityId', 'unitActivityName', 'unitActivityCategory',
-        'assessmentGroupId', 'targetGrade'
-      ]) && request.resource.data.id == taskId
-      && request.resource.data.loId is string
-      && request.resource.data.teacherId == request.auth.uid
-      && request.resource.data.teacherName is string
-      && request.resource.data.formativeTask is string
-      && request.resource.data.formativeTask.size() > 0
-      && request.resource.data.formativeTask.size() <= 2000
-      && request.resource.data.date is string
-      && request.resource.data.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
-      && request.resource.data.studentIds is list
-      && request.resource.data.studentIds.size() > 0
-      && request.resource.data.studentIds.size() <= 400
-      && request.resource.data.createdAt is number
-      && request.resource.data.updatedAt == request.resource.data.createdAt
-      && exists(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId))
-      && request.resource.data.lgId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.lgId
-      && request.resource.data.subjectId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.subjectId
-      && request.resource.data.academicYear == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.academicYear
-      && request.resource.data.semester == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.semester
-      && request.resource.data.sourceLoClassId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.classId
-      && (
-        (
-          !('assessmentMode' in request.resource.data)
-          && request.resource.data.classId == request.resource.data.sourceLoClassId
-          && (!('assessmentMode' in get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data)
-            || get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.assessmentMode != 'UNIT_ACTIVITY')
-        ) || (
-          request.resource.data.assessmentMode == 'UNIT_ACTIVITY'
-          && get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.assessmentMode == 'UNIT_ACTIVITY'
-          && request.resource.data.unitActivityId == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.unitActivityId
-          && request.resource.data.unitActivityName == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.unitActivityName
-          && request.resource.data.unitActivityCategory == get(/databases/$(database)/documents/jh_ab_los/$(request.resource.data.loId)).data.unitActivityCategory
-          && request.resource.data.targetGrade == 'ALL'
-          && request.resource.data.classId == request.resource.data.assessmentGroupId
-          && request.resource.data.assessmentGroupId is string
-          && request.resource.data.assessmentGroupId.matches('JUNIOR_HIGH_UA_V2_.*~ALL')
-        )
-      );
+      allow create: if isActive() && (isAdmin() || isJuniorHighTeacher() || (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()))
+        && incoming().keys().hasAll(['id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId', 'academicYear', 'semester', 'date', 'formativeTask', 'studentIds', 'teacherId', 'teacherName', 'createdAt', 'updatedAt'])
+        && incoming().keys().hasOnly(['id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId', 'academicYear', 'semester', 'date', 'formativeTask', 'studentIds', 'teacherId', 'teacherName', 'createdAt', 'updatedAt', 'assessmentMode', 'unitActivityId', 'unitActivityName', 'unitActivityCategory', 'assessmentGroupId', 'targetGrade'])
+        && incoming().id == taskId && incoming().loId is string && incoming().teacherId == request.auth.uid
+        && incoming().teacherName is string && incoming().formativeTask is string && incoming().formativeTask.size() > 0 && incoming().formativeTask.size() <= 2000
+        && incoming().date is string && incoming().date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && incoming().studentIds is list && incoming().studentIds.size() > 0 && incoming().studentIds.size() <= 400
+        && incoming().createdAt is number && incoming().updatedAt == incoming().createdAt
+        && exists(/databases/$(database)/documents/jh_ab_los/$(incoming().loId))
+        && incoming().lgId == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.lgId
+        && incoming().subjectId == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.subjectId
+        && incoming().academicYear == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.academicYear
+        && incoming().semester == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.semester
+        && incoming().sourceLoClassId == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.classId
+        && (
+          (!('assessmentMode' in incoming()) && incoming().classId == incoming().sourceLoClassId
+            && (!('assessmentMode' in get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data)
+              || get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.assessmentMode != 'UNIT_ACTIVITY'))
+          || (incoming().assessmentMode == 'UNIT_ACTIVITY'
+            && get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.assessmentMode == 'UNIT_ACTIVITY'
+            && incoming().unitActivityId == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.unitActivityId
+            && incoming().unitActivityName == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.unitActivityName
+            && incoming().unitActivityCategory == get(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.unitActivityCategory
+            && incoming().targetGrade == 'ALL' && incoming().classId == incoming().assessmentGroupId
+            && incoming().assessmentGroupId is string && incoming().assessmentGroupId.matches('JUNIOR_HIGH_UA_V2_.*~ALL'))
+        );
       allow update, delete: if false;
     }
 
