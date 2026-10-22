@@ -253,14 +253,14 @@ export function ManageLOModal({
                         <button
                           onClick={() => handleSaveEdit(lo.id, lo.order)}
                           disabled={saving}
-                          className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                          className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-emerald-500"
                           title="Simpan"
                         >
                           <Check size={14} />
                         </button>
                         <button
                           onClick={() => setEditingId(null)}
-                          className="p-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg cursor-pointer"
+                          className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-slate-400"
                           title="Batal"
                         >
                           <X size={14} />
@@ -274,21 +274,21 @@ export function ManageLOModal({
                           </span>
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-900 truncate" title={lo.title}>
+                          <p className="text-xs font-semibold text-slate-900 truncate" title={lo.title}>
                             {lo.title}
                           </p>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             onClick={() => handleStartEdit(lo)}
-                            className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 cursor-pointer"
+                            className="p-1.5 text-slate-400 hover:text-purple-700 rounded-lg hover:bg-purple-50 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-400"
                             title="Edit LO"
                           >
                             <Edit2 size={13} />
                           </button>
                           <button
                             onClick={() => handleDelete(lo.id, lo.code)}
-                            className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 cursor-pointer"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-rose-400"
                             title="Hapus LO"
                           >
                             <Trash2 size={13} />
@@ -304,11 +304,11 @@ export function ManageLOModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-4 border-t border-gray-100 bg-gray-50">
+        <div className="flex items-center justify-end px-6 py-4 border-t border-slate-200 bg-slate-50/50">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs cursor-pointer"
+            className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-slate-500"
           >
             Selesai
           </button>

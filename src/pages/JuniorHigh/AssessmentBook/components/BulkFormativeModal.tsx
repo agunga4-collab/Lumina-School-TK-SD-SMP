@@ -756,10 +756,10 @@ export function BulkFormativeModal({
                           <button
                             type="button"
                             onClick={() => handleSetStudentScore(student.id, 'Achieved')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 active:scale-95 focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                               row.comprehensionLevel === 'Achieved'
                                 ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400'
-                                : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                                : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300'
                             }`}
                           >
                             <Check size={13} /> Achieved
@@ -769,10 +769,10 @@ export function BulkFormativeModal({
                           <button
                             type="button"
                             onClick={() => handleSetStudentScore(student.id, 'Not Achieved')}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 active:scale-95 focus-visible:ring-2 focus-visible:ring-rose-500 ${
                               row.comprehensionLevel === 'Not Achieved'
                                 ? 'bg-rose-600 text-white shadow-xs ring-2 ring-rose-400'
-                                : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200'
+                                : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-300'
                             }`}
                           >
                             <X size={13} /> Not Achieved
@@ -780,8 +780,8 @@ export function BulkFormativeModal({
 
                           {/* Status Indicator if unassessed */}
                           {row.comprehensionLevel === null && (
-                            <span className="text-[10px] text-gray-400 italic ml-1">
-                              (Kosong)
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-50 text-slate-500 border border-slate-200 ml-1">
+                              Belum dinilai
                             </span>
                           )}
                         </div>
@@ -855,7 +855,7 @@ export function BulkFormativeModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 hover:bg-gray-100 cursor-pointer"
+                className="px-4 py-2 border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-slate-400"
               >
                 Batal
               </button>
@@ -864,7 +864,7 @@ export function BulkFormativeModal({
                 type="submit"
                 form="session-bulk-form"
                 disabled={saving || countAssessed === 0}
-                className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50 transition-colors"
+                className="px-5 py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-500 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Save size={15} />
                 {saving ? 'Menyimpan Sesi...' : `Simpan Sesi Asesmen (${countAssessed} ${isUAMode ? 'Peserta' : 'Siswa'})`}

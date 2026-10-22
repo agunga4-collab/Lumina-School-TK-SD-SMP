@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useMemo } from 'react';
-import { Search, Award, CheckCircle2 } from 'lucide-react';
+import { Search, Award, CheckCircle2, Check, X } from 'lucide-react';
 import {
   JHAssessmentLO,
   JHFormativeEntry,
@@ -251,13 +251,13 @@ export function StudentRecapView({
                         <div
                           key={lo.id}
                           onClick={() => onOpenFormativeModal(student, lo)}
-                          className="p-2 rounded-xl border border-gray-100 hover:border-purple-200 hover:bg-purple-50/30 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
+                          className="p-2 rounded-xl border border-slate-200 hover:border-purple-300 hover:bg-purple-50/40 flex items-center justify-between gap-2 text-xs cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-500"
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="font-bold text-[11px] text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded shrink-0 border border-purple-200">
                               {lo.code}
                             </span>
-                            <span className="text-[11px] text-gray-700 truncate" title={lo.title}>
+                            <span className="text-[11px] text-slate-700 truncate font-medium" title={lo.title}>
                               {lo.title}
                             </span>
                           </div>
@@ -266,22 +266,29 @@ export function StudentRecapView({
                             {f ? (
                               <>
                                 <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border ${
                                     f.comprehensionLevel === 'Achieved'
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                                       : f.comprehensionLevel === 'Not Achieved'
-                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
-                                      : 'bg-amber-100 text-amber-800 border-amber-300'
+                                      ? 'bg-rose-50 text-rose-800 border-rose-300'
+                                      : 'bg-amber-50 text-amber-800 border-amber-300'
                                   }`}
                                 >
+                                  {f.comprehensionLevel === 'Achieved' ? (
+                                    <Check size={11} />
+                                  ) : f.comprehensionLevel === 'Not Achieved' ? (
+                                    <X size={11} />
+                                  ) : null}
                                   {isLegacy ? `${f.comprehensionLevel} (Lama)` : f.comprehensionLevel}
                                 </span>
-                                <span className="text-[10px] text-gray-400 hidden sm:inline max-w-[120px] truncate" title={f.nextAction}>
+                                <span className="text-[10px] text-slate-400 hidden sm:inline max-w-[120px] truncate" title={f.nextAction}>
                                   {f.nextAction}
                                 </span>
                               </>
                             ) : (
-                              <span className="text-[10px] text-gray-400 italic">Belum dinilai</span>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-50 text-slate-500 border border-slate-200">
+                                Belum dinilai
+                              </span>
                             )}
                           </div>
                         </div>
