@@ -111,3 +111,8 @@ export async function getQuranReadingLogs(): Promise<QuranReadingLog[]> {
     throw err;
   }
 }
+
+export async function deleteQuranReadingLog(logId: string): Promise<void> {
+  const docRef = doc(db, 'elementary_quran_reading_logs', logId);
+  await deleteDoc(docRef);
+}

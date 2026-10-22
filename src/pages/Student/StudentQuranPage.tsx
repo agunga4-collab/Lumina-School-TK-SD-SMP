@@ -21,11 +21,13 @@ import {
   Loader2,
   Sparkles,
   X,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../lib/firebase';
+import { deleteQuranReadingLog } from '../../services/quranService';
 import {
   getSurahByNumber,
   getSurahsInJuz,
@@ -466,6 +468,27 @@ export default function StudentQuranPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
 
+  const [deletingLog, setDeletingLog] = useState<ReadingLog | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDeleteLog() {
+    if (!deletingLog || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteQuranReadingLog(deletingLog.id);
+      if (editing?.id === deletingLog.id) {
+        setEditing(null);
+      }
+      toast.success('Catatan bacaan berhasil dihapus.');
+      setDeletingLog(null);
+    } catch (err: any) {
+      console.error('[StudentQuranPage] delete reading log:', err);
+      toast.error('Gagal menghapus catatan bacaan. Periksa izin akses.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
@@ -786,21 +809,13 @@ export default function StudentQuranPage() {
       );
 
       setAppreciation({
-        message:
-          APPRECIATION_MESSAGES[
-            Math.floor(
-              Math.random() * APPRECIATION_MESSAGES.length
-            )
-          ],
+        message: 'Catatan bacaan berhasil disimpan. Form siap untuk catatan berikutnya.',
         description:
           `Juz ${form.juz} • ${surah.name} ayat ${Number(form.ayat)}` +
           ` • ${form.readDate}`,
       });
 
-      setForm(previous => ({
-        ...previous,
-        note: '',
-      }));
+      setForm(initialForm());
     } catch (error) {
       console.error(
         '[StudentQuranPage] create reading log:',
@@ -1184,19 +1199,29 @@ export default function StudentQuranPage() {
                         )}
 
                         {status === 'active' && (
-                          <button
-                            disabled={submitting}
-                            onClick={() =>
-                              setEditing({
-                                id: log.id,
-                                form: logToForm(log),
-                              })
-                            }
-                            className="inline-flex items-center gap-1 rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                            Edit
-                          </button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              disabled={submitting}
+                              onClick={() =>
+                                setEditing({
+                                  id: log.id,
+                                  form: logToForm(log),
+                                })
+                              }
+                              className="inline-flex items-center gap-1 rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold cursor-pointer"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                              Edit
+                            </button>
+                            <button
+                              disabled={submitting || deleting}
+                              onClick={() => setDeletingLog(log)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Hapus
+                            </button>
+                          </div>
                         )}
                       </div>
                     </article>
@@ -1325,6 +1350,44 @@ export default function StudentQuranPage() {
               ))}
             </div>
           )}
+        </Modal>
+      )}
+
+      {deletingLog && (
+        <Modal
+          title="Hapus Catatan Bacaan"
+          onClose={() => setDeletingLog(null)}
+          busy={deleting}
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700">
+              Hapus catatan bacaan ini? Pastikan ini catatan yang ingin dihapus.
+            </p>
+            <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600 border border-slate-200 space-y-1">
+              <p><strong>Tanggal:</strong> {deletingLog.readDate}</p>
+              <p><strong>Bacaan:</strong> {deletingLog.surahName} • ayat {deletingLog.ayat} (Juz {deletingLog.juz})</p>
+              {deletingLog.note && <p><strong>Catatan:</strong> {deletingLog.note}</p>}
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeletingLog(null)}
+                className="rounded-xl px-4 py-2.5 text-xs text-slate-600 border border-slate-300 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+              >
+                Kembali
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => void handleDeleteLog()}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-rose-700 cursor-pointer active:scale-95 disabled:opacity-50 shadow-2xs"
+              >
+                {deleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Hapus catatan
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </main>

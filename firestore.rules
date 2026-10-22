@@ -2550,7 +2550,11 @@ service cloud.firestore {
         incoming().editCount == existing().editCount + 1 &&
         incoming().updatedAt is timestamp &&
         isValidQuranLogData(incoming());
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (
+        isActive() &&
+        isOwnStudentData(resource.data.studentUid) &&
+        isQuranParticipantActive(resource.data.studentUid)
+      );
 
       match /history/{historyId} {
         allow read: if isSignedIn() && (
