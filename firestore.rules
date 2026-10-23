@@ -799,6 +799,43 @@ service cloud.firestore {
       allow write: if isJuniorHighStaff();
     }
 
+    // Litnum session-title metadata only; assessment records are unchanged.
+    function litnumSessionTitleYearKey(year) {
+      let parts = year.split('/');
+      return parts.size() == 2 ? parts[0] + '-' + parts[1] : year;
+    }
+    function isValidLitnumSessionTitleValue(titles, key) {
+      return !(key in titles) || (titles[key] is string && titles[key].size() <= 200);
+    }
+    function isValidLitnumSessionTitleMetadata(data, titleId) {
+      let fields = ['id', 'unit', 'schoolYear', 'classId', 'subjectArea', 'sessionTitles', 'updatedAt'];
+      let cls = get(/databases/$(database)/documents/classes/$(data.classId)).data;
+      return data.keys().hasAll(fields) && data.keys().hasOnly(fields)
+        && data.id == titleId && data.unit == 'JUNIOR_HIGH'
+        && data.schoolYear is string && data.schoolYear.matches('[0-9]{4}[-/][0-9]{4}')
+        && data.classId is string && data.classId.size() > 0 && data.classId.size() <= 128
+        && cls.unitId == 'JUNIOR_HIGH' && cls.academicYear is string
+        && litnumSessionTitleYearKey(cls.academicYear) == litnumSessionTitleYearKey(data.schoolYear)
+        && data.subjectArea in ['BAHASA_INDONESIA', 'ENGLISH_READING', 'MENGAJI', 'NUMERACY']
+        && titleId == data.classId + '_' + data.subjectArea + '_' + litnumSessionTitleYearKey(data.schoolYear)
+        && data.sessionTitles is map
+        && data.sessionTitles.keys().hasOnly(['SEMESTER_1_START', 'SEMESTER_1_END', 'SEMESTER_2_START', 'SEMESTER_2_END', 'SPRING_ASSESSMENT_3'])
+        && isValidLitnumSessionTitleValue(data.sessionTitles, 'SEMESTER_1_START')
+        && isValidLitnumSessionTitleValue(data.sessionTitles, 'SEMESTER_1_END')
+        && isValidLitnumSessionTitleValue(data.sessionTitles, 'SEMESTER_2_START')
+        && isValidLitnumSessionTitleValue(data.sessionTitles, 'SEMESTER_2_END')
+        && isValidLitnumSessionTitleValue(data.sessionTitles, 'SPRING_ASSESSMENT_3')
+        && data.updatedAt is number && data.updatedAt >= 0;
+    }
+    match /junior_high_litnum_session_titles/{titleId} {
+      // No resource-data check: staff can GET a not-yet-created metadata document.
+      allow get, list: if isLpuTrackerReader();
+      allow create: if isLpuTrackerWriter() && isValidLitnumSessionTitleMetadata(request.resource.data, titleId);
+      allow update: if isLpuTrackerWriter() && isValidLitnumSessionTitleMetadata(request.resource.data, titleId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sessionTitles', 'updatedAt']);
+      allow delete: if false;
+    }
+
     match /junior_high_litnum_custom_columns/{columnId} {
       allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
       allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
