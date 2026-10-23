@@ -8,6 +8,7 @@ import { getAssessmentBookOptions, getJuniorHighLGs, getJuniorHighUALGs, getJHUn
 import { getJHGradeLevelNumber } from '../../../services/juniorHighMidtermService';
 import { FormativeMatrixGrid } from './components/FormativeMatrixGrid';
 import { StudentRecapView } from './components/StudentRecapView';
+import AssessmentBookReadOnlyRecap from './components/AssessmentBookReadOnlyRecap';
 import { FormativeAssessmentModal } from './components/FormativeAssessmentModal';
 import { SummativeModal } from './components/SummativeModal';
 import { SharedFormativeTaskModal } from './components/SharedFormativeTaskModal';
@@ -98,6 +99,7 @@ export default function JuniorHighAssessmentBookPage() {
   const teacherId = effectiveUser?.uid || effectiveUser?.id || '';
   const teacherName = effectiveUser?.displayName || effectiveUser?.name || 'Guru';
   const [mode, setMode] = React.useState<'SUBJECT' | 'UNIT_ACTIVITY'>('SUBJECT');
+  const [showReadOnlyRecap, setShowReadOnlyRecap] = React.useState(false);
   const isUA = mode === 'UNIT_ACTIVITY';
   const [year, setYear] = React.useState(activeYear || '2026/2027');
   const [semester, setSemester] = React.useState('1');
@@ -165,7 +167,15 @@ export default function JuniorHighAssessmentBookPage() {
   const refresh = () => setReload(value => value + 1);
   const closeAssessmentModals = () => { setSharedTaskLO(null); setBulkLO(null); setIndividual(null); setSumStudent(null); setManageOpen(false); setProposal({ open: false }); };
   const resetLG = () => { setLGId(''); setGoals([]); setLOs([]); setFormative([]); setSummative([]); closeAssessmentModals(); };
-  const selectMode = (next: 'SUBJECT' | 'UNIT_ACTIVITY') => { if (quickLock.current) return; resetLG(); setError(''); setMode(next); setTab('MATRIX'); if (next === 'UNIT_ACTIVITY') { setUAClass('ALL'); setUASearch(''); } };
+  const selectMode = (next: 'SUBJECT' | 'UNIT_ACTIVITY') => {
+    if (quickLock.current) return;
+    setShowReadOnlyRecap(false);
+    resetLG();
+    setError('');
+    setMode(next);
+    setTab('MATRIX');
+    if (next === 'UNIT_ACTIVITY') { setUAClass('ALL'); setUASearch(''); }
+  };
 
   React.useEffect(() => {
     let cancelled = false;
@@ -432,6 +442,21 @@ export default function JuniorHighAssessmentBookPage() {
     </div>
   );
 
+  if (showReadOnlyRecap) {
+    return (
+      <AssessmentBookReadOnlyRecap
+        onSelectInput={selectMode}
+        initialYear={year}
+        initialSemester={semester}
+        initialMode={mode}
+        initialSubject={subject}
+        initialClassId={isUA ? (uaClass === 'ALL' ? '' : uaClass) : classId}
+        initialCategory={uaCategory}
+        initialActivityId={uaId}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50/50 pb-16">
       <header className="bg-white border-b border-slate-200 shadow-2xs">
@@ -476,7 +501,7 @@ export default function JuniorHighAssessmentBookPage() {
         </div>
       </header>
       <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-5">
-        <div className="flex gap-2 p-1 bg-white rounded-2xl border border-slate-200 w-fit shadow-2xs" role="tablist" aria-label="Mode Assessment Book">
+        <div className="flex flex-wrap gap-2 p-1 bg-white rounded-2xl border border-slate-200 w-fit max-w-full shadow-2xs" role="tablist" aria-label="Mode Assessment Book">
           {(['SUBJECT', 'UNIT_ACTIVITY'] as const).map(value => (
             <button
               key={value}
@@ -494,6 +519,21 @@ export default function JuniorHighAssessmentBookPage() {
               {value === 'SUBJECT' ? 'Mata Pelajaran' : 'Unit Aktivitas'}
             </button>
           ))}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={false}
+            disabled={!!quickKey}
+            onClick={() => {
+              if (quickLock.current) return;
+              closeAssessmentModals();
+              setSettingsOpen(false);
+              setShowReadOnlyRecap(true);
+            }}
+            className="px-5 py-2.5 text-xs font-bold rounded-xl text-slate-600 hover:text-slate-900 hover:bg-purple-50 transition-all cursor-pointer active:scale-95 focus-visible:ring-2 focus-visible:ring-purple-500 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Rekap
+          </button>
         </div>
         {isReadOnly && (
           <p className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
