@@ -61,9 +61,12 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
   const isCaptain = Boolean(membership.canAssignTasks);
 
   // 8 recent weeks
-  const weekPeriods = useMemo<WeekPeriod[]>(() => {
-    return getRecentWeekPeriods(8);
-  }, []);
+    const weekPeriods = useMemo<WeekPeriod[]>(() => {
+    return getRecentWeekPeriods(8).filter(period =>
+      group.programType !== 'OSIS' ||
+      period.weekStart >= '2026-10-19'
+    );
+  }, [group.programType]);
 
   const [selectedWeekStart, setSelectedWeekStart] = useState<string>(weekPeriods[0]?.weekStart || '');
   const [activeSubTab, setActiveSubTab] = useState<'MY_REPORT' | 'TEAM_REPORTS'>('MY_REPORT');
@@ -94,9 +97,9 @@ export const StudentWeeklyReportSection: React.FC<StudentWeeklyReportSectionProp
     return weekPeriods.find(p => p.weekStart === selectedWeekStart) || weekPeriods[0];
   }, [weekPeriods, selectedWeekStart]);
 
-  const currentReport = useMemo<SOWeeklyReport | undefined>(() => {
-    return myReports[selectedWeekStart];
-  }, [myReports, selectedWeekStart]);
+    const currentReport = useMemo<SOWeeklyReport | undefined>(() => {
+    return myReports[selectedPeriod?.weekStart || ''];
+  }, [myReports, selectedPeriod]);
 
   // Load student's own reports for this activity
   const loadMyReports = useCallback(async () => {

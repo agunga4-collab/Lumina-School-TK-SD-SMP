@@ -679,6 +679,14 @@ export async function saveStudentWeeklyReport(
   const cleanGroupId = (reportData.groupId || '').trim();
   const cleanStudentId = (reportData.studentId || '').trim();
   const cleanWeekStart = (reportData.weekStart || '').trim();
+    if (
+    reportData.programType === 'OSIS' &&
+    cleanWeekStart < '2026-10-19'
+  ) {
+    throw new Error(
+      'Laporan OSIS dimulai pada minggu 19–25 Oktober 2026.'
+    );
+  }
 
   const reportId = makeWeeklyReportId(cleanGroupId, cleanStudentId, cleanWeekStart);
   const docRef = doc(db, WEEKLY_REPORTS_COLLECTION, reportId);
