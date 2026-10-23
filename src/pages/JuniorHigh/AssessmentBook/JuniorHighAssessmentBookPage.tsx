@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { BookOpen, Layers, Download, Settings, RefreshCw, AlertCircle, X, Check, CheckCheck, Loader2 } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { Class, Student, LearningGoal, JHAssessmentLO, JHFormativeEntry, JHSummativeEntry, JHFormativeScore, JHAssessmentUAContext, AssessmentBookOptions, DEFAULT_ASSESSMENT_BOOK_OPTIONS, isLegacyScore } from '../../../types';
@@ -16,7 +17,7 @@ import { ProposeLGModal } from './components/ProposeLGModal';
 import { BulkFormativeModal } from './components/BulkFormativeModal';
 import { AssessmentBookSettingsModal } from './components/AssessmentBookSettingsModal';
 import { exportJuniorHighAssessmentBookExcel } from '../../../utils/exportJuniorHighAssessmentBookExcel';
-import { JH_SUBJECT_CATALOG, getJHSubjectLabel } from '../../../constants/juniorHighSubjectCatalog';
+import { JH_SUBJECT_CATALOG, getJHSubjectLabel, normalizeSubjectName } from '../../../constants/juniorHighSubjectCatalog';
 import { toast } from 'sonner';
 
 type UAStudent = Student & { className: string; grade?: number };
@@ -97,6 +98,10 @@ export default function JuniorHighAssessmentBookPage() {
   const isReadOnly = ['PRINCIPAL', 'VICE_PRINCIPAL'].includes(role);
   const teacherId = effectiveUser?.uid || effectiveUser?.id || '';
   const teacherName = effectiveUser?.displayName || effectiveUser?.name || 'Guru';
+  const { subjectId, classId: paramClassId, activityId } = useParams<{ subjectId?: string; classId?: string; activityId?: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isInitialMount = React.useRef(true);
   const [mode, setMode] = React.useState<'SUBJECT' | 'UNIT_ACTIVITY'>('SUBJECT');
   const isUA = mode === 'UNIT_ACTIVITY';
   const [year, setYear] = React.useState(activeYear || '2026/2027');
@@ -168,6 +173,63 @@ export default function JuniorHighAssessmentBookPage() {
   const selectMode = (next: 'SUBJECT' | 'UNIT_ACTIVITY') => { if (quickLock.current) return; resetLG(); setError(''); setMode(next); setTab('MATRIX'); if (next === 'UNIT_ACTIVITY') { setUAClass('ALL'); setUASearch(''); } };
 
   React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const urlYear = params.get('year');
+    const urlSemester = params.get('semester');
+    const urlLg = params.get('lg');
+    const urlGrade = params.get('grade');
+    const urlClass = params.get('class');
+
+    if (urlYear) setYear(urlYear);
+    if (urlSemester) setSemester(urlSemester);
+    if (urlLg) setLGId(urlLg);
+
+    if (activityId) {
+      setMode('UNIT_ACTIVITY');
+      setUAId(activityId);
+      if (urlGrade) setUAGrade(urlGrade);
+      if (urlClass) setUAClass(urlClass);
+    } else if (subjectId && paramClassId) {
+      setMode('SUBJECT');
+      setClassId(paramClassId);
+      const catalogEntry = JH_SUBJECT_CATALOG.find(e => e.key === subjectId || normalizeSubjectName(e.key) === normalizeSubjectName(subjectId) || normalizeSubjectName(e.label) === normalizeSubjectName(subjectId));
+      setSubject(catalogEntry ? catalogEntry.label : subjectId);
+    }
+  }, [location.pathname, location.search, activityId, subjectId, paramClassId]);
+
+  React.useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    const params = new URLSearchParams();
+    if (year) params.set('year', year);
+    if (semester && semester !== '1') params.set('semester', semester);
+    if (lgId) params.set('lg', lgId);
+
+    let pathname = '/junior-high/assessment-book';
+    if (mode === 'UNIT_ACTIVITY') {
+      if (uaId) {
+        pathname = `/junior-high/assessment-book/unit-aktivitas/${uaId}`;
+        if (uaGrade && uaGrade !== 'ALL') params.set('grade', uaGrade);
+        if (uaClass && uaClass !== 'ALL') params.set('class', uaClass);
+      }
+    } else {
+      if (subject && classId) {
+        const catalogEntry = JH_SUBJECT_CATALOG.find(e => e.label === subject || e.legacyValue === subject || e.key === subject);
+        const subjKey = catalogEntry ? catalogEntry.key : encodeURIComponent(subject);
+        pathname = `/junior-high/assessment-book/pelajaran/${subjKey}/${classId}`;
+      }
+    }
+
+    const searchStr = params.toString();
+    const nextUrl = searchStr ? `${pathname}?${searchStr}` : pathname;
+    if (window.location.pathname + window.location.search !== nextUrl) {
+      navigate(nextUrl, { replace: false });
+    }
+  }, [mode, year, semester, classId, subject, uaId, lgId, uaGrade, uaClass]);
+
+  React.useEffect(() => {
     let cancelled = false;
     setLoadingClasses(true); setError('');
     Promise.all([getClasses(), getAssessmentBookOptions()]).then(([all, opts]) => {
@@ -186,10 +248,18 @@ export default function JuniorHighAssessmentBookPage() {
     getJHUnitActivities({ academicYear: year, semester }).then(list => {
       if (cancelled) return;
       setUAOptions(list);
-      setUAId(previous => list.some(item => item.id === previous && item.category === uaCategory) ? previous : '');
+      if (activityId) {
+        const found = list.find(item => item.id === activityId);
+        if (found) {
+          setUACategory(found.category);
+          setUAId(found.id);
+        }
+      } else {
+        setUAId(previous => list.some(item => item.id === previous && item.category === uaCategory) ? previous : '');
+      }
     }).catch(issue => { if (!cancelled) setError(problem(issue)); }).finally(() => { if (!cancelled) setLoadingUAOptions(false); });
     return () => { cancelled = true; };
-  }, [isUA, year, semester, reload]);
+  }, [isUA, year, semester, activityId, reload]);
 
   React.useEffect(() => {
     let cancelled = false;

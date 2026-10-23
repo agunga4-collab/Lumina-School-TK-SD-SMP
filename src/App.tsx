@@ -616,6 +616,16 @@ export default function App() {
                 <JuniorHighAssessmentBookPage />
               </RoleGuard>
             } />
+            <Route path="assessment-book/pelajaran/:subjectId/:classId" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <JuniorHighAssessmentBookPage />
+              </RoleGuard>
+            } />
+            <Route path="assessment-book/unit-aktivitas/:activityId" element={
+              <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'PRINCIPAL', 'VICE_PRINCIPAL']}>
+                <JuniorHighAssessmentBookPage />
+              </RoleGuard>
+            } />
             <Route path="midterm" element={
               <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_JH']}>
                 <MidtermReportPage />
