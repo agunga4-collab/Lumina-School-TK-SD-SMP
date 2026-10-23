@@ -799,6 +799,21 @@ service cloud.firestore {
       allow write: if isJuniorHighStaff();
     }
 
+    match /junior_high_litnum_custom_columns/{columnId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+    }
+
+    match /junior_high_litnum_cell_values/{cellId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin() || isLinkedStudent(existing().studentId) || isOwnStudentData(existing().studentId));
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+    }
+
+    match /lpu_subject_references/{refId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
+    }
+
     match /learning_power_up_completion/{completionId} {
       allow read: if isActive() && (isAdmin() || isJuniorHighStaff() || isOwnStudentData(existing().studentId) || isLinkedStudent(existing().studentId));
       allow create, update, delete: if isAdmin() || isJuniorHighLPUStaff();

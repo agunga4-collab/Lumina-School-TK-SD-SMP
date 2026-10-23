@@ -466,5 +466,191 @@ export const juniorHighLiteracyService = {
     } catch (error) {
       return handleFirestoreError(error, 'write', COLLECTION);
     }
+  },
+
+  /**
+   * Load flexible custom assessment columns for a class & subject
+   */
+  async loadLitnumCustomColumns(schoolYear: string, classId: string, subjectArea: JuniorHighArea) {
+    try {
+      const q = query(
+        collection(db, 'junior_high_litnum_custom_columns'),
+        where('unit', '==', 'JUNIOR_HIGH'),
+        where('schoolYear', '==', schoolYear),
+        where('classId', '==', classId),
+        where('subjectArea', '==', subjectArea)
+      );
+      const snap = await getDocs(q);
+      const cols: any[] = [];
+      snap.forEach(d => cols.push({ ...d.data(), id: d.id }));
+      return cols.sort((a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0));
+    } catch (error) {
+      console.warn('loadLitnumCustomColumns graceful fallback:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Save or update a flexible custom column
+   */
+  async saveLitnumCustomColumn(column: any) {
+    try {
+      const docId = column.id || doc(collection(db, 'junior_high_litnum_custom_columns')).id;
+      const docRef = doc(db, 'junior_high_litnum_custom_columns', docId);
+      const payload = {
+        ...column,
+        id: docId,
+        unit: 'JUNIOR_HIGH',
+        updatedAt: Date.now()
+      };
+      if (!payload.createdAt) payload.createdAt = Date.now();
+      await setDoc(docRef, payload, { merge: true });
+      return docId;
+    } catch (error) {
+      return handleFirestoreError(error, 'write', 'junior_high_litnum_custom_columns');
+    }
+  },
+
+  /**
+   * Archive a custom column
+   */
+  async archiveLitnumCustomColumn(columnId: string) {
+    try {
+      const docRef = doc(db, 'junior_high_litnum_custom_columns', columnId);
+      await updateDoc(docRef, { archived: true, updatedAt: Date.now() });
+    } catch (error) {
+      return handleFirestoreError(error, 'update', `junior_high_litnum_custom_columns/${columnId}`);
+    }
+  },
+
+  /**
+   * Load cell values for custom columns
+   */
+  async loadLitnumCellValues(schoolYear: string, classId: string, subjectArea: JuniorHighArea) {
+    try {
+      const q = query(
+        collection(db, 'junior_high_litnum_cell_values'),
+        where('schoolYear', '==', schoolYear),
+        where('classId', '==', classId),
+        where('subjectArea', '==', subjectArea)
+      );
+      const snap = await getDocs(q);
+      const cells: any[] = [];
+      snap.forEach(d => cells.push({ ...d.data(), id: d.id }));
+      return cells;
+    } catch (error) {
+      console.warn('loadLitnumCellValues graceful fallback:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Bulk upsert cell values for custom columns
+   */
+  async saveLitnumCellValues(cellValues: any[]) {
+    try {
+      const batch = writeBatch(db);
+      for (const cell of cellValues) {
+        const docId = cell.id || `${cell.columnId}_${cell.studentId}`;
+        const docRef = doc(db, 'junior_high_litnum_cell_values', docId);
+        const payload = {
+          ...cell,
+          id: docId,
+          updatedAt: Date.now()
+        };
+        batch.set(docRef, payload, { merge: true });
+      }
+      await batch.commit();
+    } catch (error) {
+      return handleFirestoreError(error, 'write', 'junior_high_litnum_cell_values');
+    }
+  },
+
+  /**
+   * Load active LPU subject reference for a class & subject
+   */
+  async loadLpuSubjectReference(schoolYear: string, classId: string, subjectArea: JuniorHighArea) {
+    try {
+      const docId = `${classId}_${subjectArea}_${schoolYear.replace(/\//g, '-')}`;
+      const docRef = doc(db, 'lpu_subject_references', docId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        return snap.data();
+      }
+      return null;
+    } catch (error) {
+      console.warn('loadLpuSubjectReference graceful fallback:', error);
+      return null;
+    }
+  },
+
+  /**
+   * Save active LpuSubjectReference
+   */
+  async saveLpuSubjectReference(refData: any) {
+    try {
+      const docId = `${refData.classId}_${refData.subjectArea}_${refData.schoolYear.replace(/\//g, '-')}`;
+      const docRef = doc(db, 'lpu_subject_references', docId);
+      const payload = {
+        ...refData,
+        id: docId,
+        unit: 'JUNIOR_HIGH',
+        appliedAt: Date.now()
+      };
+      await setDoc(docRef, payload, { merge: true });
+    } catch (error) {
+      return handleFirestoreError(error, 'write', 'lpu_subject_references');
+    }
+  },
+
+  /**
+   * Get all progress records for a class & subject across all sessions
+   */
+  async getAllRecordsByClass(
+    schoolYear: string,
+    classId: string,
+    subjectArea: JuniorHighArea
+  ): Promise<JuniorHighProgressRecord[]> {
+    try {
+      const q = query(
+        collection(db, COLLECTION),
+        where('unit', '==', 'JUNIOR_HIGH'),
+        where('schoolYear', '==', schoolYear),
+        where('subjectArea', '==', subjectArea),
+        where('classId', '==', classId)
+      );
+      const snap = await getDocs(q);
+      const records: JuniorHighProgressRecord[] = [];
+      const seenIds = new Set<string>();
+
+      snap.forEach(d => {
+        seenIds.add(d.id);
+        records.push(enrichOnRead({ ...d.data(), id: d.id }) as JuniorHighProgressRecord);
+      });
+
+      // Resilient fallback for older records stored with 'area' instead of 'subjectArea'
+      if (records.length === 0) {
+        const fallbackQ = query(
+          collection(db, COLLECTION),
+          where('unit', '==', 'JUNIOR_HIGH'),
+          where('schoolYear', '==', schoolYear),
+          where('area', '==', subjectArea),
+          where('classId', '==', classId)
+        );
+        const fbSnap = await getDocs(fallbackQ);
+        fbSnap.forEach(d => {
+          if (!seenIds.has(d.id)) {
+            seenIds.add(d.id);
+            records.push(enrichOnRead({ ...d.data(), id: d.id }) as JuniorHighProgressRecord);
+          }
+        });
+      }
+
+      return records;
+    } catch (error) {
+      console.error('Error fetching records for class:', error);
+      return [];
+    }
   }
 };
+

@@ -136,10 +136,57 @@ export async function loadLpuTrackerLevels(year: string, studentId?: string): Pr
   const conditions = [where('unit', '==', 'JUNIOR_HIGH'), where('schoolYear', '==', year)];
   if (studentId) conditions.push(where('studentId', '==', studentId));
   const snap = await getDocs(query(collection(db, 'junior_high_literacy_numeracy_records'), ...conditions));
-  return resolveTrackerLevels(snap.docs.map(item => ({
-    ...item.data(),
-    id: item.id
-  })));
+  const records = snap.docs.map(item => ({ ...item.data(), id: item.id }));
+
+  const refSnap = await getDocs(query(collection(db, 'lpu_subject_references'), where('schoolYear', '==', year)));
+  const refs = refSnap.docs.map(item => item.data());
+
+  const cellsSnap = await getDocs(query(collection(db, 'junior_high_litnum_cell_values'), where('schoolYear', '==', year)));
+  const cells = cellsSnap.docs.map(item => item.data());
+
+  const result = resolveTrackerLevels(records);
+
+  for (const ref of refs) {
+    const { classId, subjectArea, sourceType, sourceId } = ref as any;
+    const trackerSubj = TRACKER_SUBJECTS.find(item => AREA[item.key] === subjectArea)?.key;
+    if (!trackerSubj) continue;
+
+    if (sourceType === 'CUSTOM_COLUMN') {
+      const matchCells = cells.filter(c => c.columnId === sourceId);
+      for (const cell of matchCells) {
+        if (studentId && cell.studentId !== studentId) continue;
+        const raw = trackerSubj === 'mengaji' ? cell.level || cell.mengajiLevel : trackerSubj === 'numerasi' ? cell.mathLevel || cell.numerasiLevel : cell.readingLevel;
+        if (!raw) continue;
+        const label = trackerSubj === 'mengaji' ? formatMengajiDisplay(raw) : trackerSubj === 'numerasi' ? formatNumerasiDisplay(raw) : clean(raw);
+        const key = trackerLevelKey(clean(cell.studentId), trackerSubj);
+        result[key] = {
+          recordId: cell.id,
+          studentId: clean(cell.studentId),
+          subjectKey: trackerSubj,
+          label,
+          sessionKey: sourceId
+        };
+      }
+    } else {
+      const matchRecs = records.filter(r => r.subjectArea === subjectArea && (r.sessionKey === sourceId || r.id === sourceId));
+      for (const rec of matchRecs) {
+        if (studentId && rec.studentId !== studentId) continue;
+        const raw = trackerSubj === 'mengaji' ? rec.mengajiLevel || rec.level : trackerSubj === 'numerasi' ? rec.numerasiLevel || rec.mathLevel : rec.readingLevel;
+        if (!raw) continue;
+        const label = trackerSubj === 'mengaji' ? formatMengajiDisplay(raw) : trackerSubj === 'numerasi' ? formatNumerasiDisplay(raw) : clean(raw);
+        const key = trackerLevelKey(clean(rec.studentId), trackerSubj);
+        result[key] = {
+          recordId: rec.id,
+          studentId: clean(rec.studentId),
+          subjectKey: trackerSubj,
+          label,
+          sessionKey: rec.sessionKey
+        };
+      }
+    }
+  }
+
+  return result;
 }
 export async function loadLpuTrackerColumns(year: string, semester: LpuTrackerSemester, subjectKey: LpuTrackerSubject): Promise<LpuTrackerColumn[]> {
   const snap = await getDocs(query(collection(db, 'lpu_tracker_columns'), where('academicYear', '==', year), where('semester', '==', semester), where('subjectKey', '==', subjectKey)));

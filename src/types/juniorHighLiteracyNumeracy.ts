@@ -102,3 +102,57 @@ export function isMengajiProgress(record: JuniorHighProgressRecord): record is M
 export function isNumeracyProgress(record: JuniorHighProgressRecord): record is NumeracyProgress {
   return record.subjectArea === 'NUMERACY' || record.area === 'NUMERACY';
 }
+
+export interface LitnumCustomColumn {
+  id: string;
+  unit: 'JUNIOR_HIGH';
+  schoolYear: string;
+  classId: string;
+  subjectArea: JuniorHighArea;
+  title: string;
+  periodLabel: string;
+  dateStr?: string;
+  notes?: string;
+  order: number;
+  archived?: boolean;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export interface LitnumCellValue {
+  id: string;
+  columnId: string;
+  studentId: string;
+  schoolYear: string;
+  classId: string;
+  subjectArea: JuniorHighArea;
+  readingLevel?: string;
+  readingComprehension?: number | '';
+  wordsRead?: number | '';
+  errors?: number | '';
+  wpm?: number | '';
+  comprehension?: number | '';
+  level?: string;
+  targetLevel?: string;
+  mathLevel?: string;
+  accuracy?: number | '';
+  notes?: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export interface LpuSubjectReference {
+  id: string;
+  unit: 'JUNIOR_HIGH';
+  schoolYear: string;
+  classId: string;
+  subjectArea: JuniorHighArea;
+  sourceType: 'LEGACY' | 'SESSION' | 'CUSTOM_COLUMN';
+  sourceId: string;
+  sourceLabel: string;
+  appliedAt: number;
+  appliedBy: string;
+  version: number;
+}
+
