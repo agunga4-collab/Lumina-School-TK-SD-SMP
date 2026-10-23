@@ -4,6 +4,7 @@ import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import type { Plugin } from 'vite';
 import { handleStudentLearningProgress } from './server/studentLearningProgress.server';
+import { handleStudentLpuLevels, isStudentLpuLevelsRequest } from './server/studentLpuLevels.server';
 
 function studentLearningProgressApi(): Plugin {
   return {
@@ -11,6 +12,10 @@ function studentLearningProgressApi(): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
+        if (isStudentLpuLevelsRequest(req)) {
+          void handleStudentLpuLevels(req, res);
+          return;
+        }
         const pathname = new URL(req.url || '/', 'http://localhost').pathname;
         if (pathname !== '/api/student-learning-progress') {
           next();
