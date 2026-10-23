@@ -5,7 +5,7 @@ import {
   Map, Calendar, Users, GraduationCap,
   Heart, Star, Camera, MessageCircleHeart, 
   CheckCircle2, Smile, Meh, Frown, Angry, 
-  Activity, BookOpen, Coffee, Home, Loader2, ChevronLeft, ShieldAlert, FileSpreadsheet
+  Activity, BookOpen, Coffee, Home, Loader2, ChevronLeft, ShieldAlert, FileSpreadsheet, TrendingUp
 } from 'lucide-react';
 import { useOutletContext, Link, useNavigate, Navigate } from 'react-router-dom';
 import { User as AppUser, Student } from '../../types';
@@ -13,6 +13,7 @@ import { getStudentById } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import ElementarySchoolInfoSection from './components/ElementarySchoolInfoSection';
+import StudentProgress from './StudentProgress';
 import { 
   DEFAULT_STUDENTS, 
   getMonday, 
@@ -33,6 +34,7 @@ export default function StudentDashboard() {
 
   const { activeYear } = useAcademicYear();
   const navigate = useNavigate();
+  const [showLearningProgress, setShowLearningProgress] = React.useState(false);
   const [studentData, setStudentData] = React.useState<Student | null>(null);
   const [classData, setClassData] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -91,7 +93,7 @@ export default function StudentDashboard() {
           where('academicYear', '==', activeYear)
         );
         const qEnrollSnap = await getDocs(qEnroll);
-        
+
         let enrollment = null;
         if (!qEnrollSnap.empty) {
           enrollment = qEnrollSnap.docs[0].data();
@@ -107,7 +109,7 @@ export default function StudentDashboard() {
         // studentProfile.luminaId (or id) == activeEnrollment.studentId == authUser.luminaId
         const profileId = (studentProfile as any).luminaId || studentProfile.id;
         const enrollmentStudentId = enrollment.studentId;
-        
+
         if (profileId !== studentId.trim() || enrollmentStudentId !== studentId.trim() || currentUser.luminaId !== studentId.trim()) {
           setDataError("Data akun siswa belum terhubung dengan data kelas. Silakan hubungi admin.");
           setLoading(false);
@@ -239,6 +241,24 @@ export default function StudentDashboard() {
     );
   }
 
+  if (unit === 'JUNIOR_HIGH' && showLearningProgress) {
+    return (
+      <div className="space-y-4 pb-12">
+        <div className="px-4 sm:px-6">
+          <button
+            type="button"
+            onClick={() => setShowLearningProgress(false)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 cursor-pointer"
+          >
+            <ChevronLeft size={16} />
+            Kembali ke Beranda Siswa
+          </button>
+        </div>
+        <StudentProgress />
+      </div>
+    );
+  }
+
   // ----------------------------------------------------
   // ELEMENTARY & JUNIOR HIGH DASHBOARD (GENERAL)
   // ----------------------------------------------------
@@ -247,7 +267,7 @@ export default function StudentDashboard() {
       {/* Welcome Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-white p-12 rounded-[3.5rem] border border-gray-100 shadow-sm overflow-hidden relative">
         <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl -mr-20 -mt-20" />
-        
+
         <div className="space-y-4 relative">
           <h1 className="text-5xl font-black tracking-tighter italic uppercase text-gray-900 leading-none">
             Halo, <span className="text-blue-600">{(studentData?.name || currentUser.displayName).split(' ')[0]}! 👋</span>
@@ -267,13 +287,39 @@ export default function StudentDashboard() {
       </div>
 
       {/* Navigation Cards */}
-      <div className={cn("grid grid-cols-1 gap-8", unit === 'JUNIOR_HIGH' ? "lg:grid-cols-3 md:grid-cols-2" : "md:grid-cols-2")}>
+      <div className={cn("grid grid-cols-1 gap-8", unit === 'JUNIOR_HIGH' ? "lg:grid-cols-2 md:grid-cols-2" : "md:grid-cols-2")}>
+         {unit === 'JUNIOR_HIGH' && (
+            <button
+               type="button"
+               onClick={() => setShowLearningProgress(true)}
+               className="group flex aspect-square flex-col justify-between overflow-hidden rounded-[3rem] border border-blue-100 bg-white p-10 text-left shadow-sm transition-all hover:scale-[1.02] hover:border-blue-300 hover:shadow-xl hover:shadow-blue-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 cursor-pointer md:aspect-auto md:h-80"
+            >
+               <div className="relative space-y-6">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-[1.5rem] bg-blue-50 transition-all duration-500 group-hover:rotate-6 group-hover:bg-blue-600">
+                     <TrendingUp className="text-blue-600 group-hover:text-white" size={28} />
+                  </div>
+                  <div className="space-y-2">
+                     <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 transition-colors group-hover:text-blue-600">
+                        Learning Progress
+                     </h2>
+                     <p className="max-w-[260px] text-sm font-bold leading-relaxed text-gray-400">
+                        Lihat capaian LO, tindak lanjut, dan perjalanan belajarmu dari hasil asesmen guru.
+                     </p>
+                  </div>
+               </div>
+               <div className="relative flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">
+                  Lihat Perkembangan Belajarku
+                  <ChevronRight size={16} className="transition-transform group-hover:translate-x-1" />
+               </div>
+            </button>
+         )}
+
          <Link 
             to="/self-exploration/my"
             className="group p-10 bg-gray-900 text-white rounded-[3rem] shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all relative overflow-hidden flex flex-col justify-between aspect-square md:aspect-auto md:h-80"
          >
             <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full blur-3xl -mr-10 -mt-10 group-hover:bg-blue-500/20 transition-colors" />
-            
+
             <div className="space-y-6 relative">
                <div className="w-14 h-14 bg-white/10 rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-600 group-hover:rotate-6 transition-all duration-500">
                   <Sparkles className="text-blue-400 group-hover:text-white" size={28} />
@@ -507,12 +553,12 @@ function ElementaryStudentDashboard({
             className="bg-white border border-gray-100 p-8 rounded-[2.5rem] shadow-sm hover:shadow-xl hover:border-blue-200 transition-all flex flex-col justify-between group relative overflow-hidden h-[300px]"
           >
             <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-2xl -mr-10 -mt-10 group-hover:scale-110 transition-transform duration-500" />
-            
+
             <div className="space-y-4 relative">
               <div className="w-14 h-14 bg-blue-50 rounded-[1.5rem] flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-all duration-300">
                 <FileText size={28} />
               </div>
-              
+
               <div className="space-y-2">
                 <h3 className="text-2xl font-black text-gray-900 tracking-tight group-hover:text-blue-600 transition-colors">
                   Rapor Saya
@@ -522,7 +568,7 @@ function ElementaryStudentDashboard({
                 </p>
               </div>
             </div>
-            
+
             <div className="pt-6 relative flex items-center justify-between text-blue-600 font-black text-[10px] uppercase tracking-widest">
               <span>Buka Rapor Saya</span>
               <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
