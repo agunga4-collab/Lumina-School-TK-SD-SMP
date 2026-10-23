@@ -747,6 +747,7 @@ export function Layout() {
                       <NavItem to="/student/dashboard" icon={<Home size={18} />} label="Dashboard Siswa" />
                       {currentUser.role === 'STUDENT' && currentUnit === 'JUNIOR_HIGH' && (
                         <>
+                          <NavItem to="/student/learning-progress" icon={<TrendingUp size={18} />} label="Learning Progress" />
                           <NavItem to="/student/learning-power-up" icon={<CheckSquare size={18} />} label="Learning Power-Up" />
                           <NavItem to="/student/unit-activities" icon={<Compass size={18} />} label="Unit Aktivitas" />
                           {hasSchoolOrgMembership && (

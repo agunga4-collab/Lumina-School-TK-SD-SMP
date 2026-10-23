@@ -34,7 +34,6 @@ export default function StudentDashboard() {
 
   const { activeYear } = useAcademicYear();
   const navigate = useNavigate();
-  const [showLearningProgress, setShowLearningProgress] = React.useState(false);
   const [studentData, setStudentData] = React.useState<Student | null>(null);
   const [classData, setClassData] = React.useState<any | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -241,24 +240,6 @@ export default function StudentDashboard() {
     );
   }
 
-  if (unit === 'JUNIOR_HIGH' && showLearningProgress) {
-    return (
-      <div className="space-y-4 pb-12">
-        <div className="px-4 sm:px-6">
-          <button
-            type="button"
-            onClick={() => setShowLearningProgress(false)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 cursor-pointer"
-          >
-            <ChevronLeft size={16} />
-            Kembali ke Beranda Siswa
-          </button>
-        </div>
-        <StudentProgress />
-      </div>
-    );
-  }
-
   // ----------------------------------------------------
   // ELEMENTARY & JUNIOR HIGH DASHBOARD (GENERAL)
   // ----------------------------------------------------
@@ -289,30 +270,29 @@ export default function StudentDashboard() {
       {/* Navigation Cards */}
       <div className={cn("grid grid-cols-1 gap-8", unit === 'JUNIOR_HIGH' ? "lg:grid-cols-2 md:grid-cols-2" : "md:grid-cols-2")}>
          {unit === 'JUNIOR_HIGH' && (
-            <button
-               type="button"
-               onClick={() => setShowLearningProgress(true)}
-               className="group flex aspect-square flex-col justify-between overflow-hidden rounded-[3rem] border border-blue-100 bg-white p-10 text-left shadow-sm transition-all hover:scale-[1.02] hover:border-blue-300 hover:shadow-xl hover:shadow-blue-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 cursor-pointer md:aspect-auto md:h-80"
-            >
-               <div className="relative space-y-6">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-[1.5rem] bg-blue-50 transition-all duration-500 group-hover:rotate-6 group-hover:bg-blue-600">
-                     <TrendingUp className="text-blue-600 group-hover:text-white" size={28} />
-                  </div>
-                  <div className="space-y-2">
-                     <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 transition-colors group-hover:text-blue-600">
-                        Learning Progress
-                     </h2>
-                     <p className="max-w-[260px] text-sm font-bold leading-relaxed text-gray-400">
-                        Lihat capaian LO, tindak lanjut, dan perjalanan belajarmu dari hasil asesmen guru.
-                     </p>
-                  </div>
-               </div>
-               <div className="relative flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">
-                  Lihat Perkembangan Belajarku
-                  <ChevronRight size={16} className="transition-transform group-hover:translate-x-1" />
-               </div>
-            </button>
-         )}
+             <Link
+                to="/student/learning-progress"
+                className="group flex aspect-square flex-col justify-between overflow-hidden rounded-[3rem] border border-blue-100 bg-white p-10 text-left shadow-sm transition-all hover:scale-[1.02] hover:border-blue-300 hover:shadow-xl hover:shadow-blue-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 cursor-pointer md:aspect-auto md:h-80"
+             >
+                <div className="relative space-y-6">
+                   <div className="flex h-14 w-14 items-center justify-center rounded-[1.5rem] bg-blue-50 transition-all duration-500 group-hover:rotate-6 group-hover:bg-blue-600">
+                      <TrendingUp className="text-blue-600 group-hover:text-white" size={28} />
+                   </div>
+                   <div className="space-y-2">
+                      <h2 className="text-3xl font-black uppercase italic tracking-tighter text-gray-900 transition-colors group-hover:text-blue-600">
+                         Learning Progress
+                      </h2>
+                      <p className="max-w-[260px] text-sm font-bold leading-relaxed text-gray-400">
+                         Lihat capaian LO, tindak lanjut, dan perjalanan belajarmu dari hasil asesmen guru.
+                      </p>
+                   </div>
+                </div>
+                <div className="relative flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">
+                   Lihat Perkembangan Belajarku
+                   <ChevronRight size={16} className="transition-transform group-hover:translate-x-1" />
+                </div>
+             </Link>
+          )}
 
          <Link 
             to="/self-exploration/my"

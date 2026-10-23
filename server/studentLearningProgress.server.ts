@@ -203,7 +203,10 @@ export async function handleStudentLearningProgress(req:ApiRequest,res:ServerRes
     try{uid=(await getAuth().verifyIdToken(header.replace(/^Bearer\s+/i,''),true)).uid;}
     catch{throw new PublicError(401,'UNAUTHENTICATED','Sesi login sudah tidak valid. Silakan masuk kembali.');}
     const url=new URL(req.originalUrl||req.url||'/','http://localhost');
-    for(const name of url.searchParams.keys())if(!['year','semester','subject','activity'].includes(name)||url.searchParams.getAll(name).length!==1)throw new PublicError(400,'INVALID_ARGUMENT','Parameter permintaan tidak valid.');
+    const yearParam = url.searchParams.get('year');
+    const semesterParam = url.searchParams.get('semester');
+    const subjectParam = url.searchParams.get('subject');
+    const activityParam = url.searchParams.get('activity');
     const config=await db.collection('systemConfig').doc('academicYear').get();
     const activeYear=yearKey(config.data()?.activeAcademicYear);
     const year=yearKey(url.searchParams.get('year')||activeYear);

@@ -746,6 +746,14 @@ export default function App() {
                 } 
              />
              <Route 
+                path="learning-progress" 
+                element={
+                  <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
+                    <StudentProgress />
+                  </RoleGuard>
+                } 
+             />
+             <Route 
                 path="learning-power-up" 
                 element={
                   <RoleGuard roles={['STUDENT', 'SUPER_ADMIN']}>
