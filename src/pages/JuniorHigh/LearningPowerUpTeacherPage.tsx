@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { LpuTrackerActor, LpuTrackerSubject, LpuTrackerSemester, LpuTrackerStudent, LpuTrackerColumn, LpuTrackerCell, LpuTrackerLevel, LpuTrackerCoach, LpuTrackerCoachAssignment, LpuTrackerLegacyRow } from '../../types/learningPowerUpTracker';
-import { TRACKER_SUBJECTS, canUseLpuTracker, loadLpuTrackerRoster, loadLpuCoachOptions, loadLpuTrackerLevels, loadLpuTrackerColumns, loadLpuTrackerCells, loadLpuTrackerCoaches, newLpuTrackerColumnId, saveLpuTrackerColumn, saveLpuTrackerCell, saveLpuTrackerRange, saveLpuTrackerLevel, saveLpuTrackerCoach, trackerCellId, trackerLevelKey, trackerLevelOptions, loadLpuTrackerLegacy } from '../../services/learningPowerUpTrackerService';
+import { TRACKER_SUBJECTS, canUseLpuTracker, loadLpuTrackerRoster, loadLpuCoachOptions, loadLpuTrackerLevels, loadLpuTrackerColumns, loadLpuTrackerCells, loadLpuTrackerCoaches, newLpuTrackerColumnId, saveLpuTrackerColumn, saveLpuTrackerCell, saveLpuTrackerRange, saveLpuTrackerCoach, trackerCellId, trackerLevelKey, loadLpuTrackerLegacy } from '../../services/learningPowerUpTrackerService';
 const inputClass = 'w-full border border-slate-200 rounded-lg bg-white px-3 py-2 text-sm';
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 function getClassRecipients(students: LpuTrackerStudent[], classId: string): LpuTrackerStudent[] {
@@ -104,42 +104,14 @@ function CellEditor({
     <p role="status" className={`text-[10px] px-2 ${state === 'Tersimpan' ? 'text-emerald-700' : 'text-rose-700'}`}>{state}</p>
   </div>;
 }
-function LevelEditor({
-  value,
-  subject,
-  onSave,
-  readOnly
-}: {
-  value?: LpuTrackerLevel;
-  subject: LpuTrackerSubject;
-  onSave: (label: string) => Promise<void>;
-  readOnly: boolean;
-}) {
-  const [label, setLabel] = React.useState(value?.label || '');
-  const [saving, setSaving] = React.useState(false);
-  const listId = React.useId();
-  React.useEffect(() => {
-    setLabel(value?.label || '');
-  }, [value?.label, value?.recordId]);
-  const save = async () => {
-    if (saving || readOnly || !label.trim()) return;
-    const source = value?.sessionKey || 'record Awal Semester pada semester terpilih';
-    if (!window.confirm(`Simpan Level ke sumber Literasi & Numerasi (${source})? Data pengukuran lain tidak diganti oleh formulir ini.`)) return;
-    setSaving(true);
-    try {
-      await onSave(label);
-      toast.success('Level tersimpan di Literasi & Numerasi.');
-    } catch (error) {
-      toast.error(message(error));
-    } finally {
-      setSaving(false);
-    }
-  };
+function LevelDisplay({ value, failed }: { value?: LpuTrackerLevel; failed: boolean }) {
   return <div className="space-y-1">
-    <input aria-label="Level" readOnly={readOnly} disabled={saving} list={listId} value={label} onChange={event => setLabel(event.target.value)} className="w-44 border rounded-lg p-2 text-xs" placeholder="Belum ada level" />
-    <datalist id={listId}>{trackerLevelOptions(subject).map(option => <option key={option} value={option} />)}</datalist>
-    <p className="text-[9px] text-slate-400">Litnum: {value?.sessionKey || 'belum ada record'}</p>
-    {!readOnly && <button disabled={saving || !label.trim() || label === (value?.label || '')} onClick={() => void save()} className="text-[10px] text-emerald-800 underline disabled:opacity-40">{saving ? 'Menyimpan…' : 'Simpan Level'}</button>}
+    <p className={`text-xs font-semibold ${failed || value?.issue ? 'text-rose-700' : 'text-slate-800'}`}>
+      {failed ? 'Level belum dapat dimuat' : value?.label || 'Belum tersedia'}
+    </p>
+    {!failed && <p className="text-[10px] text-slate-400">Litnum: {value?.sourceLabel || value?.sessionKey || 'belum ada hasil'}</p>}
+    {value?.issue && <p className="max-w-[220px] text-[10px] text-amber-800">{value.issue}</p>}
+    <Link to="/junior-high/literasi-numerasi" className="inline-block rounded text-[10px] text-emerald-800 underline focus-visible:ring-2 focus-visible:ring-emerald-500">Atur level/acuan di Litnum</Link>
   </div>;
 }
 function HeaderEditor({
@@ -372,6 +344,8 @@ export default function LearningPowerUpTeacherPage() {
   const [assignments, setAssignments] = React.useState<LpuTrackerCoachAssignment[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
+  const [loadedScope, setLoadedScope] = React.useState('');
+  const [loadedSources, setLoadedSources] = React.useState({ roster: false, columns: false, cells: false, levels: false, coachOptions: false, coachAssignments: false });
   const [refresh, setRefresh] = React.useState(0);
   const [editor, setEditor] = React.useState<{
     column?: LpuTrackerColumn;
@@ -393,46 +367,52 @@ export default function LearningPowerUpTeacherPage() {
   }, [subject, year, semester]);
   React.useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError('');
-    setColumns([]);
-    setCells([]);
-    if (!year || !canUseLpuTracker(currentUser)) {
-      setLoading(false);
-      return;
-    }
-    Promise.all([loadLpuTrackerRoster(year), loadLpuTrackerColumns(year, semester, subject), loadLpuTrackerCells(year, semester, subject), loadLpuTrackerLevels(year), loadLpuCoachOptions(), loadLpuTrackerCoaches(year, semester)]).then(([r, c, values, l, staff, assigned]) => {
-      if (!cancelled) {
-        setRoster(r);
-        setColumns(c);
-        setCells(values);
-        setLevels(l);
-        setCoaches(staff);
-        setAssignments(assigned);
-        setClassId(previous => resolveSelectedClass(previous, r.classes));
-      }
-    }).catch(issue => {
-      if (!cancelled) setError(message(issue));
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [year, semester, subject, currentUser?.uid, refresh]);
+    setLoading(true); setError(''); setLoadedScope('');
+    setLoadedSources({ roster: false, columns: false, cells: false, levels: false, coachOptions: false, coachAssignments: false });
+    setRoster({ classes: [], students: [] }); setColumns([]); setCells([]); setLevels({}); setCoaches([]); setAssignments([]);
+    if (!year || !canUseLpuTracker(currentUser)) { setLoading(false); return () => { cancelled = true; }; }
+    const rosterJob = loadLpuTrackerRoster(year);
+    const tasks = [
+      rosterJob,
+      loadLpuTrackerColumns(year, semester, subject),
+      loadLpuTrackerCells(year, semester, subject),
+      rosterJob.then(value => loadLpuTrackerLevels(year, undefined, value.students)),
+      subject === 'numerasi' ? loadLpuCoachOptions() : Promise.resolve<LpuTrackerCoach[]>([]),
+      subject === 'numerasi' ? loadLpuTrackerCoaches(year, semester) : Promise.resolve<LpuTrackerCoachAssignment[]>([])
+    ] as const;
+    void Promise.allSettled(tasks).then(([r, c, values, l, staff, assigned]) => {
+      if (cancelled) return;
+      const problems: string[] = [];
+      if (r.status === 'fulfilled') { setRoster(r.value); setClassId(previous => resolveSelectedClass(previous, r.value.classes)); }
+      else problems.push(`[Roster kelas/siswa] ${message(r.reason)}`);
+      if (c.status === 'fulfilled') setColumns(c.value); else problems.push(`[lpu_tracker_columns] ${message(c.reason)}`);
+      if (values.status === 'fulfilled') setCells(values.value); else problems.push(`[lpu_tracker_cells] ${message(values.reason)}`);
+      if (l.status === 'fulfilled') setLevels(l.value); else problems.push(`[Level Litnum/acuan LPU] ${message(l.reason)}`);
+      if (staff.status === 'fulfilled') setCoaches(staff.value); else problems.push(`[Opsi coach] ${message(staff.reason)}`);
+      if (assigned.status === 'fulfilled') setAssignments(assigned.value); else problems.push(`[lpu_tracker_coaches] ${message(assigned.reason)}`);
+      setLoadedSources({ roster: r.status === 'fulfilled', columns: c.status === 'fulfilled', cells: values.status === 'fulfilled', levels: l.status === 'fulfilled', coachOptions: staff.status === 'fulfilled', coachAssignments: assigned.status === 'fulfilled' });
+      setLoadedScope(scope);
+      setError(problems.join('\n'));
+    }).catch(issue => { if (!cancelled) setError(`[Pemuatan LPU] ${message(issue)}`); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [year, semester, subject, currentUser?.uid, currentUser?.role, currentUser?.status, currentUser?.unitId, currentUser?.unit, refresh]);
+  const sourceReady = loadedScope === scope ? loadedSources : { roster: false, columns: false, cells: false, levels: false, coachOptions: false, coachAssignments: false };
   if (!canUseLpuTracker(currentUser)) return <p className="p-8 text-rose-700">Akun ini tidak memiliki akses tracker SMP. Periksa status, role, dan unit akun.</p>;
   const selectedClass = roster.classes.find(item => item.id === classId);
   const classStudents = getClassRecipients(roster.students, classId);
   const classScopeStudents = classId === 'ALL' ? roster.students : classStudents;
   const coachByStudent = new Map(assignments.map(item => [item.studentId, item]));
-  const visible = classScopeStudents.filter(student => (levelFilter === 'ALL' || (levels[trackerLevelKey(student.id, subject)]?.label || '') === levelFilter) && (subject !== 'numerasi' || coachFilter === 'ALL' || (coachFilter === 'NONE' ? !coachByStudent.get(student.id)?.coachId : coachByStudent.get(student.id)?.coachId === coachFilter)) && `${student.name} ${student.nis} ${student.className}`.toLowerCase().includes(search.toLowerCase()));
+  const visible = classScopeStudents.filter(student => (!sourceReady.levels || levelFilter === 'ALL' || (levels[trackerLevelKey(student.id, subject)]?.label || '') === levelFilter) && (subject !== 'numerasi' || !sourceReady.coachAssignments || coachFilter === 'ALL' || (coachFilter === 'NONE' ? !coachByStudent.get(student.id)?.coachId : coachByStudent.get(student.id)?.coachId === coachFilter)) && `${student.name} ${student.nis} ${student.className}`.toLowerCase().includes(search.toLowerCase()));
   // Header scope follows the selected class, not row search/level/coach filters.
   const classScopeIds = new Set(classScopeStudents.map(student => student.id));
   const displayedColumns = columns.filter(column => (showArchived || !column.archived) && column.studentIds.some(id => classScopeIds.has(id)));
   const cellMap = new Map(cells.map(item => [item.id, item]));
   const currentLevelOptions = [...new Set(classScopeStudents.map(student => levels[trackerLevelKey(student.id, subject)]?.label || ''))].sort();
-  const canAddHeader = !readOnly && !loading && !!selectedClass && classStudents.length > 0;
+  const coreReady = sourceReady.roster && sourceReady.columns && sourceReady.cells;
+  const canAddHeader = !readOnly && !loading && coreReady && !!selectedClass && classStudents.length > 0;
   const openEditor = (column?: LpuTrackerColumn) => {
+    if (!coreReady || loading) { toast.warning('Tunggu roster, header, dan sel berhasil dimuat.'); return; }
     if (!selectedClass) {
       toast.warning('Pilih satu kelas dahulu untuk membuat atau mengedit header.');
       return;
@@ -446,6 +426,7 @@ export default function LearningPowerUpTeacherPage() {
     });
   };
   const archive = async (column: LpuTrackerColumn) => {
+    if (!coreReady || loading) return;
     if (busy) return;
     if (!selectedClass) {
       toast.warning('Pilih satu kelas dahulu.');
@@ -471,6 +452,7 @@ export default function LearningPowerUpTeacherPage() {
     }
   };
   const pasteRange = async (start: LpuTrackerCell, raw: string) => {
+    if (!coreReady || loading || readOnly) throw new Error('Data inti belum siap atau akun hanya-baca.');
     const rows = raw.replace(/\r/g, '').split('\n').map(row => row.split('\t'));
     if (rows.length > 1 && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop();
     const rowStart = visible.findIndex(student => student.id === start.studentId);
@@ -509,25 +491,20 @@ export default function LearningPowerUpTeacherPage() {
       <label className="text-xs">Tahun ajaran<select disabled={!!editor} value={year} onChange={event => setYear(event.target.value)} className={inputClass}>{years.map(item => <option key={item}>{item}</option>)}</select></label>
       <label className="text-xs">Semester<select disabled={!!editor} value={semester} onChange={event => setSemester(event.target.value as LpuTrackerSemester)} className={inputClass}><option value="1">Semester 1</option><option value="2">Semester 2</option></select></label>
       <label className="text-xs">Kelas<select disabled={!!editor} value={classId} onChange={event => setClassId(event.target.value)} className={inputClass}><option value="" disabled>Pilih kelas</option>{roster.classes.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}<option value="ALL">Semua kelas SMP — lihat gabungan</option></select></label>
-      <label className="text-xs">Level<select value={levelFilter} onChange={event => setLevelFilter(event.target.value)} className={inputClass}><option value="ALL">Semua level</option>{currentLevelOptions.map(item => <option key={item} value={item}>{item || 'Belum ada level'}</option>)}</select></label>
-      {subject === 'numerasi' && <label className="text-xs">Coach<select value={coachFilter} onChange={event => setCoachFilter(event.target.value)} className={inputClass}><option value="ALL">Semua coach</option><option value="NONE">Belum ada coach</option>{coaches.map(item => <option key={item.uid} value={item.uid}>{item.name}</option>)}</select></label>}
+      <label className="text-xs">Level<select disabled={!sourceReady.levels} value={levelFilter} onChange={event => setLevelFilter(event.target.value)} className={inputClass}><option value="ALL">Semua level</option>{currentLevelOptions.map(item => <option key={item} value={item}>{item || 'Belum ada level'}</option>)}</select></label>
+      {subject === 'numerasi' && <label className="text-xs">Coach<select disabled={!sourceReady.coachAssignments} value={coachFilter} onChange={event => setCoachFilter(event.target.value)} className={inputClass}><option value="ALL">Semua coach</option><option value="NONE">Belum ada coach</option>{coaches.map(item => <option key={item.uid} value={item.uid}>{item.name}</option>)}</select></label>}
       <label className="text-xs">Cari siswa<input value={search} onChange={event => setSearch(event.target.value)} className={inputClass} placeholder="Nama / NIS / kelas" /></label>
     </div>
     {classId === 'ALL' && <p className="text-xs bg-blue-50 text-blue-900 border rounded-xl p-3">Tampilan gabungan seluruh kelas. Untuk menambah atau mengedit header, pilih satu kelas dahulu.</p>}
-    <div className="flex flex-wrap justify-between items-center gap-3"><p className="text-xs text-slate-500">{visible.length} siswa ditampilkan{selectedClass ? ` dari ${classStudents.length} siswa kelas ${selectedClass.name}` : ''} · {displayedColumns.length} kolom. Enter/klik luar untuk simpan; Shift+Enter untuk baris baru. Tempel maksimal 100 sel/10 kolom.</p><div className="flex gap-3 items-center"><label className="text-xs"><input type="checkbox" checked={showArchived} onChange={event => setShowArchived(event.target.checked)} /> Tampilkan arsip</label><button onClick={() => setRefresh(value => value + 1)} disabled={loading || !!editor} className="border rounded-xl px-3 py-2 text-xs">Segarkan</button>{!readOnly && <button disabled={!canAddHeader} title={selectedClass ? `Tambah header untuk seluruh kelas ${selectedClass.name}` : 'Pilih satu kelas dahulu'} onClick={() => openEditor()} className="bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs disabled:opacity-40">+ Tambah Header</button>}</div></div>
-    {error && <div role="alert" className="bg-rose-50 border rounded-xl p-4 text-sm text-rose-800 whitespace-pre-wrap">{error}</div>}
-    {loading ? <p className="p-8 text-sm text-slate-500">Memuat tracker…</p> : !error && <div className="bg-white border rounded-2xl overflow-x-auto"><table className="w-full text-left text-sm border-collapse"><thead className="bg-slate-50"><tr><th className="p-3 min-w-[210px] sticky left-0 bg-slate-50 z-10">Nama</th><th className="p-3 min-w-[190px]">Level</th>{subject === 'numerasi' && <th className="p-3 min-w-[190px]">Coach</th>}{displayedColumns.map(column => {
+    <div className="flex flex-wrap justify-between items-center gap-3"><p className="text-xs text-slate-500">{sourceReady.roster ? `${visible.length} siswa ditampilkan` : 'Roster belum dapat dimuat'}{selectedClass ? ` dari ${classStudents.length} siswa kelas ${selectedClass.name}` : ''} · {sourceReady.columns ? `${displayedColumns.length} kolom.` : 'Kolom belum dapat dimuat.'} Enter/klik luar untuk simpan; Shift+Enter untuk baris baru. Tempel maksimal 100 sel/10 kolom.</p><div className="flex gap-3 items-center"><label className="text-xs"><input type="checkbox" checked={showArchived} onChange={event => setShowArchived(event.target.checked)} /> Tampilkan arsip</label><button onClick={() => setRefresh(value => value + 1)} disabled={loading || !!editor} className="border rounded-xl px-3 py-2 text-xs">Segarkan</button>{!readOnly && <button disabled={!canAddHeader} title={selectedClass ? `Tambah header untuk seluruh kelas ${selectedClass.name}` : 'Pilih satu kelas dahulu'} onClick={() => openEditor()} className="bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs disabled:opacity-40">+ Tambah Header</button>}</div></div>
+    {error && <div role="alert" className="bg-rose-50 border rounded-xl p-4 text-sm text-rose-800 whitespace-pre-wrap">{error}<p className="mt-2 text-xs">Data yang berhasil dibaca tetap ditampilkan. Periksa rules yang sudah dipublikasikan pada project Firebase aktif; build aplikasi tidak mempublikasikan rules.</p></div>}
+    {loading ? <p className="p-8 text-sm text-slate-500">Memuat tracker…</p> : sourceReady.roster && <div className="bg-white border rounded-2xl overflow-x-auto"><table className="w-full text-left text-sm border-collapse"><thead className="bg-slate-50"><tr><th className="p-3 min-w-[210px] sticky left-0 bg-slate-50 z-10">Nama</th><th className="p-3 min-w-[190px]">Level</th>{subject === 'numerasi' && <th className="p-3 min-w-[190px]">Coach</th>}{displayedColumns.map(column => {
               const headerClassNames = [...new Set(roster.students.filter(student => column.studentIds.includes(student.id)).map(student => student.className))];
               return <th key={column.id} className="p-3 min-w-[210px] border-l align-top"><span>{column.label}{column.archived ? ' · Arsip' : ''}</span><p className="font-normal text-xs text-slate-400 mt-1">{column.periodLabel}</p>{classId === 'ALL' && <p className="font-normal text-[10px] text-slate-500">{headerClassNames.join(', ')}</p>}{!readOnly && <div className="flex gap-3 mt-2 text-[10px] font-normal"><button disabled={!selectedClass || !!busy} onClick={() => openEditor(column)} className="underline text-emerald-800 disabled:opacity-40">Edit / Penerima Kelas</button><button disabled={!selectedClass || !!busy} onClick={() => void archive(column)} className="underline text-slate-500 disabled:opacity-40">{column.archived ? 'Aktifkan' : 'Arsipkan'}</button></div>}</th>;
             })}</tr></thead><tbody>{visible.map(student => {
             const source = levels[trackerLevelKey(student.id, subject)];
             const assignedCoach = coachByStudent.get(student.id);
-            return <tr key={student.id} className="border-t"><td className="p-3 sticky left-0 bg-white z-10"><span className="font-semibold">{student.name}</span><p className="text-[10px] text-slate-400">{student.className} · {student.nis}</p></td><td className="p-3"><LevelEditor value={source} subject={subject} readOnly={readOnly} onSave={async label => {
-                  const currentScope = scope;
-                  await saveLpuTrackerLevel(student, year, semester, subject, label, source, currentUser);
-                  const updated = await loadLpuTrackerLevels(year);
-                  if (scopeRef.current === currentScope) setLevels(updated);
-                }} /></td>{subject === 'numerasi' && <td className="p-3"><select aria-label={`Coach ${student.name}`} disabled={readOnly || busy === student.id} value={assignedCoach?.coachId || ''} onChange={async event => {
+            return <tr key={student.id} className="border-t"><td className="p-3 sticky left-0 bg-white z-10"><span className="font-semibold">{student.name}</span><p className="text-[10px] text-slate-400">{student.className} · {student.nis}</p></td><td className="p-3"><LevelDisplay value={source} failed={!sourceReady.levels} /></td>{subject === 'numerasi' && <td className="p-3"><select aria-label={`Coach ${student.name}`} disabled={readOnly || !sourceReady.coachOptions || !sourceReady.coachAssignments || busy === student.id} value={assignedCoach?.coachId || ''} onChange={async event => {
                   const id = event.target.value;
                   const currentScope = scope;
                   setBusy(student.id);
@@ -541,11 +518,11 @@ export default function LearningPowerUpTeacherPage() {
                   } finally {
                     setBusy('');
                   }
-                }} className="border rounded-lg p-2 text-xs w-44"><option value="">Belum ditetapkan</option>{assignedCoach?.coachId && !coaches.some(item => item.uid === assignedCoach.coachId) && <option value={assignedCoach.coachId}>{assignedCoach.coachName} (tidak aktif)</option>}{coaches.map(item => <option key={item.uid} value={item.uid}>{item.name}</option>)}</select></td>}{displayedColumns.map(column => {
+                }} className="border rounded-lg p-2 text-xs w-44"><option value="">{sourceReady.coachAssignments ? 'Belum ditetapkan' : 'Data coach belum dapat dimuat'}</option>{assignedCoach?.coachId && !coaches.some(item => item.uid === assignedCoach.coachId) && <option value={assignedCoach.coachId}>{assignedCoach.coachName} (tercatat)</option>}{coaches.map(item => <option key={item.uid} value={item.uid}>{item.name}</option>)}</select></td>}{displayedColumns.map(column => {
                 const cell = cellMap.get(trackerCellId(column.id, student.id));
-                return <td key={column.id} className="p-1 border-l align-top">{cell && cell.visible && !column.archived ? <CellEditor cell={cell} actor={currentUser} readOnly={readOnly} onPasteRange={pasteRange} onSaved={updated => setCells(previous => previous.map(item => item.id === updated.id ? updated : item))} /> : <span className="p-3 block text-xs text-slate-400">{column.archived ? 'Diarsipkan' : 'Tidak berlaku'}</span>}</td>;
+                return <td key={column.id} className="p-1 border-l align-top">{!sourceReady.cells ? <span className="p-3 block text-xs text-rose-700">Data sel belum dapat dimuat</span> : cell && cell.visible && !column.archived ? <CellEditor cell={cell} actor={currentUser} readOnly={readOnly || !coreReady || loading} onPasteRange={pasteRange} onSaved={updated => setCells(previous => previous.map(item => item.id === updated.id ? updated : item))} /> : <span className="p-3 block text-xs text-slate-400">{column.archived ? 'Diarsipkan' : 'Tidak berlaku'}</span>}</td>;
               })}</tr>;
-          })}</tbody></table>{!visible.length && <p className="p-8 text-sm text-slate-500">Tidak ada siswa yang cocok dengan filter. Filter baris tidak mengubah cakupan header kelas.</p>}{!displayedColumns.length && !!classScopeStudents.length && <p className="p-6 text-sm text-slate-500">Belum ada header untuk kelas ini. Pilih satu kelas lalu gunakan Tambah Header.</p>}</div>}
+          })}</tbody></table>{!visible.length && <p className="p-8 text-sm text-slate-500">Tidak ada siswa yang cocok dengan filter. Filter baris tidak mengubah cakupan header kelas.</p>}{sourceReady.columns && !displayedColumns.length && !!classScopeStudents.length && <p className="p-6 text-sm text-slate-500">Belum ada header untuk kelas ini. Pilih satu kelas lalu gunakan Tambah Header.</p>}</div>}
     <section className="border rounded-2xl bg-white p-4"><button disabled={loadingLegacy} className="text-sm underline text-slate-600" onClick={async () => {
         if (legacy) {
           setLegacy(null);

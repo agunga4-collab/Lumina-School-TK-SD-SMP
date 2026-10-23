@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   BookOpen, Languages, Heart, BookMarked, Calculator, Search, 
   History, Save, Calendar, RefreshCw, AlertCircle, FileText, X, HelpCircle, Info,
-  Plus, Target, ShieldCheck, Check, Trash2, Sparkles, AlertTriangle
+  Plus, Target, ShieldCheck, Check, Trash2, Sparkles, AlertTriangle, Pencil
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../context/AuthContext';
@@ -274,6 +274,58 @@ export default function JuniorHighLiteracyNumeracy() {
   const [activeLpuRef, setActiveLpuRef] = React.useState<LpuSubjectReference | null>(null);
   const [modifiedIds, setModifiedIds] = React.useState<Set<string>>(new Set());
 
+  // Session Titles State & Inline Editing
+  const [sessionTitles, setSessionTitles] = React.useState<Record<string, string>>({});
+  const [editingSessionKey, setEditingSessionKey] = React.useState<string | null>(null);
+  const [tempSessionTitle, setTempSessionTitle] = React.useState<string>('');
+
+  // Custom Column Title Inline Editing
+  const [editingCustomColId, setEditingCustomColId] = React.useState<string | null>(null);
+  const [tempCustomColTitle, setTempCustomColTitle] = React.useState<string>('');
+
+  const getSessionTitle = React.useCallback((sessionKey: string) => {
+    if (sessionTitles[sessionKey]) {
+      return sessionTitles[sessionKey];
+    }
+    const def = PERIODS.find(p => p.value === sessionKey);
+    return def ? def.label : sessionKey;
+  }, [sessionTitles]);
+
+  const handleSaveSessionTitleEdit = async (sessionKey: string) => {
+    const trimmed = tempSessionTitle.trim();
+    if (!trimmed) {
+      toast.error('Judul sesi tidak boleh kosong');
+      return;
+    }
+    const updated = { ...sessionTitles, [sessionKey]: trimmed };
+    try {
+      await juniorHighLiteracyService.saveLitnumSessionTitles(selectedYear, selectedClassId, selectedArea, updated);
+      setSessionTitles(updated);
+      setEditingSessionKey(null);
+      toast.success('Judul sesi berhasil diperbarui');
+    } catch (err) {
+      console.error('Error saving session title:', err);
+      toast.error('Gagal menyimpan judul sesi');
+    }
+  };
+
+  const handleSaveCustomColumnTitleEdit = async (col: LitnumCustomColumn) => {
+    const trimmed = tempCustomColTitle.trim();
+    if (!trimmed) {
+      toast.error('Judul kolom kustom tidak boleh kosong');
+      return;
+    }
+    try {
+      await juniorHighLiteracyService.saveLitnumCustomColumn({ ...col, title: trimmed });
+      setCustomColumns(prev => prev.map(c => c.id === col.id ? { ...c, title: trimmed } : c));
+      setEditingCustomColId(null);
+      toast.success('Judul kolom kustom berhasil diperbarui');
+    } catch (err) {
+      console.error('Error saving custom column title:', err);
+      toast.error('Gagal menyimpan judul kolom kustom');
+    }
+  };
+
   // Class History modal
   const [showHistory, setShowHistory] = React.useState<boolean>(false);
   const [historyRecords, setHistoryRecords] = React.useState<JuniorHighProgressRecord[]>([]);
@@ -422,6 +474,14 @@ export default function JuniorHighLiteracyNumeracy() {
           console.warn('Error loading LPU reference:', err);
         }
 
+        let loadedSessionTitles: Record<string, string> = {};
+        try {
+          loadedSessionTitles = await juniorHighLiteracyService.loadLitnumSessionTitles(selectedYear, selectedClassId, selectedArea);
+        } catch (err) {
+          console.warn('Error loading session titles:', err);
+        }
+        setSessionTitles(loadedSessionTitles || {});
+
         // Map legacy records by studentId -> sessionKey -> record
         const legacyMap: Record<string, Record<string, Partial<JuniorHighProgressRecord>>> = {};
         const legacyBySelectedPeriod: Record<string, Partial<JuniorHighProgressRecord>> = {};
@@ -564,7 +624,7 @@ export default function JuniorHighLiteracyNumeracy() {
       if (lvl) {
         return {
           level: lvl,
-          sourceLabel: `${getPeriodLabel(sKey)} (Otomatis)`,
+          sourceLabel: `${getSessionTitle(sKey)} (Otomatis)`,
           isFallback: true
         };
       }
@@ -584,7 +644,7 @@ export default function JuniorHighLiteracyNumeracy() {
         gradeLevel: selectedGradeLevel,
         schoolYear: selectedYear,
         sessionKey,
-        sessionLabel: getPeriodLabel(sessionKey),
+        sessionLabel: getSessionTitle(sessionKey),
         subjectArea: selectedArea
       };
 
@@ -837,7 +897,7 @@ export default function JuniorHighLiteracyNumeracy() {
 
     let sourceLabel = '';
     if (selectedRefSourceType === 'SESSION') {
-      sourceLabel = getPeriodLabel(selectedRefSourceId as JuniorHighSessionKey);
+      sourceLabel = getSessionTitle(selectedRefSourceId as JuniorHighSessionKey);
     } else {
       const c = customColumns.find(col => col.id === selectedRefSourceId);
       sourceLabel = c ? c.title : 'Kolom Kustom';
@@ -1519,10 +1579,54 @@ export default function JuniorHighLiteracyNumeracy() {
                       {/* 5 STANDAR SESSIONS */}
                       {PERIODS.map(p => {
                         const isRef = activeLpuRef?.sourceType === 'SESSION' && activeLpuRef?.sourceId === p.value;
+                        const customTitle = getSessionTitle(p.value);
+                        const isEditing = editingSessionKey === p.value;
+
                         return (
                           <th key={p.value} colSpan={subColCount} className={cn("py-2.5 px-3 text-center border-r border-slate-200", isRef ? "bg-indigo-100/70 text-indigo-900 border-indigo-200" : "bg-slate-50")}>
-                            <div className="flex flex-col items-center gap-0.5">
-                              <span className="font-black text-[10px] text-slate-700">{p.label}</span>
+                            <div className="flex flex-col items-center gap-1">
+                              {isEditing ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={tempSessionTitle}
+                                    onChange={e => setTempSessionTitle(e.target.value)}
+                                    className="w-32 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-bold text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
+                                    autoFocus
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveSessionTitleEdit(p.value)}
+                                    className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer"
+                                    title="Simpan"
+                                  >
+                                    <Check size={10} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingSessionKey(null)}
+                                    className="p-1 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 cursor-pointer"
+                                    title="Batal"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 justify-center">
+                                  <span className="font-black text-[10px] text-slate-700">{customTitle}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingSessionKey(p.value);
+                                      setTempSessionTitle(customTitle);
+                                    }}
+                                    className="text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
+                                    title="Edit Judul"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                </div>
+                              )}
                               {isRef && (
                                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black bg-indigo-600 text-white shadow-xs">
                                   <Sparkles size={8} /> ACUAN LPU
@@ -1536,20 +1640,61 @@ export default function JuniorHighLiteracyNumeracy() {
                       {/* CUSTOM COLUMNS */}
                       {customColumns.filter(c => !c.archived).map(col => {
                         const isRef = activeLpuRef?.sourceType === 'CUSTOM_COLUMN' && activeLpuRef?.sourceId === col.id;
+                        const isEditing = editingCustomColId === col.id;
+
                         return (
                           <th key={col.id} colSpan={subColCount} className={cn("py-2.5 px-3 text-center border-r border-slate-200", isRef ? "bg-indigo-100/70 text-indigo-900 border-indigo-200" : "bg-slate-50")}>
-                            <div className="flex flex-col items-center gap-0.5">
-                              <div className="flex items-center gap-1 justify-center">
-                                <span className="font-black text-[10px] text-slate-700 truncate max-w-[120px]">{col.title}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleArchiveColumn(col.id, col.title)}
-                                  title="Arsipkan kolom ini"
-                                  className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer"
-                                >
-                                  <Trash2 size={11} />
-                                </button>
-                              </div>
+                            <div className="flex flex-col items-center gap-1">
+                              {isEditing ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={tempCustomColTitle}
+                                    onChange={e => setTempCustomColTitle(e.target.value)}
+                                    className="w-32 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-bold text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
+                                    autoFocus
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveCustomColumnTitleEdit(col)}
+                                    className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer"
+                                    title="Simpan"
+                                  >
+                                    <Check size={10} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingCustomColId(null)}
+                                    className="p-1 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 cursor-pointer"
+                                    title="Batal"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 justify-center">
+                                  <span className="font-black text-[10px] text-slate-700 truncate max-w-[120px]">{col.title}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingCustomColId(col.id);
+                                      setTempCustomColTitle(col.title);
+                                    }}
+                                    className="text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
+                                    title="Edit Judul"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleArchiveColumn(col.id, col.title)}
+                                    title="Arsipkan kolom ini"
+                                    className="text-slate-300 hover:text-red-500 transition-colors cursor-pointer"
+                                  >
+                                    <Trash2 size={11} />
+                                  </button>
+                                </div>
+                              )}
                               {col.assessmentDate && (
                                 <span className="text-[8px] text-slate-400 font-normal">{col.assessmentDate}</span>
                               )}
@@ -2030,7 +2175,7 @@ export default function JuniorHighLiteracyNumeracy() {
                             )}
                           >
                             <div>
-                              <div className="text-xs font-bold text-slate-800">{p.label}</div>
+                              <div className="text-xs font-bold text-slate-800">{getSessionTitle(p.value)}</div>
                               <div className="text-[10px] text-slate-400">Sesi Standar</div>
                             </div>
                             {isSelected && <Check size={14} className="text-indigo-600" />}

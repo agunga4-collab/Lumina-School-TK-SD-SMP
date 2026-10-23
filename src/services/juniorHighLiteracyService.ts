@@ -651,6 +651,47 @@ export const juniorHighLiteracyService = {
       console.error('Error fetching records for class:', error);
       return [];
     }
+  },
+
+  /**
+   * Load custom session titles for a class & subject
+   */
+  async loadLitnumSessionTitles(schoolYear: string, classId: string, subjectArea: JuniorHighArea): Promise<Record<string, string>> {
+    try {
+      const docId = `${classId}_${subjectArea}_${schoolYear.replace(/\//g, '-')}`;
+      const docRef = doc(db, 'junior_high_litnum_session_titles', docId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        return data.sessionTitles || {};
+      }
+      return {};
+    } catch (error) {
+      console.warn('loadLitnumSessionTitles graceful fallback:', error);
+      return {};
+    }
+  },
+
+  /**
+   * Save custom session titles for a class & subject
+   */
+  async saveLitnumSessionTitles(schoolYear: string, classId: string, subjectArea: JuniorHighArea, sessionTitles: Record<string, string>): Promise<void> {
+    try {
+      const docId = `${classId}_${subjectArea}_${schoolYear.replace(/\//g, '-')}`;
+      const docRef = doc(db, 'junior_high_litnum_session_titles', docId);
+      const payload = {
+        id: docId,
+        unit: 'JUNIOR_HIGH',
+        schoolYear,
+        classId,
+        subjectArea,
+        sessionTitles,
+        updatedAt: Date.now()
+      };
+      await setDoc(docRef, payload, { merge: true });
+    } catch (error) {
+      return handleFirestoreError(error, 'write', 'junior_high_litnum_session_titles');
+    }
   }
 };
 

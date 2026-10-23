@@ -809,8 +809,25 @@ service cloud.firestore {
       allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
     }
 
+    // Students may GET only the reference metadata for their own canonical class.
+    // No list access and no grade/result access is added here.
+    function isOwnLpuClassReferenceId(refId) {
+      let classKey = studentClassId();
+      let pieces = refId.split('_');
+      let yearKey = pieces[pieces.size() - 1];
+      return isStudent() && classKey is string && classKey.size() > 0
+        && yearKey.matches('[0-9]{4}-[0-9]{4}')
+        && refId in [
+          classKey + '_BAHASA_INDONESIA_' + yearKey,
+          classKey + '_ENGLISH_READING_' + yearKey,
+          classKey + '_MENGAJI_' + yearKey,
+          classKey + '_NUMERACY_' + yearKey
+        ]
+        && (resource == null || resource.data.classId == classKey);
+    }
     match /lpu_subject_references/{refId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow get: if isActive() && (isJuniorHighStaff() || isAdmin() || isOwnLpuClassReferenceId(refId));
+      allow list: if isActive() && (isJuniorHighStaff() || isAdmin());
       allow write: if isActive() && (isJuniorHighStaff() || isAdmin());
     }
 

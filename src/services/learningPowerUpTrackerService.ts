@@ -47,6 +47,17 @@ export function canUseLpuTracker(actor: LpuTrackerActor, write = false): boolean
 function assertWrite(actor: LpuTrackerActor): void {
   if (!canUseLpuTracker(actor, true) || !auth.currentUser || auth.currentUser.uid !== actor.uid) throw new Error('Akun ini tidak berwenang mengubah tracker SMP.');
 }
+async function readLpuSource<T>(source: string, action: () => Promise<T>): Promise<T> {
+  try { return await action(); }
+  catch (cause) {
+    const original = cause as { code?: string; message?: string };
+    const error = new Error(`[${source}] ${original?.message || String(cause)}`) as Error & { code?: string; source?: string };
+    error.name = 'LpuSourceError';
+    error.code = original?.code;
+    error.source = source;
+    throw error;
+  }
+}
 function millis(value: any): number {
   return typeof value === 'number' ? value : value?.toMillis?.() || (value?.seconds ? value.seconds * 1000 : 0);
 }
@@ -94,10 +105,10 @@ export async function loadLpuTrackerRoster(year: string): Promise<{
   }>;
   students: LpuTrackerStudent[];
 }> {
-  const classes = ((await getClasses()) as any[]).filter(item => item.unitId === 'JUNIOR_HIGH' && trackerYearKey(item.academicYear) === trackerYearKey(year) && item.status !== 'archived');
+  const classes = ((await readLpuSource('roster/classes', () => getClasses())) as any[]).filter(item => item.unitId === 'JUNIOR_HIGH' && trackerYearKey(item.academicYear) === trackerYearKey(year) && item.status !== 'archived');
   const map = new Map<string, LpuTrackerStudent>();
   await Promise.all(classes.map(async cls => {
-    const list = await getActiveStudents(cls.id, year);
+    const list = await readLpuSource(`roster/enrollments kelas ${cls.name}`, () => getActiveStudents(cls.id, year));
     for (const item of list) {
       const id = clean(item.id);
       if (!id) continue;
@@ -122,71 +133,103 @@ export async function loadLpuTrackerRoster(year: string): Promise<{
   };
 }
 export async function loadLpuCoachOptions(): Promise<LpuTrackerCoach[]> {
-  const snap = await getDocs(query(collection(db, 'users'), where('status', '==', 'active')));
-  return snap.docs.map(item => ({
-    ...item.data(),
-    uid: item.id
-  }) as any).filter(item => ['TEACHER', 'HOMEROOM_TEACHER'].includes(item.role) && [item.unitId, item.unit].some(unit => unit === 'JUNIOR_HIGH' || unit === 'ALL')).map(item => ({
-    uid: item.uid,
-    name: clean(item.displayName || item.email),
-    email: clean(item.email)
-  })).sort((a, b) => a.name.localeCompare(b.name));
+  return readLpuSource('opsi coach/users (status + role + unit)', async () => {
+    const snapshots = await Promise.all(['unitId', 'unit'].map(field => getDocs(query(
+      collection(db, 'users'), where('status', '==', 'active'),
+      where('role', 'in', ['TEACHER', 'HOMEROOM_TEACHER']),
+      where(field, 'in', ['JUNIOR_HIGH', 'ALL'])
+    ))));
+    const people = new Map<string, LpuTrackerCoach>();
+    snapshots.forEach(snapshot => snapshot.docs.forEach(item => {
+      const value = item.data();
+      if (!['TEACHER', 'HOMEROOM_TEACHER'].includes(value.role) || value.status !== 'active') return;
+      if (![value.unitId, value.unit].some(unit => unit === 'JUNIOR_HIGH' || unit === 'ALL')) return;
+      people.set(item.id, { uid: item.id, name: clean(value.displayName || value.email), email: clean(value.email) });
+    }));
+    return [...people.values()].sort((a, b) => a.name.localeCompare(b.name));
+  });
 }
-export async function loadLpuTrackerLevels(year: string, studentId?: string): Promise<Record<string, LpuTrackerLevel>> {
-  const conditions = [where('unit', '==', 'JUNIOR_HIGH'), where('schoolYear', '==', year)];
-  if (studentId) conditions.push(where('studentId', '==', studentId));
-  const snap = await getDocs(query(collection(db, 'junior_high_literacy_numeracy_records'), ...conditions));
-  const records = snap.docs.map(item => ({ ...item.data(), id: item.id }));
-
-  const refSnap = await getDocs(query(collection(db, 'lpu_subject_references'), where('schoolYear', '==', year)));
-  const refs = refSnap.docs.map(item => item.data());
-
-  const cellsSnap = await getDocs(query(collection(db, 'junior_high_litnum_cell_values'), where('schoolYear', '==', year)));
-  const cells = cellsSnap.docs.map(item => item.data());
-
-  const result = resolveTrackerLevels(records);
-
+export function resolveTrackerLevelsWithReferences(
+  records: any[], refs: any[], cells: any[],
+  roster: Array<Pick<LpuTrackerStudent, 'id' | 'classId'>>
+): Record<string, LpuTrackerLevel> {
+  const classByStudent = new Map(roster.map(student => [clean(student.id), clean(student.classId)]));
+  const scopedRecords = records.filter(record => classByStudent.get(clean(record.studentId)) === clean(record.classId));
+  const result = resolveTrackerLevels(scopedRecords);
+  const seen = new Set<string>();
   for (const ref of refs) {
-    const { classId, subjectArea, sourceType, sourceId } = ref as any;
-    const trackerSubj = TRACKER_SUBJECTS.find(item => AREA[item.key] === subjectArea)?.key;
-    if (!trackerSubj) continue;
-
-    if (sourceType === 'CUSTOM_COLUMN') {
-      const matchCells = cells.filter(c => c.columnId === sourceId);
-      for (const cell of matchCells) {
-        if (studentId && cell.studentId !== studentId) continue;
-        const raw = trackerSubj === 'mengaji' ? cell.level || cell.mengajiLevel : trackerSubj === 'numerasi' ? cell.mathLevel || cell.numerasiLevel : cell.readingLevel;
-        if (!raw) continue;
-        const label = trackerSubj === 'mengaji' ? formatMengajiDisplay(raw) : trackerSubj === 'numerasi' ? formatNumerasiDisplay(raw) : clean(raw);
-        const key = trackerLevelKey(clean(cell.studentId), trackerSubj);
-        result[key] = {
-          recordId: cell.id,
-          studentId: clean(cell.studentId),
-          subjectKey: trackerSubj,
-          label,
-          sessionKey: sourceId
-        };
-      }
-    } else {
-      const matchRecs = records.filter(r => r.subjectArea === subjectArea && (r.sessionKey === sourceId || r.id === sourceId));
-      for (const rec of matchRecs) {
-        if (studentId && rec.studentId !== studentId) continue;
-        const raw = trackerSubj === 'mengaji' ? rec.mengajiLevel || rec.level : trackerSubj === 'numerasi' ? rec.numerasiLevel || rec.mathLevel : rec.readingLevel;
-        if (!raw) continue;
-        const label = trackerSubj === 'mengaji' ? formatMengajiDisplay(raw) : trackerSubj === 'numerasi' ? formatNumerasiDisplay(raw) : clean(raw);
-        const key = trackerLevelKey(clean(rec.studentId), trackerSubj);
-        result[key] = {
-          recordId: rec.id,
-          studentId: clean(rec.studentId),
-          subjectKey: trackerSubj,
-          label,
-          sessionKey: rec.sessionKey
-        };
-      }
+    const classId = clean(ref.classId);
+    const subject = TRACKER_SUBJECTS.find(item => AREA[item.key] === (ref.subjectArea || ref.area))?.key;
+    if (!classId || !subject || !clean(ref.sourceId)) throw new Error('Ada acuan LPU dengan identitas kelas/pelajaran/sumber tidak lengkap.');
+    const refKey = `${classId}|${subject}`;
+    if (seen.has(refKey)) throw new Error('Ada lebih dari satu acuan untuk kelas/pelajaran yang sama. Periksa metadata acuan.');
+    seen.add(refKey);
+    if (!['SESSION', 'LEGACY', 'CUSTOM_COLUMN'].includes(ref.sourceType)) throw new Error('Jenis sumber acuan LPU belum dikenali.');
+    const eligible = roster.filter(student => clean(student.classId) === classId);
+    for (const student of eligible) {
+      const key = trackerLevelKey(clean(student.id), subject);
+      const candidates = (ref.sourceType === 'CUSTOM_COLUMN' ? cells : scopedRecords).filter(value =>
+        clean(value.studentId) === clean(student.id) && clean(value.classId) === classId &&
+        (value.subjectArea || value.area) === AREA[subject] &&
+        (ref.sourceType === 'CUSTOM_COLUMN' ? clean(value.columnId) === clean(ref.sourceId) :
+          clean(value.sessionKey || value.period) === clean(ref.sourceId) || clean(value.id) === clean(ref.sourceId))
+      ).sort((a, b) => millis(b.updatedAt) - millis(a.updatedAt) || clean(a.id).localeCompare(clean(b.id)));
+      if (ref.sourceType === 'CUSTOM_COLUMN' && candidates.length > 1) throw new Error('Ada nilai sel kustom ganda untuk sumber dan siswa yang sama.');
+      const source = candidates[0];
+      const raw = source ? subject === 'mengaji' ? source.mengajiLevel || source.level :
+        subject === 'numerasi' ? source.numerasiLevel || source.mathLevel || source.level : source.readingLevel || source.level : '';
+      const label = subject === 'mengaji' ? formatMengajiDisplay(raw) : subject === 'numerasi' ? formatNumerasiDisplay(raw) : clean(raw);
+      result[key] = {
+        recordId: clean(source?.id), studentId: clean(student.id), subjectKey: subject,
+        label: raw ? label : '', sessionKey: clean(ref.sourceId),
+        sourceLabel: clean(ref.sourceLabel || ref.sourceId),
+        sourceType: ref.sourceType === 'CUSTOM_COLUMN' ? 'CUSTOM_COLUMN' : 'SESSION',
+        ...(!raw ? { issue: 'Belum ada level valid dari acuan Litnum yang dipilih. Tidak menggunakan fallback sesi lain.' } : {})
+      };
     }
   }
-
   return result;
+}
+export async function loadLpuTrackerLevels(
+  year: string, studentId?: string, teacherRoster?: LpuTrackerStudent[]
+): Promise<Record<string, LpuTrackerLevel>> {
+  const conditions = [where('unit', '==', 'JUNIOR_HIGH'), where('schoolYear', '==', year)];
+  let roster = teacherRoster;
+  let own: LpuTrackerStudent | null = null;
+  if (studentId) {
+    const uid = auth.currentUser?.uid;
+    if (!uid) throw new Error('[level/identitas] Sesi login tidak tersedia.');
+    const account = await readLpuSource('level/users akun sendiri', () => getDoc(doc(db, 'users', uid)));
+    const actor = account.exists() ? { ...account.data(), uid } as LpuTrackerActor : null;
+    if (!actor || actor.status !== 'active' || actor.role !== 'STUDENT') throw new Error('[level/identitas] Hanya akun siswa aktif yang dapat membaca laporan pribadi.');
+    own = await readLpuSource('level/identitas siswa sendiri', () => resolveLpuTrackerStudent(actor, year));
+    if (own.id !== studentId) throw new Error('[level/identitas] ID siswa tidak sesuai akun login.');
+    roster = [own];
+    conditions.push(where('studentId', '==', own.id));
+  } else if (!roster) {
+    roster = (await loadLpuTrackerRoster(year)).students;
+  }
+  const snapshot = await readLpuSource('level/junior_high_literacy_numeracy_records', () => getDocs(query(collection(db, 'junior_high_literacy_numeracy_records'), ...conditions)));
+  const records: any[] = snapshot.docs.map(item => ({ ...item.data(), id: item.id }));
+  let refs: any[];
+  if (own) {
+    refs = (await Promise.all(TRACKER_SUBJECTS.map(async subject => {
+      const refId = `${own!.classId}_${AREA[subject.key]}_${year.replace(/\//g, '-')}`;
+      const value = await readLpuSource('level/lpu_subject_references kelas sendiri', () => getDoc(doc(db, 'lpu_subject_references', refId)));
+      return value.exists() ? { ...value.data(), id: value.id } : null;
+    }))).filter(Boolean);
+  } else {
+    const referenceSnapshot = await readLpuSource('level/lpu_subject_references', () => getDocs(query(collection(db, 'lpu_subject_references'), where('schoolYear', '==', year))));
+    refs = referenceSnapshot.docs.map(item => ({ ...item.data(), id: item.id }));
+  }
+  let cells: any[] = [];
+  if (refs.some(ref => ref.sourceType === 'CUSTOM_COLUMN')) {
+    const constraints = [where('schoolYear', '==', year)];
+    if (own) constraints.push(where('studentId', '==', own.id));
+    const cellSnapshot = await readLpuSource('level/junior_high_litnum_cell_values', () => getDocs(query(collection(db, 'junior_high_litnum_cell_values'), ...constraints)));
+    cells = cellSnapshot.docs.map(item => ({ ...item.data(), id: item.id }));
+  }
+  return readLpuSource('level/pemetaan acuan kelas', async () => resolveTrackerLevelsWithReferences(records, refs, cells, roster || []));
 }
 export async function loadLpuTrackerColumns(year: string, semester: LpuTrackerSemester, subjectKey: LpuTrackerSubject): Promise<LpuTrackerColumn[]> {
   const snap = await getDocs(query(collection(db, 'lpu_tracker_columns'), where('academicYear', '==', year), where('semester', '==', semester), where('subjectKey', '==', subjectKey)));
