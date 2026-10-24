@@ -224,8 +224,6 @@ function ReadingFields({
   onChange: (next: ReadingForm) => void;
   disabled: boolean;
 }) {
-  const [search, setSearch] = useState('');
-
   // Helper mengembalikan Surah[]: number, name, totalVerses.
   const surahs = useMemo(
     () => getSurahsInJuz(value.juz),
@@ -234,14 +232,7 @@ function ReadingFields({
 
   const range = safeRange(value.juz, value.surahNumber);
 
-  const visibleSurahs = surahs.filter(
-    surah =>
-      surah.number === value.surahNumber ||
-      surah.name.toLowerCase().includes(search.trim().toLowerCase())
-  );
-
   function changeJuz(nextJuz: number) {
-    setSearch('');
     onChange({
       ...value,
       juz: nextJuz,
@@ -302,17 +293,6 @@ function ReadingFields({
       </label>
 
       <label className="block space-y-1.5 text-sm font-semibold">
-        <span>Cari surat dalam juz ini</span>
-        <input
-          type="search"
-          value={search}
-          onChange={event => setSearch(event.target.value)}
-          placeholder="Ketik nama surat..."
-          className={INPUT_CLASS}
-        />
-      </label>
-
-      <label className="block space-y-1.5 text-sm font-semibold">
         <span>Surat</span>
         <select
           value={value.surahNumber || ''}
@@ -323,19 +303,13 @@ function ReadingFields({
           required
         >
           <option value="">Pilih surat</option>
-          {visibleSurahs.map(surah => (
+          {surahs.map(surah => (
             <option key={surah.number} value={surah.number}>
               {surah.number}. {surah.name}
             </option>
           ))}
         </select>
       </label>
-
-      {visibleSurahs.length === 0 && (
-        <p className="text-xs text-amber-700">
-          Tidak ada surat yang cocok. Kosongkan pencarian atau ganti juz.
-        </p>
-      )}
 
       <label className="block space-y-1.5 text-sm font-semibold">
         <span>Nomor ayat terakhir</span>
