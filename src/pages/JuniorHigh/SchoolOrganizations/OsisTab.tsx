@@ -8,7 +8,8 @@ import {
   Trash2,
   Sparkles,
   Layers,
-  Crown
+  Crown,
+  FileText
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppUser, Student, Class } from '../../../types';
@@ -24,6 +25,7 @@ import {
 } from '../../../services/juniorHighSchoolOrganizationsService';
 import { AddMemberModal } from './AddMemberModal';
 import { ManageGroupModal } from './ManageGroupModal';
+import { OsisWeeklyRecap } from './OsisWeeklyRecap';
 
 interface OsisTabProps {
   academicYear: string;
@@ -50,6 +52,9 @@ export const OsisTab: React.FC<OsisTabProps> = ({
   isReadOnly,
   onRefresh,
 }) => {
+  // Subtab navigation: Struktur & Anggota Tim vs Rekap Laporan Mingguan
+  const [subTab, setSubTab] = useState<'MANAGEMENT' | 'RECAP'>('MANAGEMENT');
+
   // Modal states
   const [activeGroupForAddMember, setActiveGroupForAddMember] = useState<SOGroup | null>(null);
   const [activeGroupForManage, setActiveGroupForManage] = useState<SOGroup | null>(null);
@@ -270,56 +275,100 @@ export const OsisTab: React.FC<OsisTabProps> = ({
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-200">
-      {/* SECTION 1: Pengurus Inti OSIS */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Crown className="w-5 h-5 text-indigo-600" />
-          <h2 className="text-base font-bold text-gray-900">Pengurus Inti OSIS</h2>
-          <span className="text-xs text-gray-400">
-            • Periode Kepemimpinan Siswa {academicYear}
-          </span>
-        </div>
-        {renderGroupCard(executiveGroup, true)}
+    <div className="space-y-6 animate-in fade-in duration-200">
+      {/* SUBTAB NAVIGATION */}
+      <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+        <button
+          onClick={() => setSubTab('MANAGEMENT')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition-all ${
+            subTab === 'MANAGEMENT'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-gray-900 border border-gray-200 hover:bg-gray-50'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          Struktur & Anggota Tim
+        </button>
+        <button
+          onClick={() => setSubTab('RECAP')}
+          className={`px-4 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition-all ${
+            subTab === 'RECAP'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'bg-white text-gray-600 hover:text-gray-900 border border-gray-200 hover:bg-gray-50'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          Rekap Laporan Mingguan
+        </button>
       </div>
 
-      {/* SECTION 2: 5 Design Teams */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-blue-600" />
-            <h2 className="text-base font-bold text-gray-900">Design Teams</h2>
-            <span className="text-xs text-gray-400">
-              • 5 Bidang Strategis Pengembangan Karakter & Kebajikan Siswa
-            </span>
+      {/* VIEW 1: REKAP LAPORAN MINGGUAN */}
+      {subTab === 'RECAP' && (
+        <OsisWeeklyRecap
+          academicYear={academicYear}
+          groups={groups}
+          memberships={memberships}
+          designTeams={designTeams}
+          classes={classes}
+          allStudents={allStudents}
+          onRefreshParent={onRefresh}
+        />
+      )}
+
+      {/* VIEW 2: STRUKTUR & PENGELOLAAN TIM (EXISTING VIEW) */}
+      {subTab === 'MANAGEMENT' && (
+        <div className="space-y-8">
+          {/* SECTION 1: Pengurus Inti OSIS */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Crown className="w-5 h-5 text-indigo-600" />
+              <h2 className="text-base font-bold text-gray-900">Pengurus Inti OSIS</h2>
+              <span className="text-xs text-gray-400">
+                • Periode Kepemimpinan Siswa {academicYear}
+              </span>
+            </div>
+            {renderGroupCard(executiveGroup, true)}
+          </div>
+
+          {/* SECTION 2: 5 Design Teams */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-blue-600" />
+                <h2 className="text-base font-bold text-gray-900">Design Teams</h2>
+                <span className="text-xs text-gray-400">
+                  • 5 Bidang Strategis Pengembangan Karakter & Kebajikan Siswa
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6">
+              {activeDesignTeams.map(dt => {
+                const dtGroupId = makeGroupId(academicYear, 'OSIS', dt.id);
+                const dtGroup: SOGroup =
+                  groupMap.get(dtGroupId) || {
+                    id: dtGroupId,
+                    academicYear,
+                    programType: 'OSIS',
+                    name: dt.name,
+                    categoryOrSubtype: 'DESIGN_TEAM',
+                    description: dt.description,
+                    mentorUids: [],
+                    mentorNames: [],
+                    currentStage: 'Aktif',
+                    status: 'active',
+                    createdAt: '',
+                    createdBy: '',
+                    updatedAt: '',
+                    updatedBy: ''
+                  };
+
+                return renderGroupCard(dtGroup, false);
+              })}
+            </div>
           </div>
         </div>
-
-        <div className="grid grid-cols-1 gap-6">
-          {activeDesignTeams.map(dt => {
-            const dtGroupId = makeGroupId(academicYear, 'OSIS', dt.id);
-            const dtGroup: SOGroup =
-              groupMap.get(dtGroupId) || {
-                id: dtGroupId,
-                academicYear,
-                programType: 'OSIS',
-                name: dt.name,
-                categoryOrSubtype: 'DESIGN_TEAM',
-                description: dt.description,
-                mentorUids: [],
-                mentorNames: [],
-                currentStage: 'Aktif',
-                status: 'active',
-                createdAt: '',
-                createdBy: '',
-                updatedAt: '',
-                updatedBy: ''
-              };
-
-            return renderGroupCard(dtGroup, false);
-          })}
-        </div>
-      </div>
+      )}
 
       {/* Modals */}
       {activeGroupForAddMember && (

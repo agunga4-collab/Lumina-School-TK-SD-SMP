@@ -814,27 +814,52 @@ export async function reopenWeeklyReport(
 }
 
 /**
- * Mengambil seluruh laporan mingguan pada tahun ajaran tertentu (untuk ekspor Excel bulk).
+ * Mengambil seluruh laporan mingguan pada tahun ajaran tertentu (untuk rekap & ekspor).
+ * Mendukung normalisasi tahun ajaran format garis miring ('/') dan tanda hubung ('-').
  */
 export async function getAllWeeklyReportsByYear(
   academicYear: string,
   weekStart?: string
 ): Promise<SOWeeklyReport[]> {
   const ref = collection(db, WEEKLY_REPORTS_COLLECTION);
-  let q;
-  if (weekStart) {
-    q = query(
-      ref,
-      where('academicYear', '==', academicYear),
-      where('weekStart', '==', weekStart)
-    );
-  } else {
-    q = query(
-      ref,
-      where('academicYear', '==', academicYear)
-    );
+  const altYear = academicYear.includes('/')
+    ? academicYear.replace(/\//g, '-')
+    : academicYear.replace(/-/g, '/');
+
+  const fetchForYear = async (yr: string) => {
+    let q = weekStart
+      ? query(
+          ref,
+          where('academicYear', '==', yr),
+          where('weekStart', '==', weekStart)
+        )
+      : query(
+          ref,
+          where('academicYear', '==', yr)
+        );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() } as SOWeeklyReport));
+  };
+
+  const primaryReports = await fetchForYear(academicYear);
+  if (altYear !== academicYear) {
+    try {
+      const altReports = await fetchForYear(altYear);
+      if (altReports.length > 0) {
+        const map = new Map<string, SOWeeklyReport>();
+        primaryReports.forEach(r => map.set(r.id, r));
+        altReports.forEach(r => {
+          if (!map.has(r.id)) {
+            map.set(r.id, r);
+          }
+        });
+        return Array.from(map.values());
+      }
+    } catch (_) {
+      // Abaikan galat query fallback
+    }
   }
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as SOWeeklyReport));
+  return primaryReports;
 }
+
 
