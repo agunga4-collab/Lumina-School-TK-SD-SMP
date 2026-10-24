@@ -4,9 +4,8 @@ import { useAcademicYear } from "../../context/AcademicYearContext";
 import { getClasses, getActiveStudents, db } from "../../lib/firebase";
 import type { Class, Student } from "../../types";
 import { collection, query, where, getDocs, setDoc, doc, deleteDoc, Timestamp, serverTimestamp } from "firebase/firestore";
-import type { QueryConstraint } from "firebase/firestore";
 import { toast } from "sonner";
-import { MessageSquare, Mic, MicOff, Save, Trash2, Plus, Loader2, AlertCircle, RefreshCw, Clock, Search, X, CheckCircle2, History, Calendar } from "lucide-react";
+import { MessageSquare, Mic, MicOff, Save, Trash2, Plus, Loader2, AlertCircle, RefreshCw, Clock, X, CheckCircle2, History, ChevronDown, ChevronUp } from "lucide-react";
 import { isTeacherAssignedToClass } from "../../services/classTeacherAssignmentService";
 
 type Status = "UNSAVED" | "SAVING" | "SAVED" | "FAILED";
@@ -100,73 +99,55 @@ function ExpandableText({ value, max = 280 }: { value: string; max?: number }) {
   return <div><p className="whitespace-pre-wrap break-words leading-relaxed">{value.length > max && !expanded ? `${value.slice(0,max)}…` : value}</p>{value.length > max && <button type="button" aria-expanded={expanded} className="mt-1 rounded text-xs font-bold text-indigo-600 hover:underline focus-visible:ring-2 focus-visible:ring-indigo-500 cursor-pointer" onClick={() => setExpanded(current => !current)}>{expanded ? "Ringkas" : "Lihat selengkapnya"}</button>}</div>;
 }
 
-function AnecdoteHistory({ selectedClass, academicYear, students, revision }: {
-  selectedClass: Class | null; academicYear: string; students: Student[]; revision: number;
+// Match identifiers only. Names are never used to attach a note to a child.
+function groupHistoryNotes(notes: HistoryNote[], students: Student[]) {
+  const aliases = new Map<string, Set<string>>();
+  for (const student of students) {
+    for (const raw of [student.id, student.nis, student.nisn]) {
+      const alias = text(raw).trim();
+      if (!alias) continue;
+      const owners = aliases.get(alias) || new Set<string>();
+      owners.add(student.id); aliases.set(alias, owners);
+    }
+  }
+  const byStudent = new Map<string, HistoryNote[]>();
+  let unmatchedCount = 0;
+  for (const note of notes) {
+    const matches = new Set<string>();
+    for (const raw of [note.studentId, note.nis, note.nisn]) {
+      const alias = text(raw).trim();
+      if (alias) aliases.get(alias)?.forEach(id => matches.add(id));
+    }
+    if (matches.size !== 1) { unmatchedCount++; continue; }
+    const studentId = [...matches][0];
+    const list = byStudent.get(studentId) || [];
+    list.push(note); byStudent.set(studentId, list);
+  }
+  for (const list of byStudent.values()) {
+    list.sort((a,b) => millis(b.date)-millis(a.date) || timeMinutes(b.time)-timeMinutes(a.time) || millis(b.createdAt)-millis(a.createdAt) || b.id.localeCompare(a.id));
+  }
+  return { byStudent, unmatchedCount };
+}
+
+function StudentHistoryPanel({ studentName, academicYear, observationDate, notes, busy, error, onRetry }: {
+  studentName: string; academicYear: string; observationDate: string;
+  notes: HistoryNote[]; busy: boolean; error: string; onRetry: () => void;
 }) {
-  const [period, setPeriod] = React.useState<"ALL" | "RANGE">("ALL");
-  const [start, setStart] = React.useState("");
-  const [end, setEnd] = React.useState("");
-  const [applied, setApplied] = React.useState<{ start: string; end: string } | null>(null);
-  const [search, setSearch] = React.useState("");
-  const [reload, setReload] = React.useState(0);
-  const [notes, setNotes] = React.useState<HistoryNote[]>([]);
-  const [loadedScope, setLoadedScope] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<{ scope: string; message: string } | null>(null);
-  const [shown, setShown] = React.useState(50);
-  const classId = selectedClass?.id || "";
-  const scope = JSON.stringify([classId, academicYear, period, period === "RANGE" ? applied?.start : "", period === "RANGE" ? applied?.end : ""]);
-  const ready = !!classId && !!academicYear && (period === "ALL" || !!applied);
-  React.useEffect(() => {
-    let cancelled = false;
-    setError(null); setLoadedScope(""); setShown(50);
-    if (!ready) { setBusy(false); return () => { cancelled = true; }; }
-    setBusy(true);
-    const load = async () => {
-      try {
-        const constraints: QueryConstraint[] = [where("classId", "==", classId), where("academicYearId", "==", academicYear)];
-        if (period === "RANGE" && applied) {
-          const nextDay = new Date(`${applied.end}T00:00:00`);
-          nextDay.setDate(nextDay.getDate()+1);
-          constraints.push(where("date", ">=", Timestamp.fromDate(new Date(`${applied.start}T00:00:00`))), where("date", "<", Timestamp.fromDate(nextDay)));
-        }
-        const snapshot = await getDocs(query(collection(db,"class_anecdotes"), ...constraints));
-        const result: HistoryNote[] = snapshot.docs.map(item => {
-          const value = item.data();
-          return { id: item.id, studentId: text(value.studentId), studentName: text(value.studentName) || "Nama tidak tersedia", date: value.date, time: text(value.time), activityContext: text(value.activityContext), anecdote: text(value.anecdote), followUp: text(value.followUp), createdBy: value.createdBy, createdAt: value.createdAt, updatedAt: value.updatedAt, nis: text(value.nis), nisn: text(value.nisn) };
-        });
-        result.sort((a,b) => millis(b.date)-millis(a.date) || timeMinutes(b.time)-timeMinutes(a.time) || millis(b.createdAt)-millis(a.createdAt) || b.id.localeCompare(a.id));
-        if (!cancelled) { setNotes(result); setLoadedScope(scope); }
-      } catch (issue) { if (!cancelled) setError({ scope, message: errorMessage(issue) }); }
-      finally { if (!cancelled) setBusy(false); }
-    };
-    void load();
-    return () => { cancelled = true; };
-  }, [scope, ready, classId, academicYear, period, applied, reload, revision]);
-  React.useEffect(() => { setShown(50); }, [search]);
-  const roster = React.useMemo(() => new Map(students.map(student => [student.id, student])), [students]);
-  const usable = ready && !busy && loadedScope === scope && error?.scope !== scope;
-  const filtered = usable ? notes.filter(note => {
-    const student = roster.get(note.studentId);
-    return `${note.studentName} ${note.nisn || student?.nisn || ""} ${note.nis || student?.nis || ""}`.toLowerCase().includes(search.trim().toLowerCase());
-  }) : [];
-  const uniqueStudents = new Set(filtered.map(note => note.studentId).filter(Boolean)).size;
-  return <section className="space-y-4" aria-label="Riwayat Anekdot">
-    <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-bold text-slate-900">Riwayat Anekdot · {selectedClass?.name || "Pilih kelas"}</h2><p className="mt-1 text-sm text-slate-500">Catatan tersimpan lintas tanggal · Tahun ajaran {academicYear || "—"} · Hanya lihat</p></div><button type="button" className={button} disabled={!ready || busy} onClick={() => setReload(current => current+1)}><RefreshCw size={15} />Segarkan</button></div>
-      <div className="grid items-end gap-3 md:grid-cols-2"><label className="block"><span className="mb-1 block text-xs font-bold text-slate-500">Periode riwayat</span><select value={period} onChange={event => setPeriod(event.target.value as "ALL" | "RANGE")} className={control}><option value="ALL">Semua tanggal pada tahun ajaran aktif</option><option value="RANGE">Rentang tanggal observasi</option></select></label><label className="relative block"><span className="mb-1 block text-xs font-bold text-slate-500">Cari siswa</span><div className="relative"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Nama / NIS / NISN…" className={`${control} pl-9`} /></div></label></div>
-      {period === "RANGE" && <div className="grid items-end gap-3 sm:grid-cols-[1fr_1fr_auto]"><label className="block"><span className="mb-1 block text-xs font-bold text-slate-500">Mulai</span><input type="date" className={control} value={start} onChange={event => setStart(event.target.value)} /></label><label className="block"><span className="mb-1 block text-xs font-bold text-slate-500">Sampai</span><input type="date" className={control} value={end} min={start || undefined} onChange={event => setEnd(event.target.value)} /></label><button type="button" className={primary} onClick={() => { if (!validDate(start) || !validDate(end) || start>end) { toast.warning("Isi rentang tanggal yang valid."); return; } setApplied({ start,end }); }}>Terapkan</button></div>}
-      {period === "RANGE" && applied && <p className="text-xs text-slate-500">Rentang diterapkan: {formatDate(applied.start)} – {formatDate(applied.end)}. Perubahan tanggal baru berlaku setelah klik Terapkan.</p>}
-    </div>
-    {error?.scope === scope ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><p className="font-bold">Riwayat gagal dimuat, bukan berarti tidak ada catatan.</p><p className="mt-1 whitespace-pre-wrap break-words">{error.message}</p><button type="button" className={`${button} mt-3`} onClick={() => setReload(current => current+1)}>Coba lagi</button></div> : busy ? <div role="status" className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white p-8 text-slate-500"><Loader2 className="animate-spin" size={20} />Memuat riwayat…</div> : !ready ? <p className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">{!classId ? "Pilih kelas terlebih dahulu." : "Isi dan terapkan rentang tanggal untuk melihat riwayat."}</p> : usable && <>
-      <div className="flex flex-wrap gap-3"><div className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-xs text-slate-500">Catatan sesuai filter</p><p className="text-xl font-bold text-indigo-700">{filtered.length}</p></div><div className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-xs text-slate-500">Siswa unik tercatat</p><p className="text-xl font-bold text-emerald-700">{uniqueStudents}</p></div></div>
-      {!filtered.length ? <p className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">{search.trim() ? "Tidak ada catatan yang sesuai pencarian." : "Belum ada catatan tersimpan untuk kelas/periode ini."}</p> : <>
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white"><table className="w-full min-w-[1120px] border-collapse text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-600">{["Tanggal Observasi","Siswa","Waktu","Aktivitas / Konteks","Catatan Anekdot","Tindak Lanjut","Pencatat"].map(label => <th key={label} className="p-3 align-top">{label}</th>)}</tr></thead><tbody>{filtered.slice(0,shown).map(note => {
-          const student = roster.get(note.studentId);
-          return <tr key={note.id} className="border-b border-slate-100 align-top hover:bg-slate-50/50"><td className="min-w-[130px] p-3 font-semibold text-slate-700">{formatDate(note.date)}</td><td className="min-w-[170px] p-3"><p className="font-bold text-slate-800">{note.studentName}</p><p className="mt-1 text-xs text-slate-400">{note.nisn || student?.nisn || note.nis || student?.nis || ""}</p></td><td className="p-3 whitespace-nowrap text-slate-600">{note.time || "—"}</td><td className="min-w-[160px] p-3 whitespace-pre-wrap break-words text-slate-700">{note.activityContext || "—"}</td><td className="min-w-[280px] p-3 text-slate-700"><ExpandableText value={note.anecdote} /></td><td className="min-w-[220px] p-3 text-slate-700"><ExpandableText value={note.followUp} /></td><td className="min-w-[180px] p-3 text-slate-600"><p className="font-semibold">{note.createdBy?.name || "—"}</p><p className="mt-1 text-xs text-slate-400">Dicatat: {formatStamp(note.createdAt)}</p>{millis(note.updatedAt)>millis(note.createdAt)+1000 && <p className="mt-1 text-xs text-slate-400">Diperbarui: {formatStamp(note.updatedAt)}</p>}</td></tr>;
-        })}</tbody></table></div>
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500"><span>{Math.min(shown,filtered.length)} dari {filtered.length} catatan ditampilkan</span>{shown<filtered.length && <button type="button" className={button} onClick={() => setShown(current => current+50)}>Muat lebih banyak</button>}</div>
-      </>}
+  const [shown, setShown] = React.useState(5);
+  return <section className="space-y-3 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4" aria-label={`Riwayat catatan ${studentName}`}>
+    <header className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="flex items-center gap-2 text-sm font-bold text-indigo-950"><History size={16}/>Riwayat catatan · {studentName}</h3><p className="mt-1 text-xs text-slate-500">Catatan tersimpan lintas tanggal · TA {academicYear} · Hanya lihat</p></div><button type="button" className={`${button} text-xs`} disabled={busy} onClick={onRetry}><RefreshCw size={13} className={busy ? "animate-spin" : ""}/>Segarkan riwayat</button></header>
+    {error ? <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><p className="font-bold">Riwayat belum dapat dimuat, bukan berarti tidak ada catatan.</p><p className="mt-1 whitespace-pre-wrap break-words text-xs">{error}</p><button type="button" className={`${button} mt-2 text-xs`} onClick={onRetry}>Coba lagi</button></div> : busy ? <p role="status" className="flex items-center gap-2 rounded-xl bg-white p-4 text-sm text-slate-500"><Loader2 size={17} className="animate-spin"/>Memuat catatan tersimpan…</p> : !notes.length ? <p className="rounded-xl border border-dashed border-indigo-200 bg-white p-4 text-sm text-slate-500">Belum ada catatan tersimpan untuk anak ini pada tahun ajaran {academicYear}. Draft yang belum disimpan tidak masuk riwayat.</p> : <>
+      <div className="space-y-3">{notes.slice(0,shown).map(note => {
+        const date = asDate(note.date);
+        const sameDay = !!date && localDate(date) === observationDate;
+        return <article key={note.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3"><p className="font-bold text-slate-800">{formatDate(note.date)}<span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-slate-500"><Clock size={12}/>{note.time || "—"}</span></p>{sameDay && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700">Tanggal yang dipilih</span>}</div>
+          {note.activityContext && <div className="mt-3"><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Aktivitas / Konteks</p><p className="mt-1 whitespace-pre-wrap break-words text-sm text-slate-700">{note.activityContext}</p></div>}
+          <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]"><div className="min-w-0"><p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Catatan anekdot</p><div className="text-sm text-slate-700"><ExpandableText value={note.anecdote}/></div></div><div className="min-w-0"><p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Tindak lanjut</p><div className="text-sm text-slate-700"><ExpandableText value={note.followUp}/></div></div></div>
+          <footer className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500"><p>Pencatat: <span className="font-semibold text-slate-600">{note.createdBy?.name || "Belum tersedia"}</span></p><p>Dicatat: {formatStamp(note.createdAt)}</p>{millis(note.updatedAt)>millis(note.createdAt)+1000 && <p>Diperbarui: {formatStamp(note.updatedAt)}</p>}</footer>
+        </article>;
+      })}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500"><p>{Math.min(shown,notes.length)} dari {notes.length} catatan · Terbaru di atas</p>{shown < notes.length && <button type="button" className={`${button} text-xs`} onClick={() => setShown(current => current+5)}>Tampilkan 5 catatan berikutnya</button>}</div>
     </>}
   </section>;
 }
@@ -257,7 +238,6 @@ export default function ClassAnecdotePage() {
   const [classBusy,setClassBusy]=React.useState(true);
   const [classError,setClassError]=React.useState("");
   const [classReload,setClassReload]=React.useState(0);
-  const [tab,setTab]=React.useState<"DAILY"|"HISTORY">("DAILY");
   const [selectedDate,setSelectedDate]=React.useState(()=>localDate());
   const [students,setStudents]=React.useState<Student[]>([]);
   const [rows,setRows]=React.useState<AnecdoteRow[]>([]);
@@ -416,21 +396,71 @@ export default function ClassAnecdotePage() {
   const pending=dailyRows.filter(row=>meaningful(row)&&row.status!=="SAVED"&&canManage(row));
   const savedCount=dailyRows.filter(row=>!row.isDraft).length;
 
+  // One class/year read is shared by every expanded child; no per-child N+1 query.
+  const historyContext=JSON.stringify([profile?.uid || "",classId,year]);
+  const [openHistory,setOpenHistory]=React.useState<{context:string;ids:Set<string>}>({context:"",ids:new Set()});
+  const [historyNotes,setHistoryNotes]=React.useState<HistoryNote[]>([]);
+  const [historyBusy,setHistoryBusy]=React.useState(false);
+  const [historyError,setHistoryError]=React.useState<{scope:string;message:string}|null>(null);
+  const [historyLoadedScope,setHistoryLoadedScope]=React.useState("");
+  const [historyReload,setHistoryReload]=React.useState(0);
+  const openHistoryIds=openHistory.context===historyContext ? openHistory.ids : new Set<string>();
+  const hasOpenHistory=openHistoryIds.size>0;
+  const historyReadScope=JSON.stringify([historyContext,historyRevision,historyReload]);
+  const historyReady=historyLoadedScope===historyReadScope&&!historyBusy&&historyError?.scope!==historyReadScope;
+  React.useEffect(()=>{setOpenHistory({context:historyContext,ids:new Set()});},[historyContext]);
+  React.useEffect(()=>{
+    let cancelled=false;
+    setHistoryError(null);setHistoryLoadedScope("");
+    if(!hasOpenHistory||!isAuthorized||!selectedClass||!year||locked){setHistoryBusy(false);return()=>{cancelled=true;};}
+    const currentClassId=selectedClass.id;
+    setHistoryBusy(true);
+    const load=async()=>{
+      try{
+        const snapshot=await getDocs(query(collection(db,"class_anecdotes"),where("classId","==",currentClassId),where("academicYearId","==",year)));
+        const result:HistoryNote[]=snapshot.docs.map(item=>{
+          const value=item.data();
+          return {id:item.id,studentId:text(value.studentId),studentName:text(value.studentName),date:value.date,time:text(value.time),activityContext:text(value.activityContext),anecdote:text(value.anecdote),followUp:text(value.followUp),createdBy:value.createdBy,createdAt:value.createdAt,updatedAt:value.updatedAt,nis:text(value.nis),nisn:text(value.nisn)};
+        });
+        if(!cancelled){setHistoryNotes(result);setHistoryLoadedScope(historyReadScope);}
+      }catch(error){if(!cancelled)setHistoryError({scope:historyReadScope,message:errorMessage(error)});}
+      finally{if(!cancelled)setHistoryBusy(false);}
+    };
+    void load();return()=>{cancelled=true;};
+  },[hasOpenHistory,isAuthorized,selectedClass,year,historyReadScope,locked]);
+  const historyGroups=React.useMemo(()=>historyReady&&readyDaily ? groupHistoryNotes(historyNotes,students) : {byStudent:new Map<string,HistoryNote[]>(),unmatchedCount:0},[historyReady,readyDaily,historyNotes,students]);
+  const toggleHistory=(studentId:string)=>{
+    setOpenHistory(previous=>{
+      const ids=previous.context===historyContext ? new Set(previous.ids) : new Set<string>();
+      if(ids.has(studentId))ids.delete(studentId);else ids.add(studentId);
+      return {context:historyContext,ids};
+    });
+  };
+  const refreshHistory=()=>setHistoryReload(current=>current+1);
+  const sortedStudents=[...dailyStudents].sort((a,b)=>a.name.localeCompare(b.name,"id"));
+
   if(!isAuthorized)return <div className="mx-auto my-12 max-w-xl rounded-2xl border border-slate-200 bg-white p-8 text-center"><AlertCircle size={32} className="mx-auto mb-3 text-rose-500"/><h1 className="text-lg font-bold text-slate-800">Akses Terbatas</h1><p className="mt-2 text-sm text-slate-500">Halaman ini hanya untuk Guru Elementary, Kepala SD, atau Admin yang berwenang.</p></div>;
   return <div className="mx-auto max-w-[1600px] space-y-5 px-4 py-6" id="class-anecdote-page-wrapper">
-    <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div><h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900"><span className="rounded-lg bg-indigo-50 p-2 text-indigo-600"><MessageSquare size={24}/></span>Anekdot Kelas</h1><p className="mt-2 max-w-2xl text-sm text-slate-500">Catat observasi siswa dan lihat kembali isi anekdot yang sudah tersimpan pada tanggal-tanggal sebelumnya.</p></div>{canWrite&&<button type="button" className={primary} disabled={!readyDaily||!students.length||locked} onClick={()=>{setTab("DAILY");openAdd();}}><Plus size={17}/>Tambah Catatan</button>}</header>
-    <div className="flex w-fit max-w-full flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1" aria-label="Tampilan Anekdot Kelas">{([{id:"DAILY",label:"Catatan Harian"},{id:"HISTORY",label:"Riwayat Anekdot"}] as const).map(item=><button key={item.id} type="button" aria-pressed={tab===item.id} disabled={locked} onClick={()=>setTab(item.id)} className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 cursor-pointer ${tab===item.id?"bg-indigo-600 text-white":"text-slate-600 hover:bg-indigo-50"}`}>{item.id==="HISTORY"?<History size={15}/>:<Calendar size={15}/>} {item.label}</button>)}</div>
-    <section className="flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-4"><label className="block min-w-[220px] flex-1"><span className="mb-1 block text-xs font-bold text-slate-500">Kelas Aktif · {year||"—"}</span><select className={control} value={classId} disabled={classBusy||locked} onChange={event=>{if(locks.current.size||bulkLock.current)return;setClassId(event.target.value);}}>{!classes.length&&<option value="">{classBusy?"Memuat kelas…":"Tidak ada kelas aktif"}</option>}{classes.map(item=><option key={item.id} value={item.id}>{item.name} ({item.academicYear})</option>)}</select></label>{tab==="DAILY"&&<><label className="block min-w-[190px]"><span className="mb-1 block text-xs font-bold text-slate-500">Tanggal Observasi Harian</span><input type="date" className={control} value={selectedDate} disabled={locked} onChange={event=>{if(validDate(event.target.value)&&!locks.current.size&&!bulkLock.current)setSelectedDate(event.target.value);}}/></label><button type="button" className={button} disabled={dailyBusy||locked||!selectedClass} onClick={()=>setDailyReload(current=>current+1)}><RefreshCw size={15}/>Segarkan</button></>}</section>
-    {classError&&<div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><p>Gagal memuat kelas: {classError}</p><button type="button" className={`${button} mt-2`} onClick={()=>setClassReload(current=>current+1)}>Coba lagi</button></div>}
-    {tab==="HISTORY"?<AnecdoteHistory selectedClass={selectedClass} academicYear={year} students={students} revision={historyRevision}/>:<>
-      {dailyError?.scope===scope?<div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><p className="font-bold">Catatan harian gagal dimuat.</p><p className="mt-1 break-words">{dailyError.message}</p><button type="button" className={`${button} mt-2`} onClick={()=>setDailyReload(current=>current+1)}>Coba lagi</button></div>:dailyBusy||classBusy?<div role="status" className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white p-10 text-sm text-slate-500"><Loader2 size={22} className="animate-spin"/>Memuat observasi kelas…</div>:!selectedClass?<p className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500">Pilih kelas aktif terlebih dahulu.</p>:readyDaily&&<>
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4"><p className="text-sm text-slate-600">{dailyStudents.length} siswa · <span className="font-semibold text-emerald-700">{savedCount} catatan tersimpan</span> · <span className="text-amber-700">{pending.length} draft berisi</span></p>{pending.length>0&&<button type="button" className={primary} disabled={locked} onClick={()=>void saveAll()}>{savingAll?<Loader2 size={15} className="animate-spin"/>:<Save size={15}/>}Simpan Semua Draft ({pending.length})</button>}</div>
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white"><table className="w-full min-w-[850px] border-collapse text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-500"><th className="w-14 p-4 text-center">No</th><th className="w-64 p-4">Siswa</th><th className="p-4">Catatan Anekdot · {formatDate(selectedDate)}</th><th className="w-36 p-4 text-center">Aksi</th></tr></thead><tbody>{dailyStudents.map((student,index)=>{
-          const studentNotes=dailyRows.filter(row=>row.studentId===student.id&&meaningful(row));
-          return <tr key={student.id} className="border-b border-slate-100 align-top hover:bg-slate-50/30"><td className="p-4 text-center font-bold text-slate-400">{index+1}</td><td className="p-4"><div className="flex items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-indigo-100 bg-indigo-50 font-bold text-indigo-600">{initials(student.name)}</span><div><p className="font-bold text-slate-900">{student.name}</p><p className="mt-1 text-xs text-slate-400">NISN: {student.nisn||"—"}</p></div></div><p className="mt-2 text-xs text-slate-400">{studentNotes.length?`${studentNotes.length} catatan`:"Belum ada catatan pada tanggal ini"}</p></td><td className="space-y-3 p-4">{!studentNotes.length?<p className="py-2 text-sm italic text-slate-400">Belum ada catatan observasi untuk tanggal ini.</p>:studentNotes.map(note=><article key={note.rowId} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/50 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><span className="inline-flex items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700"><Clock size={11}/>{note.time}</span><StatusBadge status={savingIds.has(note.rowId)?"SAVING":note.status}/></div>{canManage(note)&&<div className="flex items-center gap-1"><button type="button" className={`${button} px-2 py-1 text-xs`} disabled={locked} onClick={()=>selectEditor({scope,row:{...note}})}>Edit</button>{note.status!=="SAVED"&&<button type="button" className={`${button} px-2 py-1 text-xs text-indigo-600`} disabled={locked} onClick={()=>void saveNote(note)}>Simpan</button>}<button type="button" aria-label={`Hapus catatan ${student.name}`} className={`${button} px-2 py-1 text-rose-600`} disabled={locked} onClick={()=>void removeNote(note)}><Trash2 size={13}/></button></div>}</div><p className="text-sm font-semibold text-slate-700">{note.activityContext||"Konteks belum diisi"}</p><div className="text-sm text-slate-700"><ExpandableText value={note.anecdote}/></div>{note.followUp&&<div className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 text-sm text-slate-700"><p className="mb-1 text-xs font-bold text-amber-800">Tindak Lanjut</p><ExpandableText value={note.followUp}/></div>}<p className="border-t border-slate-100 pt-2 text-xs text-slate-400">{note.isDraft?"Draft lokal, belum tersimpan di server.":`Dicatat oleh: ${note.createdBy?.name||"—"} · ${formatStamp(note.createdAt)}`}{!note.isDraft&&millis(note.updatedAt)>millis(note.createdAt)+1000?` · Diubah ${formatStamp(note.updatedAt)}`:""}</p></article>)}</td><td className="p-4 text-center"><button type="button" className={`${button} text-xs text-indigo-600`} disabled={locked} onClick={()=>openAdd(student.id)}><Plus size={14}/>Catatan</button></td></tr>;
-        })}{!dailyStudents.length&&<tr><td colSpan={4} className="p-10 text-center text-slate-500">Tidak ada siswa aktif pada kelas ini.</td></tr>}</tbody></table></div>
-      </>}
+    <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><div><h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900"><span className="rounded-lg bg-indigo-50 p-2 text-indigo-600"><MessageSquare size={24}/></span>Anekdot Kelas</h1><p className="mt-2 max-w-2xl text-sm text-slate-500">Catat observasi harian dan buka riwayat catatan langsung di bawah nama setiap anak. Tidak perlu berpindah tab.</p></div>{canWrite&&<button type="button" className={primary} disabled={!readyDaily||!students.length||locked} onClick={()=>openAdd()}><Plus size={17}/>Tambah Catatan</button>}</header>
+    <section className="flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-4"><label className="block min-w-[220px] flex-1"><span className="mb-1 block text-xs font-bold text-slate-500">Kelas Aktif · {year||"—"}</span><select className={control} value={classId} disabled={classBusy||locked} onChange={event=>{if(locks.current.size||bulkLock.current)return;setClassId(event.target.value);}}>{!classes.length&&<option value="">{classBusy?"Memuat kelas…":"Tidak ada kelas aktif"}</option>}{classes.map(item=><option key={item.id} value={item.id}>{item.name} ({item.academicYear})</option>)}</select></label><label className="block min-w-[190px]"><span className="mb-1 block text-xs font-bold text-slate-500">Tanggal Observasi Harian</span><input type="date" className={control} value={selectedDate} disabled={locked} onChange={event=>{if(validDate(event.target.value)&&!locks.current.size&&!bulkLock.current)setSelectedDate(event.target.value);}}/></label><button type="button" className={button} disabled={dailyBusy||locked||!selectedClass} onClick={()=>{setDailyReload(current=>current+1);refreshHistory();}}><RefreshCw size={15} className={dailyBusy?"animate-spin":""}/>Segarkan</button></section>
+    {classError&&<div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><p className="font-bold">Daftar kelas belum dapat dimuat.</p><p className="mt-1 break-words">{classError}</p><button type="button" className={`${button} mt-3`} onClick={()=>setClassReload(current=>current+1)}>Coba lagi</button></div>}
+    {dailyError?.scope===scope&&<div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><p className="font-bold">Catatan harian gagal dimuat, bukan berarti tidak ada catatan.</p><p className="mt-1 whitespace-pre-wrap break-words">{dailyError.message}</p><button type="button" className={`${button} mt-3`} onClick={()=>setDailyReload(current=>current+1)}>Coba lagi</button></div>}
+    {classBusy||dailyBusy?<div role="status" className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500"><Loader2 size={20} className="animate-spin"/>Memuat daftar siswa dan catatan harian…</div>:!selectedClass?<p className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">Pilih kelas aktif terlebih dahulu.</p>:readyDaily&&<>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4"><p className="text-sm text-slate-600">{dailyStudents.length} siswa · <span className="font-semibold text-emerald-700">{savedCount} catatan tersimpan</span> · <span className="font-semibold text-amber-700">{pending.length} draft berisi</span><span className="mt-1 block text-xs text-slate-400">Ringkasan untuk {formatDate(selectedDate)}. Tombol riwayat menampilkan catatan tersimpan lintas tanggal pada tahun ajaran aktif.</span></p></div>
+      {historyReady&&historyGroups.unmatchedCount>0&&<p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Ada {historyGroups.unmatchedCount} catatan kelas yang belum dapat dipetakan ke daftar siswa aktif melalui ID/NIS/NISN yang unik. Datanya tidak dihapus dan tidak dipasangkan berdasarkan nama. Periksa relasi siswa sebelum mengubah data.</p>}
+      {!dailyStudents.length?<p className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Belum ada siswa aktif pada kelas/tahun ajaran ini.</p>:<div className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="overflow-x-auto"><table className="w-full min-w-[760px] border-collapse text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-500"><th className="w-12 p-4">No.</th><th className="w-[280px] p-4">Siswa</th><th className="p-4">Catatan Anekdot · {formatDate(selectedDate)}</th><th className="w-32 p-4 text-right">Aksi</th></tr></thead><tbody>{sortedStudents.map((student,index)=>{
+        const notes=dailyRows.filter(row=>row.studentId===student.id&&(!row.isDraft||meaningful(row))).sort((a,b)=>timeMinutes(a.time)-timeMinutes(b.time)||a.rowId.localeCompare(b.rowId));
+        const expanded=openHistoryIds.has(student.id);
+        const previousNotes=historyGroups.byStudent.get(student.id)||[];
+        const panelId=`anecdote-history-${encodeURIComponent(student.id)}`;
+        const currentHistoryError=historyError?.scope===historyReadScope?historyError.message:"";
+        return <React.Fragment key={student.id}>
+          <tr className={`border-b border-slate-100 align-top ${expanded?"bg-indigo-50/20":""}`}><td className="p-4 font-semibold text-slate-400">{index+1}</td><td className="p-4"><div className="flex items-start gap-3"><span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-indigo-100 bg-indigo-50 text-xs font-bold text-indigo-600">{initials(student.name)}</span><div className="min-w-0"><p className="font-bold text-slate-900">{student.name}</p><p className="mt-1 text-xs text-slate-400">{student.nisn?`NISN: ${student.nisn}`:student.nis?`NIS: ${student.nis}`:"NISN: —"}</p><button type="button" aria-expanded={expanded} aria-controls={panelId} onClick={()=>toggleHistory(student.id)} className={`mt-3 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 cursor-pointer ${expanded?"border-indigo-200 bg-indigo-100 text-indigo-800":"border-slate-200 bg-white text-indigo-700 hover:bg-indigo-50"}`}><History size={13}/>{expanded?"Tutup riwayat":"Riwayat catatan"}{historyReady?` (${previousNotes.length})`:""}{expanded?<ChevronUp size={13}/>:<ChevronDown size={13}/>}</button></div></div></td><td className="p-4">{!notes.length?<p className="py-2 text-sm italic text-slate-400">Belum ada catatan observasi untuk tanggal ini.</p>:<div className="space-y-3">{notes.map(row=><article key={row.rowId} className={`rounded-xl border p-3 ${row.status==="FAILED"?"border-rose-200 bg-rose-50/30":row.isDraft||row.status!=="SAVED"?"border-amber-200 bg-amber-50/30":"border-slate-200 bg-white"}`}><div className="flex flex-wrap items-center justify-between gap-2"><p className="flex items-center gap-1.5 text-xs font-semibold text-slate-500"><Clock size={12}/>{row.time||"—"}</p><StatusBadge status={savingIds.has(row.rowId)?"SAVING":row.status}/></div>{row.activityContext&&<p className="mt-2 whitespace-pre-wrap break-words text-xs font-bold text-slate-700">{row.activityContext}</p>}<div className="mt-2 text-sm text-slate-700"><ExpandableText value={row.anecdote}/></div>{row.followUp&&<div className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-600"><p className="mb-1 font-bold text-slate-400">Tindak lanjut</p><ExpandableText value={row.followUp}/></div>}<div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] text-slate-400">{row.isDraft?"Draft lokal · belum tersimpan di server":`Pencatat: ${row.createdBy?.name||"Belum tersedia"}`}</p>{canManage(row)&&<div className="flex gap-2"><button type="button" disabled={locked} className={`${button} px-2 py-1 text-xs`} onClick={()=>selectEditor({scope,row:{...row}})}>Buka / Edit</button><button type="button" disabled={locked} className={`${button} px-2 py-1 text-xs text-rose-600 hover:bg-rose-50`} aria-label={`Hapus ${row.isDraft?"draft":"catatan"} ${student.name}`} onClick={()=>void removeNote(row)}><Trash2 size={12}/></button></div>}</div></article>)}</div>}</td><td className="p-4 text-right">{canWrite&&<button type="button" className={`${button} whitespace-nowrap text-xs`} disabled={locked} onClick={()=>openAdd(student.id)}><Plus size={13}/>Catatan</button>}</td></tr>
+          {expanded&&<tr className="border-b border-indigo-100"><td colSpan={4} className="bg-slate-50/60 px-3 py-4 sm:px-6"><div id={panelId}><StudentHistoryPanel key={`${historyReadScope}|${student.id}`} studentName={student.name} academicYear={year} observationDate={selectedDate} notes={previousNotes} busy={historyBusy||(!historyReady&&!currentHistoryError)} error={currentHistoryError} onRetry={refreshHistory}/></div></td></tr>}
+        </React.Fragment>;
+      })}</tbody></table></div></div>}
+      <footer className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4"><p className="max-w-2xl text-xs text-slate-500">Draft belum masuk riwayat sebelum disimpan. Membuka/menutup riwayat hanya membaca catatan, tidak mengubah data.</p>{canWrite&&<button type="button" className={primary} disabled={locked||!pending.length} onClick={()=>void saveAll()}>{savingAll?<Loader2 size={15} className="animate-spin"/>:<Save size={15}/>} {savingAll?"Menyimpan…":`Simpan Semua (${pending.length})`}</button>}</footer>
     </>}
-    {editor&&editor.scope===scope&&selectedClass&&<NoteEditor key={editor.row.rowId} state={editor} className={selectedClass.name} observationDate={selectedDate} students={students} saving={savingIds.has(editor.row.rowId)} onChange={updateEditor} onSave={()=>void saveEditor()} onClose={closeEditor}/>}
+    {editor&&editor.scope===scope&&selectedClass&&<NoteEditor key={`${editor.scope}|${editor.row.rowId}`} state={editor} className={selectedClass.name} observationDate={selectedDate} students={students} saving={savingIds.has(editor.row.rowId)||savingAll} onChange={updateEditor} onSave={()=>void saveEditor()} onClose={closeEditor}/>}
   </div>;
 }
