@@ -398,6 +398,99 @@ export default function AAPReport() {
   const [editPelaksana, setEditPelaksana] = React.useState<'Guru' | 'Orang Tua' | 'Guru & Orang Tua'>('Guru & Orang Tua');
   const [editIndikator, setEditIndikator] = React.useState<string>('Anak menunjukkan kemajuan perilaku sesuai target stimulasi');
 
+  // Signatory & Homeroom Teacher states
+  const [kindySignatory, setKindySignatory] = React.useState<{
+    principalName: string;
+    principalTitle: string;
+    principalSignatureUrl: string | null;
+    principalNiy: string;
+  }>({
+    principalName: 'Nurul Khotimah',
+    principalTitle: 'Principal',
+    principalSignatureUrl: null,
+    principalNiy: ''
+  });
+
+  const [resolvedHomeroomTeacherName, setResolvedHomeroomTeacherName] = React.useState<string>('');
+  const [resolvedHomeroomTeacherNiy, setResolvedHomeroomTeacherNiy] = React.useState<string>('');
+
+  React.useEffect(() => {
+    let active = true;
+    const fetchKindySignatory = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'reportConfig', 'KINDERGARTEN'));
+        if (snap.exists() && active) {
+          const data = snap.data();
+          setKindySignatory({
+            principalName: data.principalName || 'Nurul Khotimah',
+            principalTitle: data.principalTitle || 'Principal',
+            principalSignatureUrl: data.principalSignatureUrl || null,
+            principalNiy: data.principalNIY || data.principalNiy || ''
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching Kindergarten signatory config:", err);
+      }
+    };
+    fetchKindySignatory();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let active = true;
+    const currentStudentObj = students.find(s => s.id === selectedStudentId);
+    const studentClassIdRaw = currentStudentObj?.classId || selectedClassId || '';
+
+    if (!studentClassIdRaw) {
+      setResolvedHomeroomTeacherName('');
+      setResolvedHomeroomTeacherNiy('');
+      return;
+    }
+
+    async function fetchClassTeacher() {
+      try {
+        const classRef = doc(db, 'classes', studentClassIdRaw);
+        const classSnap = await getDoc(classRef);
+        if (classSnap.exists() && active) {
+          const data = classSnap.data();
+          let teacherName = '';
+          const isEmail = (val?: string | null) => !!val && val.includes('@');
+          if (data.homeroomTeacherName && !isEmail(data.homeroomTeacherName)) {
+            teacherName = data.homeroomTeacherName;
+          } else if (data.teacherName && !isEmail(data.teacherName)) {
+            teacherName = data.teacherName;
+          } else {
+            const fallbackClass = classes.find(c => c.id === studentClassIdRaw) || activeClassObj;
+            if (fallbackClass?.homeroomTeacherName && !isEmail(fallbackClass.homeroomTeacherName)) {
+              teacherName = fallbackClass.homeroomTeacherName;
+            }
+          }
+          setResolvedHomeroomTeacherName(teacherName);
+          setResolvedHomeroomTeacherNiy(data.teacherNiy || data.homeroomTeacherNiy || '');
+        } else if (active) {
+          const fallbackClass = classes.find(c => c.id === studentClassIdRaw) || activeClassObj;
+          const teacherName = (fallbackClass?.homeroomTeacherName && !fallbackClass.homeroomTeacherName.includes('@')) ? fallbackClass.homeroomTeacherName : '';
+          setResolvedHomeroomTeacherName(teacherName);
+          setResolvedHomeroomTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '');
+        }
+      } catch (err) {
+        console.error("Error fetching class teacher info:", err);
+        if (active) {
+          const fallbackClass = classes.find(c => c.id === studentClassIdRaw) || activeClassObj;
+          const teacherName = (fallbackClass?.homeroomTeacherName && !fallbackClass.homeroomTeacherName.includes('@')) ? fallbackClass.homeroomTeacherName : '';
+          setResolvedHomeroomTeacherName(teacherName);
+          setResolvedHomeroomTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '');
+        }
+      }
+    }
+    fetchClassTeacher();
+    return () => {
+      active = false;
+    };
+  }, [selectedClassId, selectedStudentId, students, classes, activeClassObj]);
+
   // Effect to load follow-up plans when student changes
   React.useEffect(() => {
     setFollowupPlans(processFollowupPlans({})); // Clear state immediately with default structure
@@ -2283,12 +2376,20 @@ export default function AAPReport() {
                 </div>
 
                 {/* Section V: Signature Blocks */}
+                {!resolvedHomeroomTeacherName && (
+                  <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 font-bold flex items-center gap-2.5 avoid-break">
+                    <AlertCircle size={16} className="shrink-0 text-amber-600" />
+                    <span>Peringatan: Nama Wali Kelas belum diatur untuk kelas ini. Harap tetapkan wali kelas pada menu manajemen kelas.</span>
+                  </div>
+                )}
                 <div className="grid grid-cols-3 gap-6 text-center text-[11px] font-bold text-gray-800 avoid-break pt-8 border-t border-gray-150">
                   <div className="space-y-16">
                     <p className="text-gray-400 font-extrabold uppercase text-[8px] tracking-widest">Wali Kelas / Homeroom Teacher</p>
                     <div>
                       <div className="w-24 h-0.5 bg-gray-300 mx-auto mb-1"></div>
-                      <p className="font-black text-gray-900">Wali Kelas</p>
+                      <p className={cn("font-black text-gray-900", !resolvedHomeroomTeacherName && "text-amber-600 italic text-[10px]")}>
+                        {resolvedHomeroomTeacherName || 'Wali Kelas Belum Diatur'}
+                      </p>
                     </div>
                   </div>
 
@@ -2296,7 +2397,7 @@ export default function AAPReport() {
                     <p className="text-gray-400 font-extrabold uppercase text-[8px] tracking-widest">Kepala Sekolah / Principal</p>
                     <div>
                       <div className="w-24 h-0.5 bg-gray-300 mx-auto mb-1"></div>
-                      <p className="font-black text-gray-900">Ms. Nurul Khotimah</p>
+                      <p className="font-black text-gray-900">{kindySignatory.principalName || 'Nurul Khotimah'}</p>
                     </div>
                   </div>
 
@@ -4815,7 +4916,9 @@ export default function AAPReport() {
             <div className="grid grid-cols-12">
               <span className="col-span-4 font-bold text-gray-500">Guru Kelas</span>
               <span className="col-span-1 text-gray-400 text-center">:</span>
-              <span className="col-span-7 font-extrabold text-gray-900">{profile?.name || '-'}</span>
+              <span className={cn("col-span-7 font-extrabold text-gray-900", !resolvedHomeroomTeacherName && "text-amber-600 italic text-[11px]")}>
+                {resolvedHomeroomTeacherName || 'Wali Kelas Belum Diatur'}
+              </span>
             </div>
           </div>
         </div>
@@ -4906,7 +5009,9 @@ export default function AAPReport() {
           <div className="flex flex-col items-center justify-between h-24">
             <span className="font-bold text-gray-500">Yogyakarta, {new Date(endOfTermReport?.completedAt || Date.now()).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric'})}</span>
             <div className="w-32 border-b border-gray-400 mt-8"></div>
-            <span className="font-extrabold text-gray-900 mt-1">{profile?.name || 'Guru Kelas'}</span>
+            <span className={cn("font-extrabold text-gray-900 mt-1", !resolvedHomeroomTeacherName && "text-amber-600 italic text-[10px]")}>
+              {resolvedHomeroomTeacherName || 'Wali Kelas'}
+            </span>
           </div>
         </div>
       </div>
