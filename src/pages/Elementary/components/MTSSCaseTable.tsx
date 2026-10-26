@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 
 interface Props {
   cases: ElementaryMTSSCase[];
-  onLogCoaching: (caseId: string, studentName: string, subject: string, tier: string) => void;
+  onLogCoaching: (caseId: string, studentName: string, subject: string, tier: string, studentId?: string) => void;
   onRefresh: () => void;
   classesList?: any[];
 }
@@ -232,7 +232,7 @@ export default function MTSSCaseTable({ cases, onLogCoaching, onRefresh, classes
                         {/* Riwayat & Catatan Individu */}
                         <button
                           type="button"
-                          onClick={() => onLogCoaching(caseObj.id, caseObj.studentName, caseObj.subject, caseObj.tier)}
+                          onClick={() => onLogCoaching(caseObj.id, caseObj.studentName, caseObj.subject, caseObj.tier, caseObj.studentId)}
                           className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/50 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
                           title="Buka Riwayat & Catatan Individu"
                         >

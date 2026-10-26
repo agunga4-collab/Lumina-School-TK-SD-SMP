@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { elementaryMTSSService } from '../../../services/elementaryMTSSService';
-import { ElementaryCoachingSession } from '../../../types/elementaryMTSS';
+import { ElementaryCoachingSession, MTSSBatchSheet } from '../../../types/elementaryMTSS';
 import { toast } from 'sonner';
 
 interface Props {
@@ -30,6 +30,7 @@ interface Props {
   onClose: () => void;
   onSessionLogged?: () => void;
   onOpenBatchSheet?: (sheetId: string) => void;
+  relatedSheets?: MTSSBatchSheet[];
 }
 
 export default function CoachingLogDrawer({
@@ -40,7 +41,8 @@ export default function CoachingLogDrawer({
   isOpen,
   onClose,
   onSessionLogged,
-  onOpenBatchSheet
+  onOpenBatchSheet,
+  relatedSheets = []
 }: Props) {
   const { profile } = useAuth();
   const [sessions, setSessions] = useState<ElementaryCoachingSession[]>([]);
@@ -251,6 +253,67 @@ export default function CoachingLogDrawer({
                   </button>
                 </motion.form>
               )}
+
+              {/* Related Spreadsheets Section */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <FileSpreadsheet size={14} className="text-blue-600" />
+                    Spreadsheet Terkait ({relatedSheets.length})
+                  </h4>
+                  <span className="text-[10px] text-slate-400 font-semibold">
+                    {subject}
+                  </span>
+                </div>
+
+                {relatedSheets.length > 0 ? (
+                  <div className="space-y-2.5">
+                    {relatedSheets.map((sheet) => (
+                      <div
+                        key={sheet.id}
+                        className="bg-blue-50/40 rounded-2xl p-3.5 border border-blue-100 flex items-center justify-between gap-3 hover:border-blue-200 transition-colors"
+                      >
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-extrabold text-slate-800 truncate">
+                              {sheet.className || sheet.classId || 'SD'}
+                            </span>
+                            <span className="text-[10px] font-bold text-blue-700 bg-blue-100/70 border border-blue-200 px-2 py-0.5 rounded-md">
+                              {sheet.semester}
+                            </span>
+                            <span className="text-[10px] font-semibold text-slate-500">
+                              {sheet.academicYear}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                            <span>Pengajar: <b className="text-slate-700">{sheet.teacherName || '-'}</b></span>
+                            <span>•</span>
+                            <span>{sheet.orderedBlocks?.length || 0} Kolom Sesi</span>
+                          </div>
+                        </div>
+
+                        {onOpenBatchSheet && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenBatchSheet(sheet.id)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-2xs shrink-0"
+                            title="Buka Spreadsheet ini"
+                          >
+                            <ExternalLink size={12} />
+                            Buka
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-dashed border-slate-200 text-center">
+                    <p className="text-xs text-slate-500 italic">
+                      Belum ada spreadsheet batch yang mencakup siswa ini untuk bidang studi {subject}.
+                    </p>
+                  </div>
+                )}
+              </div>
 
               {/* History Section */}
               <div className="space-y-4">

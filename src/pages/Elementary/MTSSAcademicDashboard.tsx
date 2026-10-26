@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useMTSSCases } from '../../hooks/useMTSSCases';
 import MTSSCaseTable from './components/MTSSCaseTable';
 import CoachingLogDrawer from './components/CoachingLogDrawer';
-import { elementaryMTSSService } from '../../services/elementaryMTSSService';
+import { elementaryMTSSService, resolveCaseForStudent } from '../../services/elementaryMTSSService';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { getClasses, getActiveStudents } from '../../lib/firebase';
@@ -36,7 +36,8 @@ import {
   FileText,
   Calendar,
   User,
-  AlertCircle
+  AlertCircle,
+  ClipboardList
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
@@ -79,9 +80,11 @@ export default function MTSSAcademicDashboard() {
   const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
   const [selectedCase, setSelectedCase] = useState<{
     id: string;
+    studentId: string;
     studentName: string;
     subject: string;
     tier: string;
+    academicYear?: string;
   } | null>(null);
 
   // Sync / Refresh key state
@@ -162,10 +165,8 @@ export default function MTSSAcademicDashboard() {
   };
 
   useEffect(() => {
-    if (activeMainTab === 'spreadsheet') {
-      loadBatchSheets();
-    }
-  }, [activeMainTab, refreshKey]);
+    loadBatchSheets();
+  }, [refreshKey]);
 
   // Load students belonging to selected setup classes
   useEffect(() => {
@@ -255,13 +256,75 @@ export default function MTSSAcademicDashboard() {
     setRefreshKey((prev) => prev + 1);
   };
 
-  const handleOpenCoaching = (caseId: string, studentName: string, subject: string, tier: string) => {
-    setSelectedCase({ id: caseId, studentName, subject, tier });
+  const handleOpenCoaching = (
+    caseId: string,
+    studentName: string,
+    subject: string,
+    tier: string,
+    studentId?: string,
+    academicYear?: string
+  ) => {
+    let resolvedStudentId = studentId;
+    if (!resolvedStudentId) {
+      const match = cases.find((c) => c.id === caseId);
+      resolvedStudentId = match ? match.studentId : caseId.split('_')[0];
+    }
+    const resolvedYear = academicYear || setupYear || selectedYear;
+
+    setSelectedCase({
+      id: caseId,
+      studentId: resolvedStudentId || '',
+      studentName,
+      subject,
+      tier,
+      academicYear: resolvedYear
+    });
     setDrawerOpen(true);
   };
 
+  // Open coaching log drawer directly from batch spreadsheet student row
+  const handleOpenCoachingFromSpreadsheet = (studentId: string, studentName: string) => {
+    if (!studentId) {
+      toast.error('Data ID Siswa tidak valid.');
+      return;
+    }
+    const resolved = resolveCaseForStudent(cases, studentId, setupSubject, setupTier, studentName);
+    handleOpenCoaching(resolved.caseId, resolved.studentName, resolved.subject, resolved.tier, studentId, setupYear);
+  };
+
+  // Compute related spreadsheets for currently selected student case
+  const relatedSheets = React.useMemo(() => {
+    if (!selectedCase?.studentId) return [];
+    return batchSheets.filter((sheet) => {
+      const hasStudent = Array.isArray(sheet.studentIds) && sheet.studentIds.includes(selectedCase.studentId);
+      const hasSubject = sheet.subject === selectedCase.subject;
+      const matchesYear = selectedCase.academicYear
+        ? sheet.academicYear === selectedCase.academicYear
+        : true;
+      return hasStudent && hasSubject && matchesYear;
+    });
+  }, [batchSheets, selectedCase]);
+
   const handleOpenBatchSheetFromDrawer = async (sheetId: string) => {
-    let sheet = batchSheets.find(s => s.id === sheetId);
+    // If user is currently editing another sheet with unsaved changes, prompt confirmation
+    if (sheetViewState === 'EDIT' && isSheetModified && editingSheetId !== sheetId) {
+      const confirmSwitch = window.confirm(
+        'Perubahan pada spreadsheet saat ini belum disimpan. Apakah Anda yakin ingin beralih ke spreadsheet lain dan membuang perubahan belum tersimpan?'
+      );
+      if (!confirmSwitch) {
+        return;
+      }
+    }
+
+    // If user clicks to open the sheet that is already open on screen, just close drawer to preserve edits
+    if (editingSheetId && sheetId === editingSheetId && sheetViewState === 'EDIT') {
+      setDrawerOpen(false);
+      setSelectedCase(null);
+      toast.info('Spreadsheet ini sedang dibuka di layar.');
+      return;
+    }
+
+    let sheet = batchSheets.find((s) => s.id === sheetId);
     if (!sheet) {
       try {
         const fetched = await elementaryMTSSService.fetchBatchSheetById(sheetId);
@@ -276,7 +339,7 @@ export default function MTSSAcademicDashboard() {
       setSelectedCase(null);
       setActiveMainTab('spreadsheet');
       handleOpenSavedSheet(sheet);
-      toast.info(`Membuka spreadsheet sumber: ${sheet.subject} (${sheet.className || sheet.classId})`);
+      toast.info(`Membuka spreadsheet: ${sheet.subject} (${sheet.className || sheet.classId})`);
     } else {
       toast.error('Spreadsheet sumber tidak lagi tersedia di database. Catatan ini tetap tersimpan sebagai riwayat baca-saja.');
     }
@@ -1438,8 +1501,8 @@ export default function MTSSAcademicDashboard() {
                       <tr className="bg-slate-50 text-slate-600 uppercase text-[8px] font-black tracking-wider border-b border-slate-200 sticky top-0 bg-white z-10 shadow-sm">
                         {/* Sticky left */}
                         <th className="py-2 px-2 text-center border-r border-slate-200 sticky left-0 bg-slate-50 z-20 w-10">No</th>
-                        <th className="py-2 px-3 border-r border-slate-200 sticky left-10 bg-slate-50 z-20 w-44">Nama Siswa</th>
-                        <th className="py-2 px-2 text-center border-r border-slate-200 sticky left-54 bg-slate-50 z-20 w-16">Kelas</th>
+                        <th className="py-2 px-3 border-r border-slate-200 sticky left-10 bg-slate-50 z-20 w-60 min-w-[240px]">Nama Siswa</th>
+                        <th className="py-2 px-2 text-center border-r border-slate-200 sticky left-[17.5rem] bg-slate-50 z-20 w-20">Kelas</th>
                         
                         {/* Context info */}
                         <th className="py-2 px-3 border-r border-slate-200 bg-white min-w-[240px]">Goal / Sasaran</th>
@@ -1479,20 +1542,39 @@ export default function MTSSAcademicDashboard() {
                         const row = editStudentsData[stId];
                         if (!row) return null;
 
-                        const caseId = `${stId}_${setupSubject === 'Bahasa Indonesia' ? 'BAHASA_INDONESIA' : setupSubject === 'English' ? 'ENGLISH_READING' : setupSubject === 'Mengaji' ? 'MENGAJI' : 'NUMERACY'}`;
-                        const existingCase = cases.find(c => c.id === caseId);
-                        const displayTier = existingCase?.tier || setupTier;
+                        const resolvedCase = resolveCaseForStudent(cases, stId, setupSubject, setupTier, row.studentName);
+                        const displayTier = resolvedCase.tier;
 
                         return (
                           <tr key={stId} className="hover:bg-slate-50/60 font-semibold text-slate-800 transition-colors">
                             {/* Sticky Identitas */}
-                            <td className="py-2.5 px-2 text-center border-r border-slate-200 sticky left-0 bg-white z-10 font-mono text-[10px] text-slate-450">
+                            <td className="py-2.5 px-2 text-center border-r border-slate-200 sticky left-0 bg-white z-10 font-mono text-[10px] text-slate-450 w-10">
                               {sIdx + 1}
                             </td>
-                            <td className="py-2.5 px-3 border-r border-slate-200 sticky left-10 bg-white z-10 font-black truncate max-w-xs text-slate-900" title={row.studentName}>
-                              {row.studentName}
+                            <td className="py-2.5 px-3 border-r border-slate-200 sticky left-10 bg-white z-10 w-60 min-w-[240px]">
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-extrabold text-xs text-slate-900 truncate" title={row.studentName}>
+                                    {row.studentName}
+                                  </span>
+                                  {stId && (
+                                    <span className="text-[9px] font-mono text-slate-400 font-semibold shrink-0">
+                                      ID: {stId}
+                                    </span>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenCoachingFromSpreadsheet(stId, row.studentName)}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-900 border border-indigo-200/70 rounded-lg text-[10px] font-bold cursor-pointer transition-colors shadow-2xs w-fit"
+                                  title="Buka Riwayat & Catatan Individu Siswa"
+                                >
+                                  <ClipboardList size={12} className="shrink-0 text-indigo-600" />
+                                  <span>Riwayat & Catatan Individu</span>
+                                </button>
+                              </div>
                             </td>
-                            <td className="py-2.5 px-2 text-center border-r border-slate-200 sticky left-54 bg-white z-10 font-black text-slate-600">
+                            <td className="py-2.5 px-2 text-center border-r border-slate-200 sticky left-[17.5rem] bg-white z-10 font-black text-slate-600 w-20">
                               {row.className}
                             </td>
 
@@ -1714,6 +1796,7 @@ export default function MTSSAcademicDashboard() {
           }}
           onSessionLogged={triggerRefresh}
           onOpenBatchSheet={handleOpenBatchSheetFromDrawer}
+          relatedSheets={relatedSheets}
         />
       )}
     </div>

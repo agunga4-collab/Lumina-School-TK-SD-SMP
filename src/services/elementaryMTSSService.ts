@@ -33,11 +33,94 @@ export function mapAreaToSubject(area: ElementaryArea): 'Bahasa Indonesia' | 'En
   }
 }
 
+// Helper to map subject name back to area key
+export function getAreaForSubject(subject: string): ElementaryArea {
+  switch (subject) {
+    case 'Bahasa Indonesia':
+      return 'BAHASA_INDONESIA';
+    case 'English':
+      return 'ENGLISH_READING';
+    case 'Numeracy':
+      return 'NUMERACY';
+    case 'Mengaji':
+      return 'MENGAJI';
+    default:
+      return 'NUMERACY';
+  }
+}
+
 // Helper to map support status to MTSS tier
 export function mapSupportStatusToTier(status: string): 'Tier 2' | 'Tier 3' | null {
   if (status === 'MONITOR') return 'Tier 2';
   if (status === 'NEEDS_SUPPORT') return 'Tier 3';
   return null;
+}
+
+/**
+ * Deterministic and consistent case resolver.
+ * Validates studentId and subject to guarantee identical case resolution across
+ * both the MTSS Case Table and Batch Spreadsheet entry points.
+ */
+export function resolveCaseForStudent(
+  cases: ElementaryMTSSCase[],
+  studentId: string,
+  subject: string,
+  fallbackTier: string = 'Tier 2',
+  fallbackName: string = ''
+): { caseId: string; studentName: string; subject: string; tier: string } {
+  const expectedArea = getAreaForSubject(subject);
+  const canonicalId = `${studentId}_${expectedArea}`;
+
+  if (!studentId) {
+    return {
+      caseId: canonicalId,
+      studentName: fallbackName,
+      subject,
+      tier: fallbackTier
+    };
+  }
+
+  // 1. Search existing loaded cases by matching both studentId AND subject
+  const matchingCases = cases.filter(c => c.studentId === studentId && c.subject === subject);
+
+  if (matchingCases.length === 1) {
+    const c = matchingCases[0];
+    return {
+      caseId: c.id,
+      studentName: c.studentName || fallbackName,
+      subject: c.subject,
+      tier: c.tier || fallbackTier
+    };
+  }
+
+  if (matchingCases.length > 1) {
+    // If multiple cases match, prioritize canonical ID match
+    const exactIdMatch = matchingCases.find(c => c.id === canonicalId);
+    if (exactIdMatch) {
+      return {
+        caseId: exactIdMatch.id,
+        studentName: exactIdMatch.studentName || fallbackName,
+        subject: exactIdMatch.subject,
+        tier: exactIdMatch.tier || fallbackTier
+      };
+    }
+    // Otherwise pick the active case
+    const activeCase = matchingCases.find(c => c.status !== 'Achieved') || matchingCases[0];
+    return {
+      caseId: activeCase.id,
+      studentName: activeCase.studentName || fallbackName,
+      subject: activeCase.subject,
+      tier: activeCase.tier || fallbackTier
+    };
+  }
+
+  // 2. Not found in existing loaded cases list - construct canonical ID
+  return {
+    caseId: canonicalId,
+    studentName: fallbackName,
+    subject,
+    tier: fallbackTier
+  };
 }
 
 export const elementaryMTSSService = {
