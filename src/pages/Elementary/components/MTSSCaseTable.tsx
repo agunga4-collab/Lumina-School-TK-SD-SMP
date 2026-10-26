@@ -229,15 +229,15 @@ export default function MTSSCaseTable({ cases, onLogCoaching, onRefresh, classes
                           {modified && <span className="text-[10px] font-bold uppercase tracking-wider pr-1">Simpan</span>}
                         </button>
 
-                        {/* Log Coaching */}
+                        {/* Riwayat & Catatan Individu */}
                         <button
                           type="button"
                           onClick={() => onLogCoaching(caseObj.id, caseObj.studentName, caseObj.subject, caseObj.tier)}
-                          className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/50 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
-                          title="Buka Catatan Coaching"
+                          className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/50 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="Buka Riwayat & Catatan Individu"
                         >
                           <ClipboardList size={14} />
-                          <span className="text-[10px] font-bold uppercase tracking-wider pr-1">Coaching Log ({modified ? 'Draf' : 'Buka'})</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider pr-1">Riwayat & Catatan Individu</span>
                         </button>
                       </div>
                     </td>

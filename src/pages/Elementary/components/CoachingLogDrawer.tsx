@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Calendar, Plus, BookOpen, MessageSquare, Clipboard, User, Clock, Trash } from 'lucide-react';
+import {
+  X,
+  Calendar,
+  Plus,
+  BookOpen,
+  MessageSquare,
+  Clipboard,
+  User,
+  Clock,
+  Trash,
+  FileSpreadsheet,
+  ExternalLink,
+  AlertTriangle,
+  Lock,
+  Info
+} from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { elementaryMTSSService } from '../../../services/elementaryMTSSService';
 import { ElementaryCoachingSession } from '../../../types/elementaryMTSS';
@@ -14,6 +29,7 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   onSessionLogged?: () => void;
+  onOpenBatchSheet?: (sheetId: string) => void;
 }
 
 export default function CoachingLogDrawer({
@@ -23,7 +39,8 @@ export default function CoachingLogDrawer({
   tier,
   isOpen,
   onClose,
-  onSessionLogged
+  onSessionLogged,
+  onOpenBatchSheet
 }: Props) {
   const { profile } = useAuth();
   const [sessions, setSessions] = useState<ElementaryCoachingSession[]>([]);
@@ -48,7 +65,7 @@ export default function CoachingLogDrawer({
       setSessions(res);
     } catch (err) {
       console.error('Error fetching coaching sessions:', err);
-      toast.error('Gagal memuat riwayat coaching sessions');
+      toast.error('Gagal memuat riwayat sesi coaching');
     } finally {
       setLoading(false);
     }
@@ -57,7 +74,7 @@ export default function CoachingLogDrawer({
   const handleSaveSession = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!notes.trim()) {
-      toast.error('Catatan/progress sesi tidak boleh kosong.');
+      toast.error('Catatan intervensi manual tidak boleh kosong.');
       return;
     }
 
@@ -71,7 +88,7 @@ export default function CoachingLogDrawer({
         loggedBy: author
       });
 
-      toast.success('Berhasil menambahkan catatan coaching!');
+      toast.success('Berhasil menambahkan catatan manual!');
       setNotes('');
       setShowForm(false);
       fetchSessions();
@@ -80,25 +97,25 @@ export default function CoachingLogDrawer({
       }
     } catch (err) {
       console.error('Error saving coaching session:', err);
-      toast.error('Gagal menyimpan coaching session.');
+      toast.error('Gagal menyimpan catatan manual.');
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (!window.confirm('Apakah Anda yakin ingin menghapus catatan coaching ini?')) return;
+    if (!window.confirm('Apakah Anda yakin ingin menghapus catatan manual ini?')) return;
 
     try {
       await elementaryMTSSService.deleteCoachingSession(caseId, sessionId);
-      toast.success('Catatan coaching berhasil dihapus');
+      toast.success('Catatan manual berhasil dihapus');
       fetchSessions();
       if (onSessionLogged) {
         onSessionLogged();
       }
     } catch (err) {
       console.error('Error deleting session:', err);
-      toast.error('Gagal menghapus catatan coaching');
+      toast.error('Gagal menghapus catatan manual');
     }
   };
 
@@ -129,7 +146,7 @@ export default function CoachingLogDrawer({
                 <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">
                   MTSS Academic Elementary
                 </span>
-                <h3 className="text-lg font-extrabold tracking-tight">Log & Riwayat Intervensi</h3>
+                <h3 className="text-lg font-extrabold tracking-tight">Riwayat & Catatan Individu</h3>
                 <div className="flex gap-2 flex-wrap items-center mt-1">
                   <span className="bg-emerald-900 text-emerald-200 border border-emerald-800 text-[10px] px-2.5 py-0.5 rounded-full font-bold">
                     {studentName}
@@ -163,10 +180,10 @@ export default function CoachingLogDrawer({
                 <button
                   type="button"
                   onClick={() => setShowForm(true)}
-                  className="w-full py-3 px-4 border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 rounded-2xl font-bold flex items-center justify-center gap-2 cursor-pointer transition-all"
+                  className="w-full py-3 px-4 border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800 rounded-2xl font-bold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-2xs"
                 >
                   <Plus size={16} />
-                  Tambah Sesi Coaching / Intervensi Baru
+                  Tambah Catatan Manual Baru
                 </button>
               ) : (
                 <motion.form
@@ -178,7 +195,7 @@ export default function CoachingLogDrawer({
                   <div className="flex justify-between items-center pb-2 border-b border-emerald-100/50">
                     <span className="text-xs font-black text-emerald-900 uppercase tracking-wider flex items-center gap-1.5">
                       <Clipboard size={14} />
-                      Log Sesi Intervensi Baru
+                      Log Catatan Manual Baru
                     </span>
                     <button
                       type="button"
@@ -188,6 +205,10 @@ export default function CoachingLogDrawer({
                       Batal
                     </button>
                   </div>
+
+                  <p className="text-[11px] text-emerald-700 bg-emerald-100/60 p-2.5 rounded-xl">
+                    Catatan manual digunakan untuk mencatat intervensi individual di luar jadwal spreadsheet batch.
+                  </p>
 
                   <div className="grid grid-cols-1 gap-4">
                     <div>
@@ -226,17 +247,22 @@ export default function CoachingLogDrawer({
                     disabled={saving}
                     className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-350 text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition-colors shadow-sm flex items-center justify-center gap-1.5"
                   >
-                    {saving ? 'Menyimpan...' : 'Simpan Catatan Coaching'}
+                    {saving ? 'Menyimpan...' : 'Simpan Catatan Manual'}
                   </button>
                 </motion.form>
               )}
 
               {/* History Section */}
               <div className="space-y-4">
-                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <MessageSquare size={14} className="text-slate-500" />
-                  Riwayat Coaching & Intervensi ({sessions.length})
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <MessageSquare size={14} className="text-slate-500" />
+                    Riwayat Intervensi ({sessions.length})
+                  </h4>
+                  <span className="text-[10px] text-slate-400 font-semibold">
+                    Gabungan Spreadsheet & Manual
+                  </span>
+                </div>
 
                 {loading ? (
                   <div className="flex flex-col items-center justify-center py-10 gap-2">
@@ -246,50 +272,131 @@ export default function CoachingLogDrawer({
                 ) : sessions.length === 0 ? (
                   <div className="bg-slate-50 rounded-2xl p-8 border border-dashed border-slate-250 text-center">
                     <BookOpen size={24} className="text-slate-300 mx-auto mb-2" />
-                    <p className="text-xs text-slate-500 italic">Belum ada catatan intervensi atau coaching log untuk kasus ini.</p>
+                    <p className="text-xs text-slate-500 italic">Belum ada catatan intervensi atau riwayat untuk kasus ini.</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {sessions.map((session, index) => (
-                      <div
-                        key={session.id}
-                        className="bg-white rounded-2xl p-4 border border-slate-150 shadow-sm flex gap-3 items-start relative group"
-                      >
-                        <div className="p-2 rounded-xl bg-slate-50 text-slate-500 shrink-0">
-                          <Plus size={16} className="text-emerald-500" />
-                        </div>
-                        <div className="flex-1 space-y-1 bg-white">
-                          <div className="flex items-center justify-between gap-1 flex-wrap">
-                            <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1">
-                              <Calendar size={12} className="text-slate-400" />
-                              {new Date(session.date).toLocaleDateString('id-ID', {
-                                weekday: 'long',
-                                year: 'numeric',
-                                month: 'long',
-                                day: 'numeric'
-                              })}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md">
-                                <User size={10} />
-                                {session.loggedBy}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteSession(session.id)}
-                                className="text-slate-350 hover:text-rose-600 transition-colors cursor-pointer"
-                                title="Hapus catatan"
-                              >
-                                <Trash size={12} />
-                              </button>
-                            </div>
+                    {sessions.map((session) => {
+                      const isSpreadsheet = Boolean(session.batchSheetId);
+                      const isArchived = Boolean(session.isArchived || session.sourceStatus === 'inactive');
+
+                      return (
+                        <div
+                          key={session.id}
+                          className={`rounded-2xl p-4 border shadow-2xs flex gap-3 items-start relative transition-all ${
+                            isSpreadsheet
+                              ? 'bg-blue-50/20 border-blue-100 hover:border-blue-200'
+                              : 'bg-white border-slate-200 hover:border-emerald-200'
+                          }`}
+                        >
+                          <div className={`p-2 rounded-xl shrink-0 ${
+                            isSpreadsheet ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+                          }`}>
+                            {isSpreadsheet ? (
+                              <FileSpreadsheet size={16} />
+                            ) : (
+                              <MessageSquare size={16} />
+                            )}
                           </div>
-                          <p className="text-xs text-slate-650 leading-relaxed font-semibold bg-slate-50/50 p-2.5 rounded-xl border border-slate-100">
-                            {session.notes}
-                          </p>
+
+                          <div className="flex-1 space-y-2">
+                            {/* Top row: Date, Badges, Author & Actions */}
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1">
+                                  <Calendar size={12} className="text-slate-400" />
+                                  {new Date(session.date).toLocaleDateString('id-ID', {
+                                    weekday: 'short',
+                                    year: 'numeric',
+                                    month: 'short',
+                                    day: 'numeric'
+                                  })}
+                                </span>
+
+                                {/* Source Badge */}
+                                {isSpreadsheet ? (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 border border-blue-200 px-2 py-0.5 rounded-md">
+                                    <FileSpreadsheet size={10} />
+                                    Dari Spreadsheet
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                    <User size={10} />
+                                    Catatan Manual
+                                  </span>
+                                )}
+
+                                {/* Archived / Inactive Source Notice */}
+                                {isArchived && (
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded"
+                                    title={session.archivedReason || 'Blok dikosongkan atau dihapus dari spreadsheet sumber'}
+                                  >
+                                    <AlertTriangle size={10} />
+                                    Sumber Nonaktif
+                                  </span>
+                                )}
+
+                                {/* Legacy Duplicate Conflict Warning */}
+                                {session.hasConflict && (
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[9px] font-bold bg-orange-100 text-orange-800 border border-orange-300 px-1.5 py-0.5 rounded"
+                                    title="Terdeteksi lebih dari satu sesi untuk blok spreadsheet ini dari data lama. Tidak dihapus otomatis."
+                                  >
+                                    <AlertTriangle size={10} />
+                                    Konflik Duplikat
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] font-semibold text-slate-400 flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">
+                                  {session.loggedBy}
+                                </span>
+
+                                {/* Delete button ONLY for manual notes */}
+                                {!isSpreadsheet && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteSession(session.id)}
+                                    className="text-slate-350 hover:text-rose-600 transition-colors cursor-pointer p-1"
+                                    title="Hapus catatan manual"
+                                  >
+                                    <Trash size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Content */}
+                            <p className="text-xs text-slate-700 leading-relaxed font-medium bg-slate-50/70 p-2.5 rounded-xl border border-slate-150 whitespace-pre-line">
+                              {session.notes}
+                            </p>
+
+                            {/* Spreadsheet Read-only Footer with "Buka Spreadsheet Sumber" */}
+                            {isSpreadsheet && (
+                              <div className="flex items-center justify-between gap-2 pt-1 border-t border-blue-50 text-[11px]">
+                                <span className="text-slate-400 flex items-center gap-1">
+                                  <Lock size={10} className="text-slate-400" />
+                                  Baca-saja (dikelola via spreadsheet)
+                                </span>
+
+                                {onOpenBatchSheet && session.batchSheetId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenBatchSheet(session.batchSheetId!)}
+                                    className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-900 font-bold bg-blue-100/70 hover:bg-blue-100 px-2.5 py-1 rounded-lg border border-blue-200 transition-colors cursor-pointer shadow-2xs"
+                                  >
+                                    <ExternalLink size={11} />
+                                    Buka Spreadsheet Sumber
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -300,3 +407,4 @@ export default function CoachingLogDrawer({
     </AnimatePresence>
   );
 }
+

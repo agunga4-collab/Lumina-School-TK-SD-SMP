@@ -260,6 +260,28 @@ export default function MTSSAcademicDashboard() {
     setDrawerOpen(true);
   };
 
+  const handleOpenBatchSheetFromDrawer = async (sheetId: string) => {
+    let sheet = batchSheets.find(s => s.id === sheetId);
+    if (!sheet) {
+      try {
+        const fetched = await elementaryMTSSService.fetchBatchSheetById(sheetId);
+        if (fetched) sheet = fetched;
+      } catch (err) {
+        console.warn('Gagal memuat spreadsheet sumber by ID:', err);
+      }
+    }
+
+    if (sheet) {
+      setDrawerOpen(false);
+      setSelectedCase(null);
+      setActiveMainTab('spreadsheet');
+      handleOpenSavedSheet(sheet);
+      toast.info(`Membuka spreadsheet sumber: ${sheet.subject} (${sheet.className || sheet.classId})`);
+    } else {
+      toast.error('Spreadsheet sumber tidak lagi tersedia di database. Catatan ini tetap tersimpan sebagai riwayat baca-saja.');
+    }
+  };
+
   // Stats calculation
   const stats = React.useMemo(() => {
     const validClassIds = classesList.map(c => c.id);
@@ -478,10 +500,10 @@ export default function MTSSAcademicDashboard() {
 
   // Delete batch sheet
   const handleDeleteSheet = async (sheetId: string) => {
-    if (!window.confirm('Apakah Anda yakin ingin menghapus data spreadsheet batch ini? Menghapus spreadsheet tidak akan menghapus riwayat kasus siswa.')) return;
+    if (!window.confirm('Apakah Anda yakin ingin menghapus data spreadsheet batch ini? Riwayat intervensi siswa yang telah tercatat dari spreadsheet ini akan tetap dipertahankan sebagai riwayat baca-saja.')) return;
     try {
       await elementaryMTSSService.deleteBatchSheet(sheetId);
-      toast.success('Spreadsheet berhasil dihapus!');
+      toast.success('Spreadsheet berhasil dihapus! Riwayat intervensi siswa tetap tersimpan.');
       loadBatchSheets();
     } catch (err) {
       console.error(err);
@@ -1678,7 +1700,7 @@ export default function MTSSAcademicDashboard() {
         )}
       </AnimatePresence>
 
-      {/* SINGLE-STUDENT HISTORY DRAWER ONLY FOR VIEWING HISTORY */}
+      {/* SINGLE-STUDENT HISTORY DRAWER */}
       {selectedCase && (
         <CoachingLogDrawer
           isOpen={drawerOpen}
@@ -1691,6 +1713,7 @@ export default function MTSSAcademicDashboard() {
             setSelectedCase(null);
           }}
           onSessionLogged={triggerRefresh}
+          onOpenBatchSheet={handleOpenBatchSheetFromDrawer}
         />
       )}
     </div>

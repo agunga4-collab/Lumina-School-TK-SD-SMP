@@ -18,11 +18,17 @@ export interface ElementaryCoachingSession {
   notes: string;
   loggedBy: string; // Name or UID of assessor/teacher
   createdAt: number;
+  updatedAt?: number;
   durationMinutes?: number;
   interventionMethod?: string;
   caseId?: string;
   batchSheetId?: string;
   blockId?: string;
+  sourceType?: 'SPREADSHEET' | 'MANUAL';
+  sourceStatus?: 'active' | 'inactive';
+  isArchived?: boolean;
+  archivedReason?: string;
+  hasConflict?: boolean;
 }
 
 export interface MTSSBlockConfig {

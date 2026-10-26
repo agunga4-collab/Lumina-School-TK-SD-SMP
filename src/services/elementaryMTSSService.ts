@@ -138,25 +138,57 @@ export const elementaryMTSSService = {
   },
 
   /**
-   * Fetch coaching sessions sub-collection for a case
+   * Fetch coaching sessions sub-collection for a case.
+   * Differentiates spreadsheet-synced sessions vs manual notes,
+   * and reports legacy duplicate conflicts without deleting.
    */
   async fetchCoachingSessions(caseId: string): Promise<ElementaryCoachingSession[]> {
     try {
       const path = `${CASES_COLLECTION}/${caseId}/coaching_sessions`;
       const q = query(collection(db, path), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
-      const sessions: ElementaryCoachingSession[] = [];
+      const rawSessions: ElementaryCoachingSession[] = [];
       snap.forEach((docSnap) => {
-        sessions.push(docSnap.data() as ElementaryCoachingSession);
+        rawSessions.push(docSnap.data() as ElementaryCoachingSession);
       });
-      return sessions;
+
+      // Detect duplicates from legacy sync data
+      const blockCounts = new Map<string, number>();
+      rawSessions.forEach(s => {
+        if (s.batchSheetId && s.blockId) {
+          const key = `${s.batchSheetId}_${s.blockId}`;
+          blockCounts.set(key, (blockCounts.get(key) || 0) + 1);
+        }
+      });
+
+      const sessions: ElementaryCoachingSession[] = rawSessions.map(s => {
+        const isSpreadsheet = Boolean(s.batchSheetId);
+        const hasConflict = isSpreadsheet && s.blockId
+          ? (blockCounts.get(`${s.batchSheetId}_${s.blockId}`) || 0) > 1
+          : false;
+
+        return {
+          ...s,
+          sourceType: isSpreadsheet ? 'SPREADSHEET' : (s.sourceType || 'MANUAL'),
+          hasConflict
+        };
+      });
+
+      // Sort: session date descending, then createdAt descending
+      return sessions.sort((a, b) => {
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        const dateComp = dateB.localeCompare(dateA);
+        if (dateComp !== 0) return dateComp;
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
     } catch (error) {
       return handleFirestoreError(error, 'list', `${CASES_COLLECTION}/${caseId}/coaching_sessions`);
     }
   },
 
   /**
-   * Add a new coaching session to sub-collection
+   * Add a new manual coaching session to sub-collection.
    */
   async addCoachingSession(caseId: string, session: Omit<ElementaryCoachingSession, 'id' | 'createdAt'>): Promise<string> {
     try {
@@ -164,16 +196,22 @@ export const elementaryMTSSService = {
       const colRef = collection(db, path);
       
       const newSessionDoc = doc(colRef);
+      const now = Date.now();
       const fullSession: ElementaryCoachingSession = {
         ...session,
         id: newSessionDoc.id,
-        createdAt: Date.now()
+        createdAt: now,
+        updatedAt: now,
+        sourceType: 'MANUAL',
+        sourceStatus: 'active',
+        isArchived: false,
+        caseId: caseId
       };
 
       await setDoc(newSessionDoc, fullSession);
       
       // Update case last update time
-      await this.updateCase(caseId, { updatedAt: Date.now() });
+      await this.updateCase(caseId, { updatedAt: now });
 
       return newSessionDoc.id;
     } catch (error) {
@@ -196,6 +234,13 @@ export const elementaryMTSSService = {
   /**
    * Reconcile/sync all existing records in `elementary_literacy_numeracy_records` with `elementary_mtss_cases`.
    * This is extremely useful for loading historical data or recovering from desynchronization.
+   */
+  /**
+   * Reconcile/sync all existing records in `elementary_literacy_numeracy_records` with `elementary_mtss_cases`.
+   * Strictly NON-DESTRUCTIVE:
+   * - Never deletes cases, even if student is now ON_TRACK (Tier 1) or not in current spreadsheet.
+   * - Considers coaching_sessions (including manual logs) as history.
+   * - Preserves valid baselineScore, targetScore, and Achieved status.
    */
   async reconcileAllMTSSCases(): Promise<number> {
     try {
@@ -235,11 +280,10 @@ export const elementaryMTSSService = {
         }
       }
 
-      // Fetch all batch sheets to determine active MTSS participation & explicit graduation
+      // Fetch all batch sheets to determine explicit graduation
       const sheetsCol = collection(db, 'elementary_mtss_batch_sheets');
       const sheetsSnap = await getDocs(sheetsCol);
       const validAchievedKeys = new Set<string>();
-      const studentsWithMTSSHistory = new Set<string>(); // key: studentId_area
 
       sheetsSnap.forEach(docSnap => {
         const sheet = docSnap.data() as MTSSBatchSheet;
@@ -254,8 +298,6 @@ export const elementaryMTSSService = {
 
         studentIds.forEach((stId: string) => {
           const key = `${stId}_${area}`;
-          studentsWithMTSSHistory.add(key);
-
           const sData = studentsData[stId];
           if (sData) {
             if (sData.finalDiagnosis === 'Achieved' || sData.finalDiagnosis === 'Passed Tier 2') {
@@ -265,7 +307,7 @@ export const elementaryMTSSService = {
         });
       });
       
-      // 1. Process latest progress records to synchronize Tier 2 / Tier 3 cases
+      // Process latest progress records to synchronize Tier 2 / Tier 3 cases NON-DESTRUCTIVELY
       for (const record of Object.values(latestRecordsMap)) {
         const tier = mapSupportStatusToTier(record.supportStatus);
         
@@ -283,7 +325,7 @@ export const elementaryMTSSService = {
               tier,
               studentName: record.studentName || currentData.studentName,
               classId: record.classId || currentData.classId,
-              status: isExplicitlyAchieved ? 'Achieved' : 'Active', // Preserve Achieved status only if explicitly in batch sheet
+              status: isExplicitlyAchieved ? 'Achieved' : (currentData.status || 'Active'),
               updatedAt: Date.now()
             };
             await setDoc(caseDocRef, updatedCase, { merge: true });
@@ -307,43 +349,8 @@ export const elementaryMTSSService = {
         }
       }
 
-      // 2. Perform cleanup of old, invalid, or automatically generated cases in the database
-      const casesCol = collection(db, CASES_COLLECTION);
-      const casesSnap = await getDocs(casesCol);
-
-      for (const caseDoc of casesSnap.docs) {
-        const caseId = caseDoc.id;
-        const caseData = caseDoc.data() as ElementaryMTSSCase;
-
-        const currentRecord = latestRecordsMap[caseId];
-        const currentTier = currentRecord ? mapSupportStatusToTier(currentRecord.supportStatus) : null;
-        const hasHistory = studentsWithMTSSHistory.has(caseId);
-        const isExplicitlyAchieved = validAchievedKeys.has(caseId);
-
-        if (caseData.status === 'Achieved') {
-          // If the case is marked as Achieved, but has no MTSS history and wasn't explicitly achieved:
-          if (!isExplicitlyAchieved && !hasHistory) {
-            if (currentTier) {
-              // They are currently Tier 2/3, so they should be Active.
-              await updateDoc(caseDoc.ref, { status: 'Active', updatedAt: Date.now() });
-            } else {
-              // They are currently Tier 1 (ON_TRACK) and have no MTSS coaching history. Delete!
-              await deleteDoc(caseDoc.ref);
-            }
-          } else if (!isExplicitlyAchieved && hasHistory) {
-            // They have coaching history, but if their current record puts them in Tier 2/3, they must be Active.
-            if (currentTier) {
-              await updateDoc(caseDoc.ref, { status: 'Active', updatedAt: Date.now() });
-            }
-          }
-        } else {
-          // Case is Active
-          if (!currentTier && !hasHistory) {
-            // Currently Tier 1 and no MTSS history. Delete!
-            await deleteDoc(caseDoc.ref);
-          }
-        }
-      }
+      // NON-DESTRUCTIVE: Cases are NEVER deleted.
+      // History in coaching_sessions and student case files are protected.
 
       return syncedCount;
     } catch (error) {
@@ -382,6 +389,7 @@ export const elementaryMTSSService = {
 
   /**
    * Delete a batch sheet by its ID.
+   * Keeps existing coaching session history readable with inactive/deleted-source notice.
    */
   async deleteBatchSheet(id: string): Promise<void> {
     try {
@@ -393,8 +401,11 @@ export const elementaryMTSSService = {
 
   /**
    * Save a batch sheet (create or update).
-   * Automatically updates individual student cases and synchronizes coaching sessions
-   * to maintain history & timeline capability!
+   * Idempotent synchronization:
+   * - Does not re-create or duplicate sessions when saved repeatedly.
+   * - Preserves stable session IDs, original createdAt, and original loggedBy.
+   * - Never deletes or overwrites manual coaching notes.
+   * - Archives emptied/removed blocks instead of silently deleting them.
    */
   async saveBatchSheet(sheet: Omit<MTSSBatchSheet, 'id' | 'createdAt' | 'updatedAt'>, existingId?: string): Promise<string> {
     try {
@@ -429,7 +440,7 @@ export const elementaryMTSSService = {
       else if (sheet.subject === 'English') area = 'ENGLISH_READING';
       else if (sheet.subject === 'Mengaji') area = 'MENGAJI';
 
-      // 3. For each student, update their case and sync sessions
+      // 3. For each student, update their case and sync sessions idempotently
       for (const studentId of sheet.studentIds) {
         const student = sheet.studentsData[studentId];
         if (!student) continue;
@@ -438,16 +449,20 @@ export const elementaryMTSSService = {
         const caseRef = doc(db, CASES_COLLECTION, caseId);
         const caseSnap = await getDoc(caseRef);
 
-        const status: 'Active' | 'Achieved' = student.finalDiagnosis === 'Achieved' || student.finalDiagnosis === 'Passed Tier 2' ? 'Achieved' : 'Active';
+        const isExplicitGraduation = student.finalDiagnosis === 'Achieved' || student.finalDiagnosis === 'Passed Tier 2';
 
-        // Update or create case
+        // Update or create case non-destructively
         if (caseSnap.exists()) {
           const currentCaseData = caseSnap.data() as ElementaryMTSSCase;
+          const status: 'Active' | 'Achieved' = isExplicitGraduation
+            ? 'Achieved'
+            : (currentCaseData.status === 'Achieved' ? 'Achieved' : 'Active');
+
           await setDoc(caseRef, {
             ...currentCaseData,
-            baselineScore: student.baseline || currentCaseData.baselineScore,
-            targetScore: student.target || currentCaseData.targetScore,
-            status: status,
+            baselineScore: (student.baseline && student.baseline.trim() !== '') ? student.baseline : (currentCaseData.baselineScore || ''),
+            targetScore: (student.target && student.target.trim() !== '') ? student.target : (currentCaseData.targetScore || ''),
+            status,
             updatedAt: now
           }, { merge: true });
         } else {
@@ -458,66 +473,127 @@ export const elementaryMTSSService = {
             classId: student.classId,
             subject: sheet.subject as any,
             tier: sheet.tier as any,
-            baselineScore: student.baseline,
-            targetScore: student.target,
-            status: status,
+            baselineScore: student.baseline || '',
+            targetScore: student.target || '',
+            status: isExplicitGraduation ? 'Achieved' : 'Active',
             createdAt: now,
             updatedAt: now
           };
           await setDoc(caseRef, newCase);
         }
 
-        // Clean up previously synced sessions for this sheet to prevent duplicates
+        // Idempotent synchronization for coaching sessions
         const sessionsPath = `${CASES_COLLECTION}/${caseId}/coaching_sessions`;
-        const q = query(collection(db, sessionsPath), where('batchSheetId', '==', docId));
-        const sessionsSnap = await getDocs(q);
-        for (const sDoc of sessionsSnap.docs) {
-          await deleteDoc(sDoc.ref);
-        }
+        const sessionsColRef = collection(db, sessionsPath);
 
-        // Write meetings and assessments as individual coaching sessions
+        // Fetch existing sessions belonging ONLY to this batchSheetId
+        const q = query(sessionsColRef, where('batchSheetId', '==', docId));
+        const sessionsSnap = await getDocs(q);
+
+        const existingSessionsByBlock = new Map<string, { ref: any; data: ElementaryCoachingSession }>();
+        const duplicateBlocks = new Set<string>();
+
+        sessionsSnap.docs.forEach(sDoc => {
+          const sData = sDoc.data() as ElementaryCoachingSession;
+          if (sData.blockId) {
+            if (existingSessionsByBlock.has(sData.blockId)) {
+              duplicateBlocks.add(sData.blockId);
+            } else {
+              existingSessionsByBlock.set(sData.blockId, { ref: sDoc.ref, data: sData });
+            }
+          }
+        });
+
+        // Track blocks that are actively present and populated in this sheet
+        const processedBlockIds = new Set<string>();
+
         for (const block of sheet.orderedBlocks) {
           const blockVal = student.blocks[block.id];
-          if (!blockVal) continue;
+          let hasContent = false;
+          let sessionDate = '';
+          let notes = '';
 
           if (block.type === 'MEETING') {
-            const mVal = blockVal as MTSSMeetingValue;
-            if (mVal.status || mVal.date || mVal.date1 || mVal.date2) {
-              const sessionDate = mVal.date || mVal.date1 || mVal.date2 || new Date().toISOString().split('T')[0];
-              const notes = `Pertemuan: ${block.label}\nStatus/Progres: ${mVal.status || 'Belum diisi'}\nTanggal Pertemuan: ${sessionDate}`;
-              
-              const sColRef = collection(db, sessionsPath);
-              const sDocRef = doc(sColRef);
-              await setDoc(sDocRef, {
-                id: sDocRef.id,
-                date: sessionDate,
-                notes,
-                loggedBy: sheet.teacherName || 'Guru Pengajar',
-                createdAt: now,
-                batchSheetId: docId,
-                blockId: block.id,
-                caseId: caseId
-              });
+            const mVal = blockVal as MTSSMeetingValue | undefined;
+            if (mVal && (mVal.status?.trim() || mVal.date?.trim() || mVal.date1?.trim() || mVal.date2?.trim())) {
+              hasContent = true;
+              sessionDate = mVal.date || mVal.date1 || mVal.date2 || new Date().toISOString().split('T')[0];
+              notes = `Pertemuan: ${block.label}\nStatus/Progres: ${mVal.status || 'Belum diisi'}\nTanggal Pertemuan: ${sessionDate}`;
             }
           } else if (block.type === 'ASSESSMENT') {
-            const aVal = blockVal as MTSSAssessmentValue;
-            if (aVal.result || aVal.dateAssessed || aVal.note) {
-              const notes = `Evaluasi: ${block.label}\nHasil/Skor: ${aVal.result || 'Belum diisi'}\nCatatan Singkat: ${aVal.note || '-'}`;
-              const sessionDate = aVal.dateAssessed || new Date().toISOString().split('T')[0];
-
-              const sColRef = collection(db, sessionsPath);
-              const sDocRef = doc(sColRef);
-              await setDoc(sDocRef, {
-                id: sDocRef.id,
-                date: sessionDate,
-                notes,
-                loggedBy: sheet.teacherName || 'Guru Pengajar',
-                createdAt: now,
-                batchSheetId: docId,
-                blockId: block.id,
-                caseId: caseId
-              });
+            const aVal = blockVal as MTSSAssessmentValue | undefined;
+            if (aVal && (aVal.result?.trim() || aVal.dateAssessed?.trim() || aVal.note?.trim())) {
+              hasContent = true;
+              sessionDate = aVal.dateAssessed || new Date().toISOString().split('T')[0];
+              notes = `Evaluasi: ${block.label}\nHasil/Skor: ${aVal.result || 'Belum diisi'}\nCatatan Singkat: ${aVal.note || '-'}`;
             }
+          }
+
+          if (hasContent) {
+            processedBlockIds.add(block.id);
+            const existingItem = existingSessionsByBlock.get(block.id);
+
+            if (existingItem) {
+              // Existing session for this block: check if changes exist
+              const prev = existingItem.data;
+              const hasChanged = prev.notes !== notes || prev.date !== sessionDate || prev.sourceStatus === 'inactive' || prev.isArchived;
+
+              if (hasChanged) {
+                await updateDoc(existingItem.ref, {
+                  date: sessionDate,
+                  notes,
+                  sourceStatus: 'active',
+                  isArchived: false,
+                  updatedAt: now
+                  // Preserves original createdAt and loggedBy!
+                });
+              }
+              // Mark as retained
+              existingSessionsByBlock.delete(block.id);
+            } else {
+              // Create with stable deterministic ID: sync_${docId}_${block.id}
+              const stableDocId = `sync_${docId}_${block.id}`;
+              const sDocRef = doc(sessionsColRef, stableDocId);
+              const existingCheck = await getDoc(sDocRef);
+
+              if (existingCheck.exists()) {
+                await updateDoc(sDocRef, {
+                  date: sessionDate,
+                  notes,
+                  sourceStatus: 'active',
+                  isArchived: false,
+                  updatedAt: now
+                });
+              } else {
+                await setDoc(sDocRef, {
+                  id: stableDocId,
+                  date: sessionDate,
+                  notes,
+                  loggedBy: sheet.teacherName || 'Guru Pengajar',
+                  createdAt: now,
+                  updatedAt: now,
+                  batchSheetId: docId,
+                  blockId: block.id,
+                  caseId: caseId,
+                  sourceType: 'SPREADSHEET',
+                  sourceStatus: 'active',
+                  isArchived: false
+                });
+              }
+            }
+          }
+        }
+
+        // For any remaining existing sessions for this sheet that were emptied or removed from orderedBlocks:
+        // DO NOT silently delete! Mark as inactive/archived to preserve historical trail.
+        for (const [unusedBlockId, item] of existingSessionsByBlock.entries()) {
+          if (item.data.sourceStatus !== 'inactive' || !item.data.isArchived) {
+            await updateDoc(item.ref, {
+              sourceStatus: 'inactive',
+              isArchived: true,
+              archivedReason: 'Blok dikosongkan atau dihapus dari spreadsheet sumber',
+              updatedAt: now
+            });
           }
         }
       }
