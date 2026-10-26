@@ -438,58 +438,91 @@ export default function AAPReport() {
     };
   }, []);
 
-  React.useEffect(() => {
-    let active = true;
-    const currentStudentObj = students.find(s => s.id === selectedStudentId);
-    const studentClassIdRaw = currentStudentObj?.classId || selectedClassId || '';
+React.useEffect(() => {
+  let active = true;
 
-    if (!studentClassIdRaw) {
-      setResolvedHomeroomTeacherName('');
-      setResolvedHomeroomTeacherNiy('');
-      return;
-    }
+  setResolvedHomeroomTeacherName('');
+  setResolvedHomeroomTeacherNiy('');
 
-    async function fetchClassTeacher() {
-      try {
-        const classRef = doc(db, 'classes', studentClassIdRaw);
-        const classSnap = await getDoc(classRef);
-        if (classSnap.exists() && active) {
-          const data = classSnap.data();
-          let teacherName = '';
-          const isEmail = (val?: string | null) => !!val && val.includes('@');
-          if (data.homeroomTeacherName && !isEmail(data.homeroomTeacherName)) {
-            teacherName = data.homeroomTeacherName;
-          } else if (data.teacherName && !isEmail(data.teacherName)) {
-            teacherName = data.teacherName;
-          } else {
-            const fallbackClass = classes.find(c => c.id === studentClassIdRaw) || activeClassObj;
-            if (fallbackClass?.homeroomTeacherName && !isEmail(fallbackClass.homeroomTeacherName)) {
-              teacherName = fallbackClass.homeroomTeacherName;
-            }
-          }
-          setResolvedHomeroomTeacherName(teacherName);
-          setResolvedHomeroomTeacherNiy(data.teacherNiy || data.homeroomTeacherNiy || '');
-        } else if (active) {
-          const fallbackClass = classes.find(c => c.id === studentClassIdRaw) || activeClassObj;
-          const teacherName = (fallbackClass?.homeroomTeacherName && !fallbackClass.homeroomTeacherName.includes('@')) ? fallbackClass.homeroomTeacherName : '';
-          setResolvedHomeroomTeacherName(teacherName);
-          setResolvedHomeroomTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '');
-        }
-      } catch (err) {
-        console.error("Error fetching class teacher info:", err);
-        if (active) {
-          const fallbackClass = classes.find(c => c.id === studentClassIdRaw) || activeClassObj;
-          const teacherName = (fallbackClass?.homeroomTeacherName && !fallbackClass.homeroomTeacherName.includes('@')) ? fallbackClass.homeroomTeacherName : '';
-          setResolvedHomeroomTeacherName(teacherName);
-          setResolvedHomeroomTeacherNiy(fallbackClass?.teacherNiy || fallbackClass?.homeroomTeacherNiy || '');
-        }
-      }
-    }
-    fetchClassTeacher();
+  const currentStudentObj = students.find(
+    student => student.id === selectedStudentId
+  );
+
+  const studentClassIdRaw =
+    currentStudentObj?.classId || selectedClassId || '';
+
+  // Hitung fallback di sini, tanpa memakai activeClassObj
+  // yang deklarasinya berada lebih bawah dalam komponen.
+  const fallbackClass: any =
+    classes.find(cls => cls.id === studentClassIdRaw) ||
+    classes.find(cls => cls.id === selectedClassId);
+
+  const validName = (value: unknown): string => {
+    if (typeof value !== 'string') return '';
+
+    const name = value.trim();
+    return name && !name.includes('@') ? name : '';
+  };
+
+  const resolveName = (data: any): string =>
+    validName(data?.homeroomTeacherName) ||
+    validName(data?.teacherName);
+
+  const applyTeacher = (data: any) => {
+    if (!active) return;
+
+    setResolvedHomeroomTeacherName(
+      resolveName(data) || resolveName(fallbackClass)
+    );
+
+    setResolvedHomeroomTeacherNiy(
+      String(
+        data?.teacherNiy ||
+        data?.homeroomTeacherNiy ||
+        fallbackClass?.teacherNiy ||
+        fallbackClass?.homeroomTeacherNiy ||
+        ''
+      )
+    );
+  };
+
+  if (!studentClassIdRaw) {
     return () => {
       active = false;
     };
-  }, [selectedClassId, selectedStudentId, students, classes, activeClassObj]);
+  }
+
+  async function fetchClassTeacher() {
+    try {
+      const classSnap = await getDoc(
+        doc(db, 'classes', studentClassIdRaw)
+      );
+
+      if (!active) return;
+
+      applyTeacher(
+        classSnap.exists() ? classSnap.data() : fallbackClass
+      );
+    } catch (error) {
+      if (!active) return;
+
+      console.error('Error fetching class teacher info:', error);
+      applyTeacher(fallbackClass);
+    }
+  }
+
+  void fetchClassTeacher();
+
+  return () => {
+    active = false;
+  };
+}, [
+  selectedClassId,
+  selectedStudentId,
+  students,
+  classes,
+  activeYear,
+]);
 
   // Effect to load follow-up plans when student changes
   React.useEffect(() => {
