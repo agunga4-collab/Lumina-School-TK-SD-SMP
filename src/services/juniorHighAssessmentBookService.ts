@@ -530,6 +530,8 @@ export interface JHDailyRecapColumn {
 export interface JHDailyRecapCellItem {
   id: string;
   type: 'FORMATIVE' | 'SUMMATIVE' | 'SHARED_TASK';
+  unitActivityName?: string;
+  unitActivityCategory?: string;
   loId?: string;
   loCode?: string;
   loTitle?: string;
@@ -555,6 +557,7 @@ export interface JHDailyRecapData {
   columns: JHDailyRecapColumn[];
   cellMap: Record<string, JHDailyRecapCellItem[]>;
   enrollmentSet: Record<string, string[]>;
+  enrollmentActivities?: Record<string, string[]>;
 }
 
 export async function getJuniorHighDailyRecap(params: {
@@ -649,47 +652,166 @@ export async function getJuniorHighDailyRecap(params: {
     });
   }
 
-  // 7. Determine columns
+  // Helper resolvers for UA category grouping
+  const UNCATEGORIZED_UA_KEY = 'UA_CAT___UNCATEGORIZED__';
+  const UNCATEGORIZED_UA_LABEL = 'UA Tanpa Kategori';
+
+  function isUnitActivityItem(item: { assessmentMode?: string; unitActivityName?: string; classId?: string }): boolean {
+    if (item.assessmentMode === 'UNIT_ACTIVITY') return true;
+    if (item.unitActivityName && item.unitActivityName.trim().length > 0) return true;
+    if (typeof item.classId === 'string' && item.classId.startsWith('JUNIOR_HIGH_UA_')) return true;
+    return false;
+  }
+
+  function resolveUAActivityName(item: { unitActivityName?: string; assessmentGroupId?: string; classId?: string; subjectId?: string }): string {
+    if (item.unitActivityName && item.unitActivityName.trim()) return item.unitActivityName.trim();
+    const fromGroup = parseUAGroupId(item.assessmentGroupId || '') || parseUAGroupId(item.classId || '');
+    if (fromGroup?.unitActivityName) return fromGroup.unitActivityName;
+    return item.subjectId || 'UA';
+  }
+
+  function resolveUACategory(
+    item: { unitActivityCategory?: string; assessmentGroupId?: string; classId?: string; subjectId?: string },
+    activityName: string
+  ): string {
+    const explicit = canonicalUACategory(item.unitActivityCategory);
+    if (explicit) return explicit;
+    if (item.unitActivityCategory && item.unitActivityCategory.trim()) return item.unitActivityCategory.trim();
+
+    const fromGroup = parseUAGroupId(item.assessmentGroupId || '') || parseUAGroupId(item.classId || '');
+    if (fromGroup?.unitActivityCategory) {
+      const parsed = canonicalUACategory(fromGroup.unitActivityCategory);
+      if (parsed) return parsed;
+      if (fromGroup.unitActivityCategory.trim()) return fromGroup.unitActivityCategory.trim();
+    }
+
+    if (activityName && uaCategoryMap.has(activityName)) {
+      const fromMap = canonicalUACategory(uaCategoryMap.get(activityName));
+      if (fromMap) return fromMap;
+      const rawMap = uaCategoryMap.get(activityName);
+      if (rawMap && rawMap.trim()) return rawMap.trim();
+    }
+
+    if (activityName) {
+      const knownConfig = JH_UA_CATEGORIES_CONFIG.find(c =>
+        c.activities.some(act => lower(act) === lower(activityName))
+      );
+      if (knownConfig) return knownConfig.key;
+    }
+
+    const asCat = canonicalUACategory(activityName);
+    if (asCat) return asCat;
+
+    if (item.subjectId) {
+      const fromSubj = canonicalUACategory(item.subjectId);
+      if (fromSubj) return fromSubj;
+    }
+
+    return '';
+  }
+
+  function getUAColumnKey(category: string): string {
+    if (!category || !category.trim()) return UNCATEGORIZED_UA_KEY;
+    return `UA_CAT_${category.trim()}`;
+  }
+
+  function getUAColumnLabel(category: string): string {
+    if (!category || !category.trim()) return UNCATEGORIZED_UA_LABEL;
+    return `UA: ${category.trim()}`;
+  }
+
+  // 7. Determine columns: 13 regular subjects + 1 column per UA Category
   const regularColumns: JHDailyRecapColumn[] = JH_SUBJECT_CATALOG.map(s => ({
     key: `REG_${s.key}`,
     label: s.label,
     isUA: false
   }));
 
-  const allUaNames = new Set<string>(uaNamesFromEnrollment);
-  for (const f of classFormative) {
-    if (f.assessmentMode === 'UNIT_ACTIVITY' || f.unitActivityName) {
-      const name = f.unitActivityName || f.subjectId;
-      if (name) {
-        allUaNames.add(name);
-        if (f.unitActivityCategory) uaCategoryMap.set(name, f.unitActivityCategory);
-      }
+  // Official categories from config
+  const officialCategoryKeys = JH_UA_CATEGORIES_CONFIG.map(c => c.key);
+  const customCategories = new Set<string>();
+  let hasUncategorized = false;
+
+  for (const enr of classEnrollments) {
+    const actName = enr.normalizedUaName;
+    const cat = resolveUACategory({ unitActivityCategory: enr.category }, actName);
+    if (cat && !officialCategoryKeys.includes(cat)) {
+      customCategories.add(cat);
+    } else if (!cat && actName) {
+      hasUncategorized = true;
     }
   }
-  for (const t of classTasks) {
-    if (t.assessmentMode === 'UNIT_ACTIVITY' || t.unitActivityName) {
-      const name = t.unitActivityName || t.subjectId;
-      if (name) {
-        allUaNames.add(name);
-        if (t.unitActivityCategory) uaCategoryMap.set(name, t.unitActivityCategory);
+
+  for (const f of classFormative) {
+    if (isUnitActivityItem(f)) {
+      const actName = resolveUAActivityName(f);
+      const cat = resolveUACategory(f, actName);
+      if (cat && !officialCategoryKeys.includes(cat)) {
+        customCategories.add(cat);
+      } else if (!cat) {
+        hasUncategorized = true;
       }
     }
   }
 
-  const uaColumns: JHDailyRecapColumn[] = [...allUaNames].sort().map(name => ({
-    key: `UA_${name}`,
-    label: `UA: ${name}`,
+  for (const s of classSummative) {
+    if (isUnitActivityItem(s)) {
+      const actName = resolveUAActivityName(s);
+      const cat = resolveUACategory(s, actName);
+      if (cat && !officialCategoryKeys.includes(cat)) {
+        customCategories.add(cat);
+      } else if (!cat) {
+        hasUncategorized = true;
+      }
+    }
+  }
+
+  for (const t of classTasks) {
+    if (isUnitActivityItem(t)) {
+      const actName = resolveUAActivityName(t);
+      const cat = resolveUACategory(t, actName);
+      if (cat && !officialCategoryKeys.includes(cat)) {
+        customCategories.add(cat);
+      } else if (!cat) {
+        hasUncategorized = true;
+      }
+    }
+  }
+
+  const officialUAColumns: JHDailyRecapColumn[] = officialCategoryKeys.map(catKey => ({
+    key: getUAColumnKey(catKey),
+    label: getUAColumnLabel(catKey),
     isUA: true,
-    activityName: name,
-    category: uaCategoryMap.get(name) || ''
+    category: catKey
   }));
+
+  const customUAColumns: JHDailyRecapColumn[] = [...customCategories].sort().map(catKey => ({
+    key: getUAColumnKey(catKey),
+    label: getUAColumnLabel(catKey),
+    isUA: true,
+    category: catKey
+  }));
+
+  const uncategorizedColumn: JHDailyRecapColumn[] = hasUncategorized ? [{
+    key: UNCATEGORIZED_UA_KEY,
+    label: UNCATEGORIZED_UA_LABEL,
+    isUA: true,
+    category: 'Tanpa Kategori'
+  }] : [];
+
+  const uaColumns: JHDailyRecapColumn[] = [
+    ...officialUAColumns,
+    ...customUAColumns,
+    ...uncategorizedColumn
+  ];
 
   const columns: JHDailyRecapColumn[] = [...regularColumns, ...uaColumns];
 
-  function resolveColumnKey(item: { subjectId: string; assessmentMode?: string; unitActivityName?: string }): string {
-    if (item.assessmentMode === 'UNIT_ACTIVITY' || item.unitActivityName) {
-      const name = item.unitActivityName || item.subjectId;
-      return `UA_${name}`;
+  function resolveColumnKey(item: { subjectId: string; assessmentMode?: string; unitActivityName?: string; unitActivityCategory?: string; assessmentGroupId?: string; classId?: string }): string {
+    if (isUnitActivityItem(item)) {
+      const actName = resolveUAActivityName(item);
+      const cat = resolveUACategory(item, actName);
+      return getUAColumnKey(cat);
     }
     const cat = findCatalogEntry(item.subjectId);
     if (cat) return `REG_${cat.key}`;
@@ -700,6 +822,9 @@ export async function getJuniorHighDailyRecap(params: {
   const cellMap: Record<string, JHDailyRecapCellItem[]> = {};
 
   for (const f of classFormative) {
+    const isUA = isUnitActivityItem(f);
+    const actName = isUA ? resolveUAActivityName(f) : undefined;
+    const cat = isUA ? resolveUACategory(f, actName || '') : undefined;
     const colKey = resolveColumnKey(f);
     const cellKey = `${f.studentId}|${colKey}`;
     if (!cellMap[cellKey]) cellMap[cellKey] = [];
@@ -707,6 +832,8 @@ export async function getJuniorHighDailyRecap(params: {
     cellMap[cellKey].push({
       id: f.id,
       type: 'FORMATIVE',
+      unitActivityName: actName,
+      unitActivityCategory: cat,
       loId: f.loId,
       loCode: loInfo?.code || 'LO',
       loTitle: loInfo?.title || '',
@@ -726,12 +853,17 @@ export async function getJuniorHighDailyRecap(params: {
   }
 
   for (const s of classSummative) {
+    const isUA = isUnitActivityItem(s);
+    const actName = isUA ? resolveUAActivityName(s) : undefined;
+    const cat = isUA ? resolveUACategory(s, actName || '') : undefined;
     const colKey = resolveColumnKey(s);
     const cellKey = `${s.studentId}|${colKey}`;
     if (!cellMap[cellKey]) cellMap[cellKey] = [];
     cellMap[cellKey].push({
       id: s.id,
       type: 'SUMMATIVE',
+      unitActivityName: actName,
+      unitActivityCategory: cat,
       lgId: s.lgId,
       summativeScore: s.summativeScore,
       taskTitle: s.summativeTask,
@@ -744,18 +876,27 @@ export async function getJuniorHighDailyRecap(params: {
   }
 
   for (const t of classTasks) {
+    const isUA = isUnitActivityItem(t);
+    const actName = isUA ? resolveUAActivityName(t) : undefined;
+    const cat = isUA ? resolveUACategory(t, actName || '') : undefined;
     const colKey = resolveColumnKey(t);
     const loInfo = loMap.get(t.loId);
     for (const sId of t.studentIds || []) {
       if (!studentIds.has(sId)) continue;
       const cellKey = `${sId}|${colKey}`;
       const existing = cellMap[cellKey] || [];
-      const alreadyHasScore = existing.some(item => item.type === 'FORMATIVE' && item.loId === t.loId);
+      const alreadyHasScore = existing.some(item =>
+        item.type === 'FORMATIVE' &&
+        item.loId === t.loId &&
+        (!isUA || (item.unitActivityName || '') === (actName || ''))
+      );
       if (!alreadyHasScore) {
         if (!cellMap[cellKey]) cellMap[cellKey] = [];
         cellMap[cellKey].push({
           id: t.id,
           type: 'SHARED_TASK',
+          unitActivityName: actName,
+          unitActivityCategory: cat,
           loId: t.loId,
           loCode: loInfo?.code || 'LO',
           loTitle: loInfo?.title || '',
@@ -770,8 +911,29 @@ export async function getJuniorHighDailyRecap(params: {
     }
   }
 
+  // Sort items within each cell by activityName, then createdAt, then id
   for (const key of Object.keys(cellMap)) {
-    cellMap[key].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id));
+    cellMap[key].sort((a, b) =>
+      (a.unitActivityName || '').localeCompare(b.unitActivityName || '') ||
+      (a.createdAt || 0) - (b.createdAt || 0) ||
+      a.id.localeCompare(b.id)
+    );
+  }
+
+  // Build enrollment categories and activities map
+  const enrollmentCategories: Record<string, string[]> = {};
+  const enrollmentActivities: Record<string, string[]> = {};
+  for (const enr of classEnrollments) {
+    const actName = enr.normalizedUaName;
+    const cat = resolveUACategory({ unitActivityCategory: enr.category }, actName) || enr.category || 'Tanpa Kategori';
+    if (!enrollmentCategories[enr.studentId]) enrollmentCategories[enr.studentId] = [];
+    if (!enrollmentCategories[enr.studentId].includes(cat)) {
+      enrollmentCategories[enr.studentId].push(cat);
+    }
+    if (!enrollmentActivities[enr.studentId]) enrollmentActivities[enr.studentId] = [];
+    if (!enrollmentActivities[enr.studentId].includes(actName)) {
+      enrollmentActivities[enr.studentId].push(actName);
+    }
   }
 
   return {
@@ -780,6 +942,7 @@ export async function getJuniorHighDailyRecap(params: {
     students,
     columns,
     cellMap,
-    enrollmentSet: enrollmentMap
+    enrollmentSet: enrollmentCategories,
+    enrollmentActivities
   };
 }

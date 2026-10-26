@@ -270,18 +270,19 @@ export default function AssessmentBookDailyRecap({
           } else {
             const cellText = items
               .map(item => {
+                const prefix = col.isUA && item.unitActivityName ? `${item.unitActivityName} — ` : '';
                 if (item.type === 'FORMATIVE') {
-                  return `${item.loCode || 'LO'}: ${item.comprehensionLevel}`;
+                  return `${prefix}${item.loCode || 'LO'}: ${item.comprehensionLevel}`;
                 }
                 if (item.type === 'SUMMATIVE') {
-                  return `Sumatif: ${item.summativeScore}`;
+                  return `${prefix}Sumatif: ${item.summativeScore}`;
                 }
                 if (item.type === 'SHARED_TASK') {
-                  return `Tugas: ${item.taskTitle} (Belum dinilai)`;
+                  return `${prefix}Tugas: ${item.taskTitle || item.loCode || 'Tugas'} (Belum dinilai)`;
                 }
                 return '—';
               })
-              .join('; ');
+              .join('\n');
             studentRow.push(cellText);
           }
         });
@@ -294,7 +295,7 @@ export default function AssessmentBookDailyRecap({
         { wch: 6 },
         { wch: 18 },
         { wch: 30 },
-        ...columns.map(() => ({ wch: 22 }))
+        ...columns.map(col => ({ wch: col.isUA ? 35 : 22 }))
       ];
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, sheet, 'Rekap Harian');
@@ -570,14 +571,16 @@ export default function AssessmentBookDailyRecap({
                     <th
                       key={col.key}
                       title={col.label}
-                      className={`min-w-[140px] max-w-[180px] border-b border-r border-slate-200 px-3 py-2.5 text-center font-bold text-xs ${
-                        col.isUA ? 'bg-purple-50/40 text-purple-950' : 'bg-slate-50 text-slate-800'
+                      className={`border-b border-r border-slate-200 px-3 py-2.5 text-center font-bold text-xs ${
+                        col.isUA
+                          ? 'min-w-[190px] max-w-[260px] bg-purple-50/60 text-purple-950'
+                          : 'min-w-[140px] max-w-[180px] bg-slate-50 text-slate-800'
                       }`}
                     >
-                      <p className="truncate leading-tight">{col.label}</p>
-                      {col.category && (
-                        <span className="block text-[10px] font-normal text-purple-600 mt-0.5 truncate">
-                          {col.category}
+                      <p className="truncate leading-tight font-extrabold">{col.label}</p>
+                      {col.isUA && (
+                        <span className="block text-[10px] font-normal text-purple-700 mt-0.5">
+                          Kategori UA
                         </span>
                       )}
                     </th>
@@ -613,9 +616,8 @@ export default function AssessmentBookDailyRecap({
                       const cellKey = `${student.id}|${col.key}`;
                       const items = cellMap[cellKey] || [];
                       const isUACol = col.isUA;
-                      const studentEnrolledUas = enrollmentSet[student.id] || [];
-                      const isEnrolledInThisUA = !isUACol || studentEnrolledUas.includes(col.activityName || '');
-
+                      const studentEnrolledCategories = enrollmentSet[student.id] || [];
+                      const isEnrolled = !isUACol || studentEnrolledCategories.includes(col.category || '') || items.length > 0;
                       const hasItems = items.length > 0;
 
                       return (
@@ -632,33 +634,30 @@ export default function AssessmentBookDailyRecap({
                                 student,
                                 column: col,
                                 items,
-                                isEnrolled: isEnrolledInThisUA
+                                isEnrolled
                               })
                             }
                             aria-label={`Rincian ${col.label} untuk ${student.name}`}
-                            className="w-full min-h-[42px] rounded-lg p-1.5 transition-all hover:bg-slate-100/90 hover:shadow-xs flex flex-col items-center justify-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+                            className="w-full min-h-[46px] rounded-lg p-1.5 transition-all hover:bg-slate-100/90 hover:shadow-xs flex flex-col items-center justify-center gap-1 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
                           >
                             {!hasItems ? (
-                              !isEnrolledInThisUA ? (
-                                <span className="text-[10px] text-slate-400 font-medium italic" title="Bukan peserta aktivitas ini">
-                                  —
-                                </span>
-                              ) : (
-                                <span className="text-slate-300 font-bold" title="Tidak ada catatan asesmen pada tanggal ini">
-                                  —
-                                </span>
-                              )
+                              <span className="text-slate-300 font-bold" title={isEnrolled ? 'Tidak ada catatan asesmen pada tanggal ini' : 'Bukan peserta kategori ini'}>
+                                —
+                              </span>
                             ) : (
-                              <div className="flex flex-wrap items-center justify-center gap-1">
+                              <div className="flex flex-col items-center justify-center gap-1 w-full">
                                 {items.map(item => {
+                                  const uaPrefix = isUACol && item.unitActivityName ? `${item.unitActivityName} — ` : '';
                                   if (item.type === 'FORMATIVE') {
                                     return (
                                       <span
                                         key={item.id}
-                                        title={`${item.loCode || 'LO'}: ${item.comprehensionLevel} (${item.taskTitle || 'Tugas'})`}
-                                        className="inline-flex items-center gap-1 rounded bg-white px-1.5 py-0.5 text-[10px] font-bold border border-slate-200 shadow-2xs"
+                                        title={`${uaPrefix}${item.loCode || 'LO'}: ${item.comprehensionLevel}${item.taskTitle ? ` (${item.taskTitle})` : ''}`}
+                                        className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[10px] font-bold border border-slate-200 shadow-2xs whitespace-nowrap max-w-full"
                                       >
-                                        <span className="text-slate-700">{item.loCode || 'LO'}</span>
+                                        <span className="text-slate-800 font-bold truncate">
+                                          {uaPrefix}{item.loCode || 'LO'}:
+                                        </span>
                                         <FormativeBadge level={item.comprehensionLevel} />
                                       </span>
                                     );
@@ -667,12 +666,13 @@ export default function AssessmentBookDailyRecap({
                                     return (
                                       <span
                                         key={item.id}
-                                        title={`Sumatif: ${item.summativeScore} (${item.taskTitle || ''})`}
-                                        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold border ${sumStyle(
+                                        title={`${uaPrefix}Sumatif: ${item.summativeScore}${item.taskTitle ? ` (${item.taskTitle})` : ''}`}
+                                        className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold border ${sumStyle(
                                           item.summativeScore || ''
-                                        )}`}
+                                        )} whitespace-nowrap max-w-full`}
                                       >
-                                        Sum: {item.summativeScore}
+                                        <span className="truncate">{uaPrefix}Sum:</span>
+                                        <span>{item.summativeScore}</span>
                                       </span>
                                     );
                                   }
@@ -680,11 +680,13 @@ export default function AssessmentBookDailyRecap({
                                     return (
                                       <span
                                         key={item.id}
-                                        title={`Tugas bersama terjadwal: ${item.taskTitle} (Belum dinilai)`}
-                                        className="inline-flex items-center gap-1 rounded bg-blue-50/90 text-blue-800 border border-dashed border-blue-300 px-1.5 py-0.5 text-[9px] font-semibold"
+                                        title={`${uaPrefix}Tugas bersama terjadwal: ${item.taskTitle} (Belum dinilai)`}
+                                        className="inline-flex items-center gap-1 rounded bg-blue-50/90 text-blue-800 border border-dashed border-blue-300 px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap max-w-full"
                                       >
                                         <Clock size={10} className="text-blue-600 shrink-0" />
-                                        <span className="truncate max-w-[80px]">{item.taskTitle}</span>
+                                        <span className="truncate max-w-[140px]">
+                                          {uaPrefix}{item.taskTitle || item.loCode || 'Tugas'} (Belum dinilai)
+                                        </span>
                                       </span>
                                     );
                                   }
@@ -739,9 +741,9 @@ export default function AssessmentBookDailyRecap({
             </div>
             {detailCell.column.isUA && (
               <div className="flex justify-between items-center pt-1 border-t border-slate-200/60">
-                <span className="text-slate-500 font-semibold">Status Kepesertaan UA:</span>
+                <span className="text-slate-500 font-semibold">Kepesertaan Kategori UA:</span>
                 <span className={`font-bold ${detailCell.isEnrolled ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {detailCell.isEnrolled ? 'Terdaftar Aktif' : 'Bukan Peserta Terdaftar'}
+                  {detailCell.isEnrolled ? 'Terdaftar Aktif' : 'Bukan Peserta Kategori Ini'}
                 </span>
               </div>
             )}
@@ -761,6 +763,21 @@ export default function AssessmentBookDailyRecap({
 
             {detailCell.items.map(item => (
               <article key={item.id} className="p-4 rounded-xl border border-slate-200 space-y-3 bg-white shadow-2xs">
+                {/* UA Activity Name Badge */}
+                {detailCell.column.isUA && item.unitActivityName && (
+                  <div className="flex items-center gap-2 pb-1">
+                    <span className="px-2.5 py-1 rounded-lg bg-purple-100 text-purple-900 font-extrabold text-xs inline-flex items-center gap-1.5 shadow-2xs">
+                      <Layers size={13} className="text-purple-700" />
+                      Aktivitas: {item.unitActivityName}
+                    </span>
+                    {item.unitActivityCategory && (
+                      <span className="text-[11px] font-semibold text-purple-700">
+                        ({item.unitActivityCategory})
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {/* Type & Badge */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
                   <div className="flex items-center gap-2">
