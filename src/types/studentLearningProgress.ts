@@ -39,16 +39,52 @@ export interface StudentProgressGoal {
   los: StudentProgressLO[];
   summative: StudentProgressSum | null;
 }
+export interface StudentDailyEntryItem {
+  id: string;
+  type: 'FORMATIVE' | 'SUMMATIVE' | 'SHARED_TASK';
+  date: string;
+  isUA: boolean;
+  subjectKey: string;
+  subjectLabel: string;
+  unitActivityName?: string;
+  unitActivityCategory?: string;
+  unitActivityCategoryLabel?: string;
+  lgId: string;
+  lgCode?: string;
+  lgText?: string;
+  loId?: string;
+  loCode?: string;
+  loTitle?: string;
+  score?: string;
+  task: string;
+  nextAction?: string;
+  teacherName?: string;
+  createdAt?: number;
+  correctedAt?: number;
+  history?: StudentProgressResult[];
+}
+export interface StudentDailySection {
+  key: string;
+  title: string;
+  isUA: boolean;
+  category?: string;
+  categoryLabel?: string;
+  items: StudentDailyEntryItem[];
+}
 export interface StudentProgressPayload {
   version: 1;
   student: StudentProgressIdentity;
   academicYear: string;
   semester: string;
   availableYears: string[];
+  availableDates: string[];
+  latestDateWithRecords: string | null;
+  selectedDate: string;
   subjects: StudentProgressSubject[];
   activities: StudentProgressActivity[];
+  dailySections: StudentDailySection[];
   warnings: string[];
   feedbackPolicy: 'INTERNAL_NOTES_NOT_SHARED';
-  selected: { key: string; label: string; kind: 'SUBJECT' | 'UNIT_ACTIVITY' } | null;
-  goals: StudentProgressGoal[] | null;
+  selected?: { key: string; label: string; kind: 'SUBJECT' | 'UNIT_ACTIVITY' } | null;
+  goals?: StudentProgressGoal[] | null;
 }

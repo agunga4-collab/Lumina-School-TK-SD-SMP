@@ -11,10 +11,24 @@ import type { LGBackupStatus, LGBackupSummary, LGBackupLog } from "./src/types";
 import { resolveAcademicYearAndPeriod } from "./src/utils/academicYearResolver";
 import crypto from "crypto";
 import { uploadPlanPhoto, getPlanPhotoBase64 } from "./src/lib/googleDrive";
+import { handleStudentLearningProgress } from "./server/studentLearningProgress.server";
+import { handleStudentLpuLevels, isStudentLpuLevelsRequest } from "./server/studentLpuLevels.server";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+app.use((req, res, next) => {
+  if (isStudentLpuLevelsRequest(req)) {
+    void handleStudentLpuLevels(req, res);
+    return;
+  }
+  next();
+});
+
+app.all("/api/student-learning-progress", (req, res) => {
+  void handleStudentLearningProgress(req, res);
+});
 
 // --- Firebase Admin Initialization ---
 try {
