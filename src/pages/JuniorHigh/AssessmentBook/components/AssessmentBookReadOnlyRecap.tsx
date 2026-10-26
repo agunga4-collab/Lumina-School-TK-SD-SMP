@@ -1,8 +1,9 @@
 import * as React from 'react';
 import {
   BookOpen, Layers, BarChart3, Lock, RefreshCw, Search,
-  ChevronDown, ChevronRight, Info, X, Loader2, AlertCircle, Check
+  ChevronDown, ChevronRight, Info, X, Loader2, AlertCircle, Check, Calendar
 } from 'lucide-react';
+import AssessmentBookDailyRecap from './AssessmentBookDailyRecap';
 import { useAcademicYear } from '../../../../context/AcademicYearContext';
 import type {
   Class as SchoolClass, Student, LearningGoal,
@@ -172,6 +173,7 @@ export default function AssessmentBookReadOnlyRecap({
   const { activeYear } = useAcademicYear();
   const initialCatalog = findCatalogEntry(initialSubject);
   const initialUACategory = initialCatalog ? UA_SUBJECT_CATEGORIES[initialCatalog.key] || '' : '';
+  const [recapSubMode, setRecapSubMode] = React.useState<'PER_SUBJECT' | 'DAILY'>('PER_SUBJECT');
   const [year, setYear] = React.useState(initialYear || activeYear || '');
   const [semester, setSemester] = React.useState(initialSemester);
   const [classId, setClassId] = React.useState(initialClassId);
@@ -335,13 +337,54 @@ export default function AssessmentBookReadOnlyRecap({
         </div>
       </header>
       <main className="mx-auto max-w-7xl space-y-4 p-4 sm:p-6">
-        <nav aria-label="Mode Assessment Book" className="flex w-fit max-w-full flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1">
-          <button type="button" className={`${button} border-transparent text-xs`} onClick={() => onSelectInput('SUBJECT')}><BookOpen size={14} />Mata Pelajaran</button>
-          <button type="button" className={`${button} border-transparent text-xs`} onClick={() => onSelectInput('UNIT_ACTIVITY')}><Layers size={14} />Unit Aktivitas</button>
-          <button type="button" aria-current="page" className="inline-flex items-center gap-1.5 rounded-xl bg-purple-700 px-4 py-2 text-xs font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"><BarChart3 size={14} />Rekap</button>
-        </nav>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <nav aria-label="Mode Assessment Book" className="flex w-fit max-w-full flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1">
+            <button type="button" className={`${button} border-transparent text-xs`} onClick={() => onSelectInput('SUBJECT')}><BookOpen size={14} />Mata Pelajaran</button>
+            <button type="button" className={`${button} border-transparent text-xs`} onClick={() => onSelectInput('UNIT_ACTIVITY')}><Layers size={14} />Unit Aktivitas</button>
+            <button type="button" aria-current="page" className="inline-flex items-center gap-1.5 rounded-xl bg-purple-700 px-4 py-2 text-xs font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"><BarChart3 size={14} />Rekap</button>
+          </nav>
 
-        <section aria-label="Kelas dan periode rekap" className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="inline-flex items-center rounded-xl border border-slate-200 bg-white p-1 shadow-2xs" role="tablist" aria-label="Tipe Rekapitulasi">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={recapSubMode === 'PER_SUBJECT'}
+              onClick={() => setRecapSubMode('PER_SUBJECT')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                recapSubMode === 'PER_SUBJECT'
+                  ? 'bg-purple-700 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <BarChart3 size={13} />
+              Per Bidang Studi
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={recapSubMode === 'DAILY'}
+              onClick={() => setRecapSubMode('DAILY')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                recapSubMode === 'DAILY'
+                  ? 'bg-purple-700 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <Calendar size={13} />
+              Harian
+            </button>
+          </div>
+        </div>
+
+        {recapSubMode === 'DAILY' ? (
+          <AssessmentBookDailyRecap
+            initialYear={year}
+            initialSemester={semester}
+            initialClassId={classId}
+          />
+        ) : (
+          <>
+            <section aria-label="Kelas dan periode rekap" className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Kelas"><select className={control} value={classId} disabled={classBusy} onChange={event => setClassId(event.target.value)}><option value="">Pilih kelas</option>{availableClasses.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
             <Field label="Tahun ajaran"><select className={control} value={year} disabled={classBusy} onChange={event => { setYear(event.target.value); setClassId(''); setActivityId(''); }}><option value="">Pilih tahun ajaran</option>{years.map(value => <option key={value} value={value}>{value}</option>)}</select></Field>
@@ -407,6 +450,8 @@ export default function AssessmentBookReadOnlyRecap({
                 </table>
               </div>
             )}
+          </>
+        )}
           </>
         )}
       </main>

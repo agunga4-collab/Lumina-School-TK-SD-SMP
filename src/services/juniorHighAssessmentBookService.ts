@@ -1,7 +1,7 @@
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, writeBatch, documentId } from 'firebase/firestore';
 import { db, getActiveStudents } from '../lib/firebase';
 import { AssessmentBookOptions, DEFAULT_ASSESSMENT_BOOK_OPTIONS, JHAssessmentLO, JHFormativeEntry, JHSummativeEntry, JHFormativeLevel, JHAssessmentUAContext, LearningGoal, ReportConfig } from '../types';
-import { isSameJHSubject, getJHSubjectLegacyValue } from '../constants/juniorHighSubjectCatalog';
+import { isSameJHSubject, getJHSubjectLegacyValue, JH_SUBJECT_CATALOG, findCatalogEntry, normalizeSubjectName } from '../constants/juniorHighSubjectCatalog';
 
 export function getTodayWIB(): string {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -496,3 +496,290 @@ export async function saveSummativeEntry(entry: SummativeInput): Promise<string>
   return ref.id;
 }
 export async function hardDeleteSummativeEntry(entryId: string): Promise<void> { await deleteDoc(doc(db, 'jh_ab_summative_entries', entryId)); }
+
+export function formatFullDayDateWIB(dateStr: string): string {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return '-';
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const dt = new Date(year, month - 1, day, 12, 0, 0);
+  return dt.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+
+export function shiftDateWIB(dateStr: string, deltaDays: number): string {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return getTodayWIB();
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const dt = new Date(year, month - 1, day + deltaDays, 12, 0, 0);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const d = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export interface JHDailyRecapColumn {
+  key: string;
+  label: string;
+  isUA: boolean;
+  category?: string;
+  activityName?: string;
+}
+
+export interface JHDailyRecapCellItem {
+  id: string;
+  type: 'FORMATIVE' | 'SUMMATIVE' | 'SHARED_TASK';
+  loId?: string;
+  loCode?: string;
+  loTitle?: string;
+  lgId?: string;
+  comprehensionLevel?: JHFormativeLevel;
+  summativeScore?: string;
+  taskTitle?: string;
+  nextAction?: string;
+  notes?: string;
+  teacherId: string;
+  teacherName: string;
+  date: string;
+  createdAt?: number;
+  correctedAt?: number;
+  correctedByName?: string;
+  correctionReason?: string;
+}
+
+export interface JHDailyRecapData {
+  scope: string;
+  date: string;
+  students: any[];
+  columns: JHDailyRecapColumn[];
+  cellMap: Record<string, JHDailyRecapCellItem[]>;
+  enrollmentSet: Record<string, string[]>;
+}
+
+export async function getJuniorHighDailyRecap(params: {
+  classId: string;
+  academicYear: string;
+  semester: string;
+  date: string;
+}): Promise<JHDailyRecapData> {
+  const scope = JSON.stringify([params.classId, params.academicYear, params.semester, params.date]);
+  if (!params.classId || !params.academicYear || !params.semester || !params.date) {
+    return { scope, date: params.date, students: [], columns: [], cellMap: {}, enrollmentSet: {} };
+  }
+
+  // 1. Fetch active students of the class
+  const roster = await getActiveStudents(params.classId, params.academicYear);
+  const students = (roster || []).map(s => ({ ...s, className: s.className || params.classId })).sort(
+    (a, b) => (a.attendanceNumber ?? a.noAbsen ?? 999) - (b.attendanceNumber ?? b.noAbsen ?? 999) ||
+    a.name.localeCompare(b.name, 'id')
+  );
+  if (!students.length) {
+    return { scope, date: params.date, students: [], columns: [], cellMap: {}, enrollmentSet: {} };
+  }
+  const studentIds = new Set(students.map(s => s.id));
+
+  // 2. Fetch UA enrollments for students in this class
+  const allEnrollments = await readEnrollments(params.academicYear, params.semester);
+  const classEnrollments = allEnrollments.filter(e =>
+    e.status === 'CONFIRMED' &&
+    (e.classId === params.classId || studentIds.has(e.studentId)) &&
+    e.normalizedUaName
+  );
+  const enrollmentMap: Record<string, string[]> = {};
+  const uaNamesFromEnrollment = new Set<string>();
+  const uaCategoryMap = new Map<string, string>();
+  for (const enr of classEnrollments) {
+    if (!enrollmentMap[enr.studentId]) enrollmentMap[enr.studentId] = [];
+    if (!enrollmentMap[enr.studentId].includes(enr.normalizedUaName)) {
+      enrollmentMap[enr.studentId].push(enr.normalizedUaName);
+    }
+    uaNamesFromEnrollment.add(enr.normalizedUaName);
+    if (enr.category) uaCategoryMap.set(enr.normalizedUaName, enr.category);
+  }
+
+  // 3. Query formative entries for this date
+  const formativeQuery = query(
+    collection(db, 'jh_ab_formative_entries'),
+    where('academicYear', '==', params.academicYear),
+    where('semester', '==', params.semester),
+    where('date', '==', params.date)
+  );
+  const formativeSnap = await getDocs(formativeQuery);
+  const classFormative = formativeSnap.docs
+    .map(d => ({ ...d.data(), id: d.id } as JHFormativeEntry))
+    .filter(f => studentIds.has(f.studentId) || f.classId === params.classId);
+
+  // 4. Query summative entries for this date
+  const summativeQuery = query(
+    collection(db, 'jh_ab_summative_entries'),
+    where('academicYear', '==', params.academicYear),
+    where('semester', '==', params.semester),
+    where('date', '==', params.date)
+  );
+  const summativeSnap = await getDocs(summativeQuery);
+  const classSummative = summativeSnap.docs
+    .map(d => ({ ...d.data(), id: d.id } as JHSummativeEntry))
+    .filter(s => studentIds.has(s.studentId) || s.classId === params.classId);
+
+  // 5. Query shared tasks for this date
+  const taskQuery = query(
+    collection(db, 'jh_ab_shared_tasks'),
+    where('academicYear', '==', params.academicYear),
+    where('semester', '==', params.semester),
+    where('date', '==', params.date)
+  );
+  const taskSnap = await getDocs(taskQuery);
+  const classTasks = taskSnap.docs
+    .map(d => ({ ...d.data(), id: d.id } as JHSharedFormativeTask))
+    .filter(t => t.classId === params.classId || t.studentIds?.some(id => studentIds.has(id)));
+
+  // 6. Collect unique loIds and fetch LO details
+  const uniqueLoIds = [...new Set([
+    ...classFormative.map(f => f.loId),
+    ...classTasks.map(t => t.loId)
+  ].filter(Boolean))];
+  const loMap = new Map<string, { code: string; title: string }>();
+  for (let i = 0; i < uniqueLoIds.length; i += 30) {
+    const chunk = uniqueLoIds.slice(i, i + 30);
+    const snap = await getDocs(query(collection(db, 'jh_ab_los'), where(documentId(), 'in', chunk)));
+    snap.docs.forEach(d => {
+      const data = d.data();
+      loMap.set(d.id, { code: data.code || 'LO', title: data.title || '' });
+    });
+  }
+
+  // 7. Determine columns
+  const regularColumns: JHDailyRecapColumn[] = JH_SUBJECT_CATALOG.map(s => ({
+    key: `REG_${s.key}`,
+    label: s.label,
+    isUA: false
+  }));
+
+  const allUaNames = new Set<string>(uaNamesFromEnrollment);
+  for (const f of classFormative) {
+    if (f.assessmentMode === 'UNIT_ACTIVITY' || f.unitActivityName) {
+      const name = f.unitActivityName || f.subjectId;
+      if (name) {
+        allUaNames.add(name);
+        if (f.unitActivityCategory) uaCategoryMap.set(name, f.unitActivityCategory);
+      }
+    }
+  }
+  for (const t of classTasks) {
+    if (t.assessmentMode === 'UNIT_ACTIVITY' || t.unitActivityName) {
+      const name = t.unitActivityName || t.subjectId;
+      if (name) {
+        allUaNames.add(name);
+        if (t.unitActivityCategory) uaCategoryMap.set(name, t.unitActivityCategory);
+      }
+    }
+  }
+
+  const uaColumns: JHDailyRecapColumn[] = [...allUaNames].sort().map(name => ({
+    key: `UA_${name}`,
+    label: `UA: ${name}`,
+    isUA: true,
+    activityName: name,
+    category: uaCategoryMap.get(name) || ''
+  }));
+
+  const columns: JHDailyRecapColumn[] = [...regularColumns, ...uaColumns];
+
+  function resolveColumnKey(item: { subjectId: string; assessmentMode?: string; unitActivityName?: string }): string {
+    if (item.assessmentMode === 'UNIT_ACTIVITY' || item.unitActivityName) {
+      const name = item.unitActivityName || item.subjectId;
+      return `UA_${name}`;
+    }
+    const cat = findCatalogEntry(item.subjectId);
+    if (cat) return `REG_${cat.key}`;
+    return `REG_${normalizeSubjectName(item.subjectId)}`;
+  }
+
+  // 8. Populate cellMap
+  const cellMap: Record<string, JHDailyRecapCellItem[]> = {};
+
+  for (const f of classFormative) {
+    const colKey = resolveColumnKey(f);
+    const cellKey = `${f.studentId}|${colKey}`;
+    if (!cellMap[cellKey]) cellMap[cellKey] = [];
+    const loInfo = loMap.get(f.loId);
+    cellMap[cellKey].push({
+      id: f.id,
+      type: 'FORMATIVE',
+      loId: f.loId,
+      loCode: loInfo?.code || 'LO',
+      loTitle: loInfo?.title || '',
+      lgId: f.lgId,
+      comprehensionLevel: f.comprehensionLevel,
+      taskTitle: f.formativeTask,
+      nextAction: f.nextAction,
+      notes: f.notes,
+      teacherId: f.teacherId,
+      teacherName: f.teacherName,
+      date: f.date,
+      createdAt: f.createdAt,
+      correctedAt: f.correctedAt,
+      correctedByName: f.correctedByName,
+      correctionReason: f.correctionReason
+    });
+  }
+
+  for (const s of classSummative) {
+    const colKey = resolveColumnKey(s);
+    const cellKey = `${s.studentId}|${colKey}`;
+    if (!cellMap[cellKey]) cellMap[cellKey] = [];
+    cellMap[cellKey].push({
+      id: s.id,
+      type: 'SUMMATIVE',
+      lgId: s.lgId,
+      summativeScore: s.summativeScore,
+      taskTitle: s.summativeTask,
+      notes: s.notes,
+      teacherId: s.teacherId,
+      teacherName: s.teacherName,
+      date: s.date,
+      createdAt: s.createdAt
+    });
+  }
+
+  for (const t of classTasks) {
+    const colKey = resolveColumnKey(t);
+    const loInfo = loMap.get(t.loId);
+    for (const sId of t.studentIds || []) {
+      if (!studentIds.has(sId)) continue;
+      const cellKey = `${sId}|${colKey}`;
+      const existing = cellMap[cellKey] || [];
+      const alreadyHasScore = existing.some(item => item.type === 'FORMATIVE' && item.loId === t.loId);
+      if (!alreadyHasScore) {
+        if (!cellMap[cellKey]) cellMap[cellKey] = [];
+        cellMap[cellKey].push({
+          id: t.id,
+          type: 'SHARED_TASK',
+          loId: t.loId,
+          loCode: loInfo?.code || 'LO',
+          loTitle: loInfo?.title || '',
+          lgId: t.lgId,
+          taskTitle: t.formativeTask,
+          teacherId: t.teacherId,
+          teacherName: t.teacherName,
+          date: t.date,
+          createdAt: t.createdAt
+        });
+      }
+    }
+  }
+
+  for (const key of Object.keys(cellMap)) {
+    cellMap[key].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id));
+  }
+
+  return {
+    scope,
+    date: params.date,
+    students,
+    columns,
+    cellMap,
+    enrollmentSet: enrollmentMap
+  };
+}
