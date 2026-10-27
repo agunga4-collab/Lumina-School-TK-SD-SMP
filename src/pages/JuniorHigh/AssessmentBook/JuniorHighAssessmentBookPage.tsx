@@ -895,7 +895,24 @@ export default function JuniorHighAssessmentBookPage() {
       </main>
     {isSuperAdmin && <AssessmentBookSettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} initialOptions={options} onSaved={setOptions} />}
     {!isReadOnly && proposal.open && <ProposeLGModal isOpen onClose={() => setProposal({ open: false })} grade={isUA ? 'ALL' : regularGrade || '7'} subject={effectiveSubject} academicYear={year} teacherId={teacherId} teacherName={teacherName} parentLG={proposal.parentLG} existingLG={proposal.existingLG} onSuccess={() => { setProposal({ open: false }); void loadLearningGoals(); }} />}
-    {activeLG && manageOpen && !isReadOnly && <ManageLOModal key={scopeKey} isOpen onClose={() => setManageOpen(false)} lg={activeLG} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} los={los} teacherUid={teacherId} teacherName={teacherName} onRefresh={loadAssessmentData} />}
+    {activeLG && manageOpen && !isReadOnly && (
+      <ManageLOModal
+        key={scopeKey}
+        isOpen
+        onClose={() => setManageOpen(false)}
+        lg={activeLG}
+        classId={effectiveClassId}
+        subjectId={effectiveSubject}
+        academicYear={year}
+        semester={semester}
+        los={los}
+        teacherUid={teacherId}
+        teacherName={teacherName}
+        onRefresh={loadAssessmentData}
+        classes={classes}
+        isUAMode={isUA}
+      />
+    )}
     {bulkLO && !isReadOnly && (isUA ? <UASessionModal key={`${scopeKey}|${bulkLO.id}`} students={students as UAStudent[]} lo={bulkLO} scope={{ classId: effectiveClassId, subjectId: effectiveSubject, academicYear: year, semester }} options={options} teacherId={teacherId} teacherName={teacherName} onClose={() => setBulkLO(null)} onSaved={loadAssessmentData} /> : <BulkFormativeModal isOpen onClose={() => setBulkLO(null)} lo={bulkLO} students={students} classId={classId} subjectId={subject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} onSuccess={loadAssessmentData} />)}
     {sharedTaskLO && !isReadOnly && <SharedFormativeTaskModal key={`${scopeKey}|task|${sharedTaskLO.id}`} lo={sharedTaskLO} students={students} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} onClose={() => setSharedTaskLO(null)} onSaved={loadAssessmentData} />}
     {individual && <FormativeAssessmentModal key={`${scopeKey}|${individual.student.id}|${individual.lo.id}`} isOpen onClose={() => setIndividual(null)} student={individual.student} lo={individual.lo} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} historyEntries={formative.filter(entry => entry.studentId === individual.student.id && entry.loId === individual.lo.id)} teacherId={teacherId} teacherName={teacherName} isSuperAdmin={isSuperAdmin} isReadOnly={isReadOnly} onSaved={loadAssessmentData} {...{ ...context, isUAMode: isUA }} />}

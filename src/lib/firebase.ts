@@ -481,14 +481,23 @@ export async function getLearningGoals(filters?: {
     // or build a clean query.
     if (filters) {
       if (filters.unitId) q = query(q, where('unitId', '==', filters.unitId));
-      if (filters.grade) q = query(q, where('grade', '==', filters.grade));
+      if (filters.grade && filters.unitId !== 'JUNIOR_HIGH') q = query(q, where('grade', '==', filters.grade));
       if (filters.subject) q = query(q, where('subject', '==', filters.subject));
       if (filters.academicYear) q = query(q, where('academicYear', '==', filters.academicYear));
       if (filters.isActive !== undefined) q = query(q, where('isActive', '==', filters.isActive));
     }
     
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LearningGoal));
+    let list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LearningGoal));
+    if (filters?.grade && filters.unitId === 'JUNIOR_HIGH') {
+      list = list.filter(lg => {
+        const grades = Array.isArray(lg.grades) && lg.grades.length > 0
+          ? lg.grades.map(String)
+          : String(lg.grade || '').split(/[,/]/).map(g => g.trim()).filter(Boolean);
+        return grades.includes(String(filters.grade).trim());
+      });
+    }
+    return list;
   } catch (err: any) {
     handleFirestoreError(err, 'list', 'learning_goals');
   }
@@ -496,16 +505,26 @@ export async function getLearningGoals(filters?: {
 
 export async function addLearningGoal(lg: Omit<LearningGoal, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
   try {
-    // Check for duplicates (unitId + grade + subject + goalText)
+    const lgGrades = Array.isArray(lg.grades) && lg.grades.length > 0
+      ? lg.grades.map(String)
+      : String(lg.grade || '').split(/[,/]/).map(g => g.trim()).filter(Boolean);
+
+    // Check for duplicates (unitId + grade overlap + subject + goalText)
     const q = query(
       collection(db, 'learning_goals'),
       where('unitId', '==', lg.unitId),
-      where('grade', '==', lg.grade),
       where('subject', '==', lg.subject),
       where('goalText', '==', lg.goalText)
     );
     const dupSnapshot = await getDocs(q);
-    if (!dupSnapshot.empty) {
+    const isDup = dupSnapshot.docs.some(d => {
+      const data = d.data();
+      const existingGrades = Array.isArray(data.grades) && data.grades.length > 0
+        ? data.grades.map(String)
+        : String(data.grade || '').split(/[,/]/).map((g: string) => g.trim()).filter(Boolean);
+      return lgGrades.some(g => existingGrades.includes(g));
+    });
+    if (isDup) {
       throw new Error("Tujuan pembelajaran (Learning Goal) ini sudah ada untuk unit, kelas, dan mata pelajaran yang sama.");
     }
 
@@ -513,6 +532,7 @@ export async function addLearningGoal(lg: Omit<LearningGoal, 'id' | 'createdAt' 
     const now = Date.now();
     await setDoc(docRef, {
       ...lg,
+      grades: lgGrades,
       id: docRef.id,
       createdAt: now,
       updatedAt: now

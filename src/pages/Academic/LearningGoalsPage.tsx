@@ -16,6 +16,12 @@ import { LearningGoal, User, UnitType } from '../../types';
 import { cn } from '../../lib/utils';
 import { ACADEMIC_SUBJECTS, ACADEMIC_GRADES, ACADEMIC_YEARS } from '../../constants';
 import {
+  getLGGrades,
+  isLGForGrade,
+  formatLGGradesLabel,
+  countActiveAssessmentsForLGInGrades
+} from '../../services/juniorHighAssessmentBookService';
+import {
   JH_SUBJECT_CATALOG,
   getJHSubjectLabel,
   findCatalogEntry,
@@ -54,6 +60,8 @@ export default function LearningGoalsPage() {
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [modalSubjectKey, setModalSubjectKey] = React.useState<string>('');
   const [modalCustomSubject, setModalCustomSubject] = React.useState<string>('');
+  const [selectedGrades, setSelectedGrades] = React.useState<string[]>(['7']);
+  const [originalGrades, setOriginalGrades] = React.useState<string[]>([]);
 
   const [formData, setFormData] = React.useState({
     unitId: (isJHPortal ? 'JUNIOR_HIGH' : (currentUser.role === 'SUPER_ADMIN' ? 'ELEMENTARY' : activeUnit || 'ELEMENTARY')) as any,
@@ -131,10 +139,12 @@ export default function LearningGoalsPage() {
     return Array.from(extra);
   }, [effectiveFilterUnit, lgs]);
 
-  const filteredLgs = lgs.filter(lg => 
-    lg.goalText.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    lg.code.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredLgs = lgs.filter(lg => {
+    const matchesSearch = lg.goalText.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      lg.code.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesGrade = filterGrade === 'ALL' || isLGForGrade(lg, filterGrade);
+    return matchesSearch && matchesGrade;
+  });
 
   const handleCreateOrUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,18 +158,51 @@ export default function LearningGoalsPage() {
       }
     }
 
-    if (!formData.unitId || !formData.grade || !finalSubject || !formData.goalText) return;
+    let finalGrades: string[] = [];
+    let finalGrade = '';
+    if (formData.unitId === 'JUNIOR_HIGH') {
+      if (selectedGrades.length === 0) {
+        toast.warning('Pilih minimal satu kelas (grade 7, 8, atau 9) untuk Learning Goal.');
+        return;
+      }
+      finalGrades = [...selectedGrades].sort();
+      finalGrade = finalGrades.join(', ');
+    } else {
+      if (!formData.grade) return;
+      finalGrade = formData.grade;
+      finalGrades = [formData.grade];
+    }
+
+    if (!formData.unitId || !finalGrade || !finalSubject || !formData.goalText) return;
     
     setFormLoading(true);
     try {
       if (editingId) {
+        if (formData.unitId === 'JUNIOR_HIGH' && originalGrades.length > 0) {
+          const removed = originalGrades.filter(g => !finalGrades.includes(g));
+          if (removed.length > 0) {
+            const activeCount = await countActiveAssessmentsForLGInGrades(editingId, removed, formData.academicYear);
+            if (activeCount > 0) {
+              const confirmed = window.confirm(
+                `Peringatan: Grade ${removed.join(', ')} akan dihapus dari cakupan LG ini, namun terdapat ${activeCount} LO aktif pada kelas tersebut. Menghapus grade ini akan memutus akses kelas terhadap LG ini. Apakah Anda yakin ingin melanjutkan?`
+              );
+              if (!confirmed) {
+                setFormLoading(false);
+                return;
+              }
+            }
+          }
+        }
+
         await updateLearningGoal(editingId, {
+          grade: finalGrade,
+          grades: finalGrades,
           strand: formData.strand,
           goalText: formData.goalText,
           isActive: formData.isActive
         });
+        toast.success('Learning Goal berhasil diperbarui.');
       } else {
-        // Generate Code: LG-{SUBJECT_CODE}-{GRADE}-{INCREMENT}
         let subjectCode = 'UNK';
         if (formData.unitId === 'JUNIOR_HIGH') {
           const entry = findCatalogEntry(finalSubject);
@@ -172,20 +215,26 @@ export default function LearningGoalsPage() {
           const subjectsList = ACADEMIC_SUBJECTS[formData.unitId as 'ELEMENTARY' | 'JUNIOR_HIGH'];
           subjectCode = subjectsList?.find(s => s.name === finalSubject)?.code || 'UNK';
         }
-        const count = await getLearningGoalCountBySubject(finalSubject, formData.grade);
+        const count = await getLearningGoalCountBySubject(finalSubject, finalGrades[0]);
         const increment = String(count + 1).padStart(3, '0');
-        const code = `LG-${subjectCode}-${formData.grade}-${increment}`;
+        const gradesSegment = finalGrades.join('-');
+        const code = `LG-${subjectCode}-${gradesSegment}-${increment}`;
 
         await addLearningGoal({
           ...formData,
+          grade: finalGrade,
+          grades: finalGrades,
           subject: finalSubject,
           code,
           createdBy: currentUser.email,
           unitId: formData.unitId as any
         });
+        toast.success('Learning Goal baru berhasil ditambahkan.');
       }
       setIsModalOpen(false);
       setEditingId(null);
+      setSelectedGrades(['7']);
+      setOriginalGrades([]);
       setFormData({
         ...formData,
         strand: '',
@@ -299,6 +348,8 @@ export default function LearningGoalsPage() {
               });
               setModalSubjectKey('');
               setModalCustomSubject('');
+              setSelectedGrades(['7']);
+              setOriginalGrades([]);
               setIsModalOpen(true);
             }}
             className="group flex items-center gap-3 px-8 py-4 bg-[#002366] text-white rounded-[1.5rem] font-bold shadow-xl shadow-blue-100 hover:scale-[1.02] active:scale-95 transition-all text-sm uppercase tracking-widest"
@@ -437,7 +488,14 @@ export default function LearningGoalsPage() {
                   <span className="px-3 py-1 bg-gray-50 text-gray-500 rounded-lg text-[10px] font-black uppercase tracking-widest">
                     {lg.unitId === 'JUNIOR_HIGH' ? getJHSubjectLabel(lg.subject) : lg.subject}
                   </span>
-                  <span className="px-3 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase tracking-widest">Kelas {lg.grade}</span>
+                  <span className={cn(
+                    "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border",
+                    getLGGrades(lg).length > 1
+                      ? "bg-purple-50 text-purple-700 border-purple-200"
+                      : "bg-emerald-50 text-emerald-600 border-emerald-200"
+                  )}>
+                    {formatLGGradesLabel(lg)}
+                  </span>
                   {lg.unitId === 'JUNIOR_HIGH' && lg.status === 'DRAFT' && (
                     <span className="px-3 py-1 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-black uppercase tracking-widest">
                       {lg.reviewStatus === 'SUDAH_SESUAI' ? 'Sudah Sesuai' : 'Draf (Menunggu Persetujuan)'}
@@ -489,6 +547,9 @@ export default function LearningGoalsPage() {
                    <button 
                      onClick={() => {
                         setEditingId(lg.id);
+                        const exGrades = getLGGrades(lg);
+                        setSelectedGrades(exGrades.length > 0 ? exGrades : (lg.grade ? [String(lg.grade)] : ['7']));
+                        setOriginalGrades(exGrades.length > 0 ? exGrades : (lg.grade ? [String(lg.grade)] : []));
                         setFormData({
                           unitId: lg.unitId,
                           grade: lg.grade,
@@ -670,27 +731,62 @@ export default function LearningGoalsPage() {
                        </div>
                      )}
 
-                     <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Kelas (Grade)</label>
-                        <select 
-                          disabled={!!editingId}
-                          value={formData.grade}
-                          onChange={(e) => setFormData({...formData, grade: e.target.value})}
-                          className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer disabled:opacity-50"
-                          required
-                        >
-                           <option value="">Pilih Kelas</option>
-                           {formData.unitId === 'JUNIOR_HIGH' ? (
-                             ['7', '8', '9'].map(g => (
+                     {formData.unitId === 'JUNIOR_HIGH' ? (
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">
+                            Cakupan Kelas (Grade) — Multi-Grade
+                          </label>
+                          <div className="flex items-center gap-2 p-2 bg-gray-50 rounded-2xl border border-gray-100">
+                            {['7', '8', '9'].map(g => {
+                              const checked = selectedGrades.includes(g);
+                              return (
+                                <label
+                                  key={g}
+                                  className={cn(
+                                    "flex-1 flex items-center justify-center gap-1.5 py-3 px-2 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none",
+                                    checked
+                                      ? "bg-purple-600 border-purple-600 text-white shadow-xs"
+                                      : "bg-white border-gray-200 text-gray-700 hover:bg-gray-100"
+                                  )}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="sr-only"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setSelectedGrades(prev =>
+                                        prev.includes(g) ? prev.filter(x => x !== g) : [...prev, g].sort()
+                                      );
+                                    }}
+                                  />
+                                  <span>Kelas {g}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <p className="text-[10px] text-gray-400 ml-1 font-medium">
+                            {selectedGrades.length > 0
+                              ? `Berlaku untuk: ${selectedGrades.map(g => `Kelas ${g}`).join(', ')}`
+                              : 'Pilih minimal satu grade untuk cakupan LG ini'}
+                          </p>
+                       </div>
+                     ) : (
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Kelas (Grade)</label>
+                          <select 
+                            disabled={!!editingId}
+                            value={formData.grade}
+                            onChange={(e) => setFormData({...formData, grade: e.target.value})}
+                            className="w-full px-5 py-4 bg-gray-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer disabled:opacity-50"
+                            required
+                          >
+                             <option value="">Pilih Kelas</option>
+                             {ACADEMIC_GRADES[formData.unitId as keyof typeof ACADEMIC_GRADES]?.map(g => (
                                <option key={g} value={g}>Kelas {g}</option>
-                             ))
-                           ) : (
-                             ACADEMIC_GRADES[formData.unitId as keyof typeof ACADEMIC_GRADES]?.map(g => (
-                               <option key={g} value={g}>Kelas {g}</option>
-                             ))
-                           )}
-                        </select>
-                     </div>
+                             ))}
+                          </select>
+                       </div>
+                     )}
 
                      <div className="space-y-2 md:col-span-2">
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Tema / Strand (Opsional)</label>

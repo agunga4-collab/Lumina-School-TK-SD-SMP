@@ -19,6 +19,7 @@ import {
 } from '../../types';
 import { cn } from '../../lib/utils';
 import { ACADEMIC_SUBJECTS, ACADEMIC_YEARS, ACADEMIC_GRADES } from '../../constants';
+import { isLGForGrade } from '../../services/juniorHighAssessmentBookService';
 
 // --- Constants ---
 const ASSESSMENT_TYPES = ["Formative", "AaL", "AfL", "AoL", "Exit Ticket", "Quiz", "Project", "Observation", "Self-Assessment", "Peer-Assessment"];
@@ -481,7 +482,7 @@ export default function LXDForm() {
                              const matchesSearch = lg.goalText.toLowerCase().includes(lgSearch.toLowerCase()) || lg.code.toLowerCase().includes(lgSearch.toLowerCase());
                              // Filter by subject for non-LJ
                              const matchesSubject = lxdType !== 'LEARNING_JOURNEY' ? lg.subject === formData.subject : formData.interdisciplinarySubjects?.includes(lg.subject);
-                             const matchesGrade = lxdType !== 'LEARNING_JOURNEY' ? lg.grade === formData.grade : true; // LJ allows multi grade
+                             const matchesGrade = lxdType !== 'LEARNING_JOURNEY' ? isLGForGrade(lg, formData.grade) : true; // LJ allows multi grade
                              return matchesSearch && matchesSubject && matchesGrade;
                           }).map(lg => {
                              const isSelected = lxdType !== 'LEARNING_JOURNEY' 

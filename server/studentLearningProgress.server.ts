@@ -103,6 +103,19 @@ function publicResult(value:DocumentData):StudentProgressResult {
 function published(value:DocumentData,year:string):boolean {
   return value.isActive!==false&&(value.status||'PUBLISHED')==='PUBLISHED'&&(!value.academicYear||value.academicYear===year);
 }
+function getLGGrades(goal: DocumentData): string[] {
+  if (Array.isArray(goal.grades) && goal.grades.length > 0) {
+    return goal.grades.map((g: unknown) => clean(g)).filter(Boolean);
+  }
+  if (goal.grade) {
+    return clean(goal.grade).split(/[,/]/).map((g: string) => clean(g)).filter(Boolean);
+  }
+  return [];
+}
+function isLGForGrade(goal: DocumentData, targetGrade: string | number): boolean {
+  if (!targetGrade || targetGrade === 'ALL') return true;
+  return getLGGrades(goal).includes(clean(targetGrade));
+}
 async function resolveStudent(db:Firestore,uid:string,requestedYear:string,activeYear:string) {
   const account=await db.collection('users').doc(uid).get();
   const actor=account.data();
@@ -165,7 +178,7 @@ function makeGoals(goalDocs:DocumentData[],loDocs:DocumentData[],formativeDocs:D
 async function resultFor(db:Firestore,student:StudentProgressIdentity,year:string,semester:string,subjectKey:string,activity:StudentProgressActivity|null):Promise<StudentProgressGoal[]> {
   const base=(name:string)=>db.collection(name).where('academicYear','==',year).where('semester','==',semester);
   const [goalSnapshot,loSnapshot,formativeSnapshot,sumSnapshot]=await Promise.all([
-    bounded(activity?db.collection('learning_goals').where('unitId','==','JUNIOR_HIGH'):db.collection('learning_goals').where('unitId','==','JUNIOR_HIGH').where('grade','==',String(student.grade)),5000),
+    bounded(db.collection('learning_goals').where('unitId','==','JUNIOR_HIGH'),5000),
     bounded(activity?base('jh_ab_los').where('assessmentMode','==','UNIT_ACTIVITY'):base('jh_ab_los').where('classId','==',student.classId),10000),
     bounded(base('jh_ab_formative_entries').where('studentId','==',student.id),10000),
     bounded(base('jh_ab_summative_entries').where('studentId','==',student.id),10000)
@@ -173,7 +186,7 @@ async function resultFor(db:Firestore,student:StudentProgressIdentity,year:strin
   const subject=subjects.find(item=>item.key===subjectKey);
   const goals=unpack(goalSnapshot).filter(goal=>{
     if(!published(goal,year))return false;
-    if(!activity)return !!subject&&isSameJHSubject(goal.subject,subject.label)&&goal.assessmentMode!=='UNIT_ACTIVITY'&&!goal.unitActivityId;
+    if(!activity)return !!subject&&isSameJHSubject(goal.subject,subject.label)&&goal.assessmentMode!=='UNIT_ACTIVITY'&&!goal.unitActivityId&&isLGForGrade(goal, student.grade);
     if(goal.unitActivityId){
       const identity=normalizeIdentity(goal.unitActivityId);
       if(!identity)throw new PublicError(409,'INVALID_ACTIVITY_GOAL','Ada relasi aktivitas pada LG yang belum valid. Hubungi guru.');

@@ -1525,6 +1525,7 @@ export interface LearningGoal {
   code: string;
   unitId: 'ELEMENTARY' | 'JUNIOR_HIGH';
   grade: string;
+  grades?: string[];
   subject: string;
   strand: string;
   goalText: string;

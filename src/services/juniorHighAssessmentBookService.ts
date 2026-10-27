@@ -183,27 +183,241 @@ export async function getAssessmentBookOptions(): Promise<AssessmentBookOptions>
 export async function saveAssessmentBookOptions(options: AssessmentBookOptions): Promise<void> {
   await setDoc(doc(db, 'reportConfig', 'JUNIOR_HIGH'), { assessmentBookOptions: { formativeTasks: options.formativeTasks.filter(Boolean), nextActions: options.nextActions.filter(Boolean), summativeTasks: options.summativeTasks.filter(Boolean) }, updatedAt: Date.now() }, { merge: true });
 }
+export function getLGGrades(goal: { grade?: string; grades?: string[] } | null | undefined): string[] {
+  if (!goal) return [];
+  if (Array.isArray(goal.grades) && goal.grades.length > 0) {
+    return goal.grades.map(g => String(g).trim()).filter(Boolean);
+  }
+  if (goal.grade) {
+    return String(goal.grade).split(/[,/]/).map(g => g.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+export function isLGForGrade(goal: { grade?: string; grades?: string[] } | null | undefined, targetGrade?: string | number): boolean {
+  if (!targetGrade || targetGrade === 'ALL') return true;
+  const target = String(targetGrade).trim();
+  const list = getLGGrades(goal);
+  return list.includes(target);
+}
+
+export function formatLGGradesLabel(goal: { grade?: string; grades?: string[] } | null | undefined): string {
+  const list = getLGGrades(goal);
+  if (list.length === 0) return 'Grade -';
+  if (list.length === 1) return `Grade ${list[0]}`;
+  return `Grade ${list.sort().join(', ')}`;
+}
+
 export async function getJuniorHighLGs(grade?: string, subject?: string, academicYear?: string): Promise<LearningGoal[]> {
-  let q = query(collection(db, 'learning_goals'), where('unitId', '==', 'JUNIOR_HIGH'));
-  if (grade) q = query(q, where('grade', '==', grade));
+  const q = query(collection(db, 'learning_goals'), where('unitId', '==', 'JUNIOR_HIGH'));
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(readGoal).filter(goal => goal.isActive && goal.status !== 'ARCHIVED' && (!subject || isSameJHSubject(goal.subject, subject)) && (!academicYear || !goal.academicYear || goal.academicYear === academicYear));
+  return snapshot.docs.map(readGoal).filter(goal =>
+    goal.isActive &&
+    goal.status !== 'ARCHIVED' &&
+    (!grade || isLGForGrade(goal, grade)) &&
+    (!subject || isSameJHSubject(goal.subject, subject)) &&
+    (!academicYear || !goal.academicYear || goal.academicYear === academicYear)
+  );
 }
-export async function proposeNewLG(params: { code: string; grade: string; subject: string; strand: string; goalText: string; academicYear: string; teacherId: string; teacherName?: string; parentGoalId?: string; version?: number }): Promise<string> {
-  const ref = doc(collection(db, 'learning_goals')); const now = Date.now();
-  const value: any = { id: ref.id, code: params.code, unitId: 'JUNIOR_HIGH', grade: params.grade, subject: getJHSubjectLegacyValue(params.subject), strand: params.strand || 'General', goalText: params.goalText, academicYear: params.academicYear, isActive: true, createdBy: params.teacherId, createdAt: now, updatedAt: now, version: params.version || 1, proposedFromAssessmentBook: true, status: 'DRAFT', reviewStatus: 'BELUM_DITELAAH' };
+
+export async function proposeNewLG(params: {
+  code: string;
+  grade: string;
+  grades?: string[];
+  subject: string;
+  strand: string;
+  goalText: string;
+  academicYear: string;
+  teacherId: string;
+  teacherName?: string;
+  parentGoalId?: string;
+  version?: number;
+}): Promise<string> {
+  const ref = doc(collection(db, 'learning_goals'));
+  const now = Date.now();
+  const grades = params.grades && params.grades.length > 0 ? params.grades : getLGGrades({ grade: params.grade });
+  const value: any = {
+    id: ref.id,
+    code: params.code,
+    unitId: 'JUNIOR_HIGH',
+    grade: grades.join(', ') || params.grade,
+    grades,
+    subject: getJHSubjectLegacyValue(params.subject),
+    strand: params.strand || 'General',
+    goalText: params.goalText,
+    academicYear: params.academicYear,
+    isActive: true,
+    createdBy: params.teacherId,
+    createdAt: now,
+    updatedAt: now,
+    version: params.version || 1,
+    proposedFromAssessmentBook: true,
+    status: 'DRAFT',
+    reviewStatus: 'BELUM_DITELAAH'
+  };
   if (params.parentGoalId) value.parentGoalId = params.parentGoalId;
-  await setDoc(ref, value); return ref.id;
+  await setDoc(ref, value);
+  return ref.id;
 }
-export async function updateTeacherOwnLG(params: { goalId: string; code: string; goalText: string; strand: string }): Promise<void> {
-  await updateDoc(doc(db, 'learning_goals', params.goalId), { code: params.code, goalText: params.goalText, strand: params.strand, updatedAt: Date.now() });
+
+export async function updateTeacherOwnLG(params: {
+  goalId: string;
+  code: string;
+  goalText: string;
+  strand: string;
+  grades?: string[];
+}): Promise<void> {
+  const payload: any = {
+    code: params.code,
+    goalText: params.goalText,
+    strand: params.strand,
+    updatedAt: Date.now()
+  };
+  if (params.grades && params.grades.length > 0) {
+    payload.grades = params.grades;
+    payload.grade = params.grades.join(', ');
+  }
+  await updateDoc(doc(db, 'learning_goals', params.goalId), payload);
 }
+
 export async function getPendingProposedLGs(): Promise<LearningGoal[]> {
   const snapshot = await getDocs(query(collection(db, 'learning_goals'), where('proposedFromAssessmentBook', '==', true), where('status', '==', 'DRAFT')));
   return snapshot.docs.map(readGoal);
 }
-export async function approveProposedLG(goalId: string): Promise<void> { await updateDoc(doc(db, 'learning_goals', goalId), { status: 'PUBLISHED', reviewStatus: 'SUDAH_SESUAI', updatedAt: Date.now() }); }
-export async function requestRevisionProposedLG(goalId: string, reviewStatus: 'REVISI_MINOR' | 'REVISI_MAYOR', notes: string): Promise<void> { await updateDoc(doc(db, 'learning_goals', goalId), { status: 'DRAFT', reviewStatus, notes, updatedAt: Date.now() }); }
+
+export async function approveProposedLG(goalId: string): Promise<void> {
+  await updateDoc(doc(db, 'learning_goals', goalId), { status: 'PUBLISHED', reviewStatus: 'SUDAH_SESUAI', updatedAt: Date.now() });
+}
+
+export async function requestRevisionProposedLG(goalId: string, reviewStatus: 'REVISI_MINOR' | 'REVISI_MAYOR', notes: string): Promise<void> {
+  await updateDoc(doc(db, 'learning_goals', goalId), { status: 'DRAFT', reviewStatus, notes, updatedAt: Date.now() });
+}
+
+export interface SaveLOMultiClassParams {
+  lgId: string;
+  targetClassIds: string[];
+  subjectId: string;
+  academicYear: string;
+  semester: string;
+  code: string;
+  title: string;
+  teacherId: string;
+  teacherName?: string;
+}
+
+export interface SaveLOMultiClassResult {
+  successClasses: string[];
+  skippedClasses: { classId: string; reason: string }[];
+  failedClasses: { classId: string; error: string }[];
+}
+
+export async function saveLOMultiClass(params: SaveLOMultiClassParams): Promise<SaveLOMultiClassResult> {
+  const result: SaveLOMultiClassResult = {
+    successClasses: [],
+    skippedClasses: [],
+    failedClasses: []
+  };
+
+  const titleClean = clean(params.title);
+  if (!titleClean) throw new Error('Deskripsi LO tidak boleh kosong.');
+  if (!clean(params.subjectId)) throw new Error('Mata pelajaran tidak boleh kosong.');
+  if (!params.targetClassIds || params.targetClassIds.length === 0) {
+    throw new Error('Pilih minimal satu kelas tujuan.');
+  }
+
+  const now = Date.now();
+
+  for (const targetClassId of params.targetClassIds) {
+    try {
+      const existing = await getLOsForLG({
+        classId: targetClassId,
+        subjectId: params.subjectId,
+        academicYear: params.academicYear,
+        semester: params.semester,
+        lgId: params.lgId
+      });
+
+      // Prevent duplicate on retry: check if identical title already exists
+      const duplicate = existing.find(lo => clean(lo.title).toLowerCase() === titleClean.toLowerCase());
+      if (duplicate) {
+        result.skippedClasses.push({
+          classId: targetClassId,
+          reason: `LO dengan deskripsi serupa sudah ada (${duplicate.code})`
+        });
+        continue;
+      }
+
+      // Preserve existing ordering in target class
+      const maxOrder = existing.reduce((max, lo) => Math.max(max, lo.order || 0), 0);
+      const nextOrder = maxOrder + 1;
+
+      // Handle code collision in target class
+      const requestedCode = clean(params.code) || `LO ${nextOrder}`;
+      const codeTaken = existing.some(lo => clean(lo.code).toLowerCase() === requestedCode.toLowerCase());
+      const targetCode = codeTaken ? `LO ${nextOrder}` : requestedCode;
+
+      const ref = doc(collection(db, 'jh_ab_los'));
+      await setDoc(ref, {
+        id: ref.id,
+        lgId: params.lgId,
+        classId: targetClassId,
+        subjectId: params.subjectId,
+        academicYear: params.academicYear,
+        semester: params.semester,
+        code: targetCode,
+        title: titleClean,
+        order: nextOrder,
+        isActive: true,
+        teacherId: params.teacherId,
+        teacherName: params.teacherName || '',
+        createdAt: now,
+        updatedAt: now
+      });
+
+      result.successClasses.push(targetClassId);
+    } catch (err: any) {
+      console.error(`[saveLOMultiClass] Error for class ${targetClassId}:`, err);
+      result.failedClasses.push({
+        classId: targetClassId,
+        error: err.message || 'Gagal menyimpan ke kelas ini'
+      });
+    }
+  }
+
+  return result;
+}
+
+export async function countActiveAssessmentsForLGInGrades(lgId: string, grades: string[], academicYear: string): Promise<number> {
+  if (!grades.length) return 0;
+  const classesSnap = await getDocs(query(
+    collection(db, 'classes'),
+    where('unitId', '==', 'JUNIOR_HIGH'),
+    where('academicYear', '==', academicYear)
+  ));
+  const gradeSet = new Set(grades.map(String));
+  const classIds = classesSnap.docs
+    .filter(d => {
+      const data = d.data();
+      const g = String(data.grade || data.gradeLevel || '');
+      return gradeSet.has(g);
+    })
+    .map(d => d.id);
+
+  if (!classIds.length) return 0;
+
+  let count = 0;
+  for (let i = 0; i < classIds.length; i += 30) {
+    const chunk = classIds.slice(i, i + 30);
+    const snap = await getDocs(query(
+      collection(db, 'jh_ab_los'),
+      where('lgId', '==', lgId),
+      where('classId', 'in', chunk),
+      where('isActive', '==', true)
+    ));
+    count += snap.size;
+  }
+  return count;
+}
 
 export interface AssessmentScope extends JHAssessmentUAContext { classId: string; subjectId: string; academicYear: string; semester: string; lgId: string; isUAMode?: boolean; }
 function uaContext(scope: AssessmentScope): JHAssessmentUAContext | null {
