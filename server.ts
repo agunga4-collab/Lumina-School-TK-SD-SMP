@@ -5305,6 +5305,66 @@ Output rules:
 11. If a suggestion is already present, preserve it in constructive wording.
 12. Do not add a title, bullet, markdown, quotation marks, explanation, or label.
 Return only the refined paragraph.`,
+    junior_high_monthly_general_comment: `Anda adalah asisten penyusun laporan perkembangan akademik dan karakter siswa SMP Lazuardi (Junior High) untuk Laporan Bulanan (Monthly Report).
+
+Tugas Anda:
+Susunlah SATU paragraf naratif komentar umum (General Comments) dalam Bahasa Indonesia yang baku, hangat, santun, objektif, dan ramah untuk dibaca oleh orang tua/wali murid, berdasarkan HANYA pada data yang disediakan oleh guru di bawah ini.
+
+Identitas Siswa:
+- Nama Lengkap: {{studentName}}
+- Nama Panggilan: {{nickname}}
+- Jenis Kelamin: {{gender}}
+- Periode Bulan: {{monthPeriod}}
+
+Konteks Ringkasan Kelas & Pembelajaran Bulan Ini:
+{{learningContext}}
+
+Data Kehadiran Bulan Ini:
+{{attendanceSummary}}
+
+Refleksi / Eksplorasi Diri Siswa:
+{{reflectionSummary}}
+
+Fokus Perkembangan & Kekuatan Siswa:
+{{strengths}}
+
+Pencapaian Khusus:
+{{achievements}}
+
+Area Penguatan / Rekomendasi Selanjutnya:
+{{needsImprovement}}
+
+Catatan Khusus Tambahan dari Guru:
+{{manualNotes}}
+
+Aturan Penulisan (Ketentuan Ketat):
+1. WAJIB menggunakan Bahasa Indonesia yang baik, benar, dan santun (sesuai EYD).
+2. Tepat SATU paragraf naratif yang padu dan mengalir (tanpa bullet points, tanpa subjudul, tanpa numbering).
+3. Panjang komentar berkisar antara 60 hingga 110 kata.
+4. Gunakan sudut pandang orang ketiga. Sapa ananda dengan panggilan 'ananda {{nickname}}' atau nama panggilannya secara santun dan natural.
+5. Awali paragraf dengan apresiasi positif yang tulus mengenai partisipasi, kemandirian, atau keterlibatan ananda dalam proses belajar di kelas selama bulan ini.
+6. Sebutkan capaian, materi pembelajaran, atau aktivitas spesifik HANYA jika data tersebut tercantum di atas.
+7. Jika ada data kehadiran (misalnya tidak ada ketidakhadiran / kehadiran baik), apresiasi kedisiplinannya secara wajar. Jika ada sakit/izin, jangan membesar-besarkan atau menyudutkan.
+8. Sampaikan arahan atau rekomendasi peningkatan secara konstruktif dan memotivasi menggunakan formulasi santun (contoh: "Ananda diharapkan dapat terus mempertahankan...", "Disarankan untuk lebih...").
+9. DILARANG KERAS mengarang (halusinasi) capaian, aktivitas, perilaku, skor/angka nilai, penyakit, atau pelanggaran yang TIDAK ada pada data yang disediakan.
+10. Jangan gunakan tanda seru (!). Hindari singkatan internal atau istilah teknis yang tidak ramah orang tua.
+11. Akhiri paragraf dengan harapan positif dan doa atau motivasi untuk pembelajaran di bulan berikutnya.
+12. HANYA kembalikan satu paragraf teks komentar. Jangan tambahkan tanda kutip, jangan tambahkan pengantar seperti "Berikut komentar...", dan jangan gunakan format markdown seperti tebal atau miring.`,
+    junior_high_monthly_refine_comment: `Anda adalah editor bahasa profesional untuk Laporan Bulanan (Monthly Report) SMP Lazuardi (Junior High).
+
+Tugas Anda:
+Rapikan dan poles draf komentar guru berikut ke dalam Bahasa Indonesia yang baku, hangat, profesional, dan ramah untuk orang tua siswa bernama {{studentName}} (panggilan: ananda {{nickname}}).
+
+Draf Komentar Asli:
+{{originalComment}}
+
+Aturan:
+1. Pertahankan seluruh makna, pesan inti, capaian, dan arahan dari draf guru.
+2. Jangan menambah fakta atau klaim baru yang tidak ada di draf.
+3. Pastikan berupa tepat SATU paragraf yang mengalir rapi sesuai EYD.
+4. Hindari penggunaan tanda seru (!) dan kata-kata informal.
+5. Panjang maksimal 120 kata.
+6. Kembalikan HANYA teks komentar akhir tanpa tanda kutip dan tanpa kata pengantar/penutup.`,
     elementary_midterm_general_comment: `Kamu adalah editor narasi rapor Midterm Elementary berbahasa Indonesia.
 Tulis satu paragraf komentar rapor yang formal, hangat, objektif, dan mudah dipahami orang tua.
 
@@ -5895,6 +5955,215 @@ app.post("/api/junior-high/midterm/refine-general-comment", async (req, res) => 
     res.json({ text: sanitizedText, refinedText: sanitizedText });
   } catch (error: any) {
     console.error("[JuniorHighMidtermAI:refine] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual."
+    });
+  }
+});
+
+// ==========================================
+// Junior High Monthly Report AI Endpoints (Indonesian)
+// ==========================================
+
+// POST /api/junior-high/monthly/generate-general-comment
+app.post("/api/junior-high/monthly/generate-general-comment", async (req, res) => {
+  try {
+    // 1. Validate Auth Token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    // 2. Validate Junior High Staff Authorization
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    const userData = userDoc.data() || {};
+    const userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isJuniorHigh = userData.unitId === 'JUNIOR_HIGH' || 
+      (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('JUNIOR_HIGH')) ||
+      userData.unit === 'JUNIOR_HIGH' || 
+      userData.unit === 'SMP';
+    
+    const hasValidRole = isSuperAdmin || ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SECRETARY_JH', 'TEACHER', 'teacher', 'admin', 'BK_MENTOR', 'MTSS_PJ'].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isJuniorHigh);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Junior High role/unit required." });
+    }
+
+    // 3. Validate Payload
+    const { 
+      studentName, 
+      nickname, 
+      gender, 
+      monthPeriod,
+      learningContext,
+      attendanceSummary,
+      reflectionSummary,
+      strengths, 
+      achievements, 
+      needsImprovement, 
+      manualNotes 
+    } = req.body;
+
+    if (!studentName || typeof studentName !== 'string' || !studentName.trim()) {
+      return res.status(400).json({ error: "Nama siswa wajib diisi." });
+    }
+
+    const formattedGender = (gender === 'FEMALE' || gender === 'P') ? 'Perempuan' : 'Laki-laki';
+    const formattedStrengths = Array.isArray(strengths) && strengths.length > 0 
+      ? strengths.map(s => `- ${s}`).join("\n")
+      : "- Menunjukkan semangat belajar yang konsisten dan keikutsertaan aktif dalam kegiatan kelas.";
+    const formattedAchievements = Array.isArray(achievements) && achievements.length > 0 
+      ? achievements.map(a => `- ${a}`).join("\n")
+      : "(Tidak ada data tambahan)";
+    const formattedNeedsImprovement = Array.isArray(needsImprovement) && needsImprovement.length > 0 
+      ? needsImprovement.map(n => `- ${n}`).join("\n")
+      : "(Tidak ada catatan khusus)";
+    const formattedManualNotes = manualNotes && typeof manualNotes === 'string' && manualNotes.trim() 
+      ? manualNotes.trim() 
+      : "(Tidak ada catatan manual)";
+    const formattedLearningContext = learningContext && typeof learningContext === 'string' && learningContext.trim()
+      ? learningContext.trim()
+      : "(Ringkasan kelas umum)";
+    const formattedAttendance = attendanceSummary && typeof attendanceSummary === 'string' && attendanceSummary.trim()
+      ? attendanceSummary.trim()
+      : "Kehadiran tertib";
+    const formattedReflection = reflectionSummary && typeof reflectionSummary === 'string' && reflectionSummary.trim()
+      ? reflectionSummary.trim()
+      : "(Belum ada refleksi khusus)";
+
+    // 4. Resolve Prompt Template
+    let prompt = "";
+    try {
+      prompt = await getPrompt("junior_high_monthly_general_comment", {
+        studentName: studentName.trim(),
+        nickname: (nickname && typeof nickname === 'string' && nickname.trim()) || studentName.trim().split(" ")[0],
+        gender: formattedGender,
+        monthPeriod: (monthPeriod && typeof monthPeriod === 'string') ? monthPeriod : "",
+        learningContext: formattedLearningContext,
+        attendanceSummary: formattedAttendance,
+        reflectionSummary: formattedReflection,
+        strengths: formattedStrengths,
+        achievements: formattedAchievements,
+        needsImprovement: formattedNeedsImprovement,
+        manualNotes: formattedManualNotes
+      });
+    } catch (promptErr: any) {
+      if (promptErr.code === "PROMPT_INACTIVE") {
+        return res.status(400).json({
+          error: "Template AI Monthly Report Junior High belum aktif. Hubungi Super Admin."
+        });
+      }
+      throw promptErr;
+    }
+
+    // 5. Call Server-Side AI
+    const rawResult = await callGeminiAi(prompt, 0.3);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText, refinedText: sanitizedText });
+  } catch (error: any) {
+    console.error("[JuniorHighMonthlyAI:generate] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan coba lagi atau gunakan penyusunan narasi manual."
+    });
+  }
+});
+
+// POST /api/junior-high/monthly/refine-general-comment
+app.post("/api/junior-high/monthly/refine-general-comment", async (req, res) => {
+  try {
+    // 1. Validate Auth Token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const db = getAdminDb();
+    if (!db) {
+      return res.status(500).json({ error: "Firestore is not online." });
+    }
+
+    // 2. Validate Junior High Staff Authorization
+    const userDoc = await db.collection("users").doc(decodedToken.uid).get();
+    if (!userDoc.exists) {
+      return res.status(403).json({ error: "Access denied. User profile not found." });
+    }
+    const userData = userDoc.data() || {};
+    const userRole = userData.role || null;
+
+    const isSuperAdmin = isUserSuperAdmin(userRole, decodedToken.email);
+    const isJuniorHigh = userData.unitId === 'JUNIOR_HIGH' || 
+      (Array.isArray(userData.assignedUnits) && userData.assignedUnits.includes('JUNIOR_HIGH')) ||
+      userData.unit === 'JUNIOR_HIGH' || 
+      userData.unit === 'SMP';
+    
+    const hasValidRole = isSuperAdmin || ['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'SECRETARY_JH', 'TEACHER', 'teacher', 'admin', 'BK_MENTOR', 'MTSS_PJ'].includes(userRole || "");
+    const isAuthorized = isSuperAdmin || (hasValidRole && isJuniorHigh);
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Access denied. Active Junior High role/unit required." });
+    }
+
+    // 3. Validate Payload
+    const { studentName, nickname, originalComment, draftText } = req.body;
+    const commentToRefine = (originalComment || draftText || "").trim();
+    if (!commentToRefine) {
+      return res.status(400).json({ error: "Teks komentar yang ingin dirapikan tidak boleh kosong." });
+    }
+
+    // 4. Resolve Prompt Template
+    let prompt = "";
+    try {
+      prompt = await getPrompt("junior_high_monthly_refine_comment", {
+        studentName: (studentName && typeof studentName === 'string' ? studentName.trim() : "") || "Siswa",
+        nickname: (nickname && typeof nickname === 'string' && nickname.trim()) || (studentName && typeof studentName === 'string' ? studentName.trim().split(" ")[0] : "Siswa"),
+        originalComment: commentToRefine
+      });
+    } catch (promptErr: any) {
+      if (promptErr.code === "PROMPT_INACTIVE") {
+        return res.status(400).json({
+          error: "Template perapian AI Monthly Report Junior High belum aktif."
+        });
+      }
+      throw promptErr;
+    }
+
+    // 5. Call Server-Side AI
+    const rawResult = await callGeminiAi(prompt, 0.2);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText, refinedText: sanitizedText });
+  } catch (error: any) {
+    console.error("[JuniorHighMonthlyAI:refine] Server error:", error);
     res.status(500).json({
       error: "AI belum dapat digunakan. Silakan coba lagi atau isi komentar secara manual."
     });

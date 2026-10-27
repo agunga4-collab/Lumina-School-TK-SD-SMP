@@ -126,6 +126,9 @@ export const JuniorHighMonthlyReportDocument: React.FC<JuniorHighMonthlyReportDo
               </div>
               <div className="text-[11px] text-slate-800 space-y-0.5 text-right font-medium leading-relaxed">
                 <div>Student's name : <span className="font-bold">{student.name}</span></div>
+                {Boolean(student.nis || student.studentId || (student as any).nisn) && (
+                  <div>NIS : <span className="font-bold">{student.nis || student.studentId || (student as any).nisn}</span></div>
+                )}
                 <div>Class : <span className="font-bold">{className || '-'}</span></div>
                 <div>Period : <span className="font-bold">{periodDetails.monthName} {periodDetails.year}</span></div>
               </div>
@@ -278,6 +281,9 @@ export const JuniorHighMonthlyReportDocument: React.FC<JuniorHighMonthlyReportDo
               </div>
               <div className="text-[11px] text-slate-800 space-y-0.5 text-right font-medium leading-relaxed">
                 <div>Student's name : <span className="font-bold">{student.name}</span></div>
+                {Boolean(student.nis || student.studentId || (student as any).nisn) && (
+                  <div>NIS : <span className="font-bold">{student.nis || student.studentId || (student as any).nisn}</span></div>
+                )}
                 <div>Class : <span className="font-bold">{className || '-'}</span></div>
                 <div>Period : <span className="font-bold">{periodDetails.monthName} {periodDetails.year}</span></div>
               </div>

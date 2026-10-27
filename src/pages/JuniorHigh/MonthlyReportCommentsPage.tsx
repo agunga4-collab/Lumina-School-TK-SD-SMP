@@ -13,6 +13,11 @@ import { toast } from 'sonner';
 import type { Class, Student, JuniorHighMonthlyReportComment } from '../../types';
 import * as XLSX from 'xlsx';
 import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
+import { 
+  generateMonthlyGeneralCommentAI, 
+  refineMonthlyGeneralCommentAI, 
+  generateDeterministicMonthlyComment 
+} from '../../services/juniorHighMonthlyReportService';
 
 export const JH_MONTHLY_TEMPLATES = [
   {
@@ -227,6 +232,7 @@ export default function MonthlyReportCommentsPage() {
   const [isImporting, setIsImporting] = React.useState<boolean>(false);
 
   // Indonesian Comment Generator States
+  // Indonesian Comment Generator States (Midterm Pattern)
   const [showGeneratorModal, setShowGeneratorModal] = React.useState<boolean>(false);
   const [generatorStudent, setGeneratorStudent] = React.useState<Student | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>('ACADEMIC_INDEPENDENCE');
@@ -237,8 +243,20 @@ export default function MonthlyReportCommentsPage() {
   const [genNeeds, setGenNeeds] = React.useState<string[]>([]);
   const [genManualNotes, setGenManualNotes] = React.useState<string>('');
   const [genDraftText, setGenDraftText] = React.useState<string>('');
+  const [genAttendance, setGenAttendance] = React.useState<{ sickLeave: number; excusedLeave: number; absent: number } | null>(null);
+  const [genLearningJourney, setGenLearningJourney] = React.useState<string>('');
+  const [genReflection, setGenReflection] = React.useState<string>('');
+  const [loadingContextData, setLoadingContextData] = React.useState<boolean>(false);
+  const [isGeneratingAI, setIsGeneratingAI] = React.useState<boolean>(false);
+  const [isPolishingAI, setIsPolishingAI] = React.useState<boolean>(false);
 
-  const handleOpenGenerator = (student: Student) => {
+  // Helper to count words in comment draft
+  const countWords = (text: string) => {
+    const trimmed = text.trim();
+    return trimmed ? trimmed.split(/\s+/).length : 0;
+  };
+
+  const handleOpenGenerator = async (student: Student) => {
     setGeneratorStudent(student);
     const existing = commentsMap[student.id]?.generalComment || '';
     const sName = student.name || '';
@@ -254,6 +272,120 @@ export default function MonthlyReportCommentsPage() {
     setGenManualNotes('');
     setGenDraftText(existing);
     setShowGeneratorModal(true);
+
+    // Ingest authentic student monthly context
+    setLoadingContextData(true);
+    try {
+      // 1. Fetch Class Summary
+      let summaryText = '';
+      if (selectedClassId && selectedMonth) {
+        const summaryDocId = `${selectedClassId}_${selectedYear.replace(/\//g, '-')}_${selectedSemester}_${selectedMonth}`;
+        const summarySnap = await getDoc(doc(db, 'class_report_summaries', summaryDocId));
+        if (summarySnap.exists()) {
+          const sData = summarySnap.data();
+          const ljTitle = sData?.sections?.learningJourney?.title || '';
+          const ljSummary = sData?.sections?.learningJourney?.summary || '';
+          summaryText = `${ljTitle}: ${ljSummary}`.trim();
+        }
+      }
+      setGenLearningJourney(summaryText);
+
+      // 2. Fetch Attendance for selected month
+      let attData = null;
+      try {
+        const attSnap = await getDoc(doc(db, 'jh_monthly_attendance', `${student.id}_${selectedMonth}`));
+        if (attSnap.exists()) {
+          const data = attSnap.data();
+          attData = {
+            sickLeave: data.sickLeave ?? 0,
+            excusedLeave: data.excusedLeave ?? 0,
+            absent: data.absent ?? 0,
+          };
+        }
+      } catch (attErr) {
+        console.warn('Could not load monthly attendance record:', attErr);
+      }
+      setGenAttendance(attData);
+
+      // 3. Fetch Self-Exploration approved reflection
+      let reflText = '';
+      try {
+        const qRefl = query(
+          collection(db, 'seMonthlyReflections'),
+          where('studentId', '==', student.id),
+          where('periodKey', '==', selectedMonth),
+          where('status', '==', 'APPROVED')
+        );
+        const reflSnap = await getDocs(qRefl);
+        if (!reflSnap.empty) {
+          const docs = reflSnap.docs.map(d => d.data());
+          reflText = docs.map(d => `${d.activityNameSnapshot || 'Eksplorasi'}: ${d.reflectionText || ''}`).join('; ');
+        }
+      } catch (reflErr) {
+        console.warn('Could not load self-exploration reflections:', reflErr);
+      }
+      setGenReflection(reflText);
+    } catch (loadErr) {
+      console.warn('Error ingesting monthly report context:', loadErr);
+    } finally {
+      setLoadingContextData(false);
+    }
+  };
+
+  const handleGenerateAI = async () => {
+    if (!generatorStudent) return;
+    setIsGeneratingAI(true);
+    try {
+      const attSummary = genAttendance
+        ? `Sakit: ${genAttendance.sickLeave}, Izin: ${genAttendance.excusedLeave}, Alpa: ${genAttendance.absent}`
+        : 'Kehadiran tertib';
+
+      const generated = await generateMonthlyGeneralCommentAI({
+        studentName: generatorStudent.name,
+        nickname: genNickname.trim() || undefined,
+        gender: genGender,
+        monthPeriod: selectedMonth ? getIndonesianMonthLabel(selectedMonth) : undefined,
+        learningContext: genLearningJourney || undefined,
+        attendanceSummary: attSummary,
+        reflectionSummary: genReflection || undefined,
+        strengths: genStrengths,
+        achievements: genAchievements,
+        needsImprovement: genNeeds,
+        manualNotes: genManualNotes.trim() || undefined,
+      });
+
+      setGenDraftText(generated);
+      toast.success('Draf komentar berhasil di-generate dengan AI (Bahasa Indonesia).');
+    } catch (err: any) {
+      console.error('AI Generation error:', err);
+      toast.error(err.message || 'Gagal generate AI. Menggunakan penyusunan narasi terstruktur...');
+      // Deterministic fallback if API endpoint errors
+      handleGenerateDraftNarrative();
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
+
+  const handlePolishAI = async () => {
+    if (!genDraftText.trim()) {
+      toast.error('Ketik atau generate draf komentar terlebih dahulu sebelum merapikan.');
+      return;
+    }
+    setIsPolishingAI(true);
+    try {
+      const polished = await refineMonthlyGeneralCommentAI({
+        studentName: generatorStudent?.name,
+        nickname: genNickname.trim() || undefined,
+        originalComment: genDraftText,
+      });
+      setGenDraftText(polished);
+      toast.success('Komentar berhasil dirapikan dan disempurnakan oleh AI.');
+    } catch (err: any) {
+      console.error('Polish AI error:', err);
+      toast.error(err.message || 'Gagal merapikan dengan AI.');
+    } finally {
+      setIsPolishingAI(false);
+    }
   };
 
   const handleGenerateDraftNarrative = () => {
@@ -265,68 +397,60 @@ export default function MonthlyReportCommentsPage() {
       return;
     }
 
-    let opening = '';
-    if (selectedTemplateId === 'ACADEMIC_INDEPENDENCE') {
-      opening = `Alhamdulillah, selama periode bulan ini, ananda ${callName} menunjukkan capaian belajar dan kemandirian yang sangat baik.`;
-    } else if (selectedTemplateId === 'ACTIVE_COLLABORATION') {
-      opening = `Alhamdulillah, ananda ${callName} memperlihatkan perkembangan yang positif dalam interaksi sosial dan keaktifan pembelajaran di kelas.`;
-    } else if (selectedTemplateId === 'GUIDANCE_FOCUS') {
-      opening = `Alhamdulillah, proses pembelajaran ananda ${callName} bulan ini terus menunjukkan kemajuan yang patut diapresiasi.`;
-    } else if (selectedTemplateId === 'ISLAMIC_CHARACTER') {
-      opening = `Alhamdulillah, ananda ${callName} senantiasa menunjukkan akhlak terpuji, budi pekerti yang baik, dan semangat kebersamaan.`;
-    } else {
-      opening = `Alhamdulillah, ananda ${callName} menunjukkan kesungguhan dan dedikasi dalam mengikuti seluruh kegiatan belajar.`;
-    }
+    const attSummary = genAttendance
+      ? `Sakit: ${genAttendance.sickLeave}, Izin: ${genAttendance.excusedLeave}, Alpa: ${genAttendance.absent}`
+      : 'Kehadiran tertib';
 
-    const sentences: string[] = [opening];
+    const result = generateDeterministicMonthlyComment({
+      studentName: generatorStudent.name,
+      nickname: callName,
+      gender: genGender,
+      templateId: selectedTemplateId,
+      learningContext: genLearningJourney,
+      attendanceSummary: attSummary,
+      reflectionSummary: genReflection,
+      strengths: genStrengths,
+      achievements: genAchievements,
+      needsImprovement: genNeeds,
+      manualNotes: genManualNotes.trim() || undefined,
+    });
 
-    if (genStrengths.length > 0) {
-      const sJoin = genStrengths.map(s => s.toLowerCase()).join(', serta ');
-      sentences.push(`${callName} senantiasa ${sJoin}.`);
-    }
-
-    if (genAchievements.length > 0) {
-      const aJoin = genAchievements.map(a => a.toLowerCase()).join(', dan ');
-      sentences.push(`Dalam aspek capaian akademik, ${callName} berhasil ${aJoin}.`);
-    }
-
-    if (genNeeds.length > 0) {
-      const nJoin = genNeeds.map(n => n.toLowerCase()).join(', serta ');
-      sentences.push(`Untuk terus mengoptimalkan potensi belajarnya ke depan, ${callName} diharapkan dapat ${nJoin}.`);
-    }
-
-    if (genManualNotes.trim()) {
-      sentences.push(genManualNotes.trim());
-    }
-
-    sentences.push(`Semoga ananda ${callName} senantiasa istiqomah dalam meraih prestasi dan kebaikan.`);
-
-    const result = sentences.join(' ');
     setGenDraftText(result);
-    toast.success('Draf komentar berhasil dirangkai. Silakan tinjau dan sesuaikan di bawah.');
+    toast.success('Draf komentar naratif berhasil dirangkai.');
   };
 
   const handleApplyGeneratedToEditor = () => {
     if (!genDraftText.trim()) {
-      toast.error('Draf komentar masih kosong. Klik tombol "Rangkai Draf Komentar" terlebih dahulu.');
+      toast.error('Draf komentar masih kosong. Klik tombol Generate AI atau Rangkai Narasi terlebih dahulu.');
       return;
     }
 
-    if (generatorStudent) {
-      if (editingStudent?.id === generatorStudent.id) {
-        setCommentText(genDraftText.trim());
-      } else {
-        const existing = commentsMap[generatorStudent.id];
-        setEditingStudent(generatorStudent);
-        setCommentText(genDraftText.trim());
-        setEditorStatus(existing?.status || 'DRAFT');
-        setInitialCommentText(existing?.generalComment || '');
-        setInitialEditorStatus(existing?.status || 'DRAFT');
-        setShowWarning(existing?.status === 'FINAL');
-      }
+    if (!generatorStudent) return;
+    const existing = commentsMap[generatorStudent.id];
+
+    // Protection rule 1: Never overwrite FINAL comments
+    if (existing?.status === 'FINAL') {
+      toast.error('Komentar siswa ini sudah berstatus FINAL (Terkunci). Buka status menjadi DRAFT terlebih dahulu jika ingin merevisi.');
+      return;
     }
+
+    // Protection rule 2: Confirm before overwriting filled draft
+    if (existing?.status === 'DRAFT' && existing.generalComment.trim().length > 0) {
+      const confirmReplace = window.confirm(
+        `Siswa "${generatorStudent.name}" sudah memiliki draf komentar:\n\n"${existing.generalComment.slice(0, 100)}..."\n\nApakah Anda yakin ingin menimpanya dengan draf hasil generate baru?`
+      );
+      if (!confirmReplace) return;
+    }
+
+    // Apply to editor state
+    setEditingStudent(generatorStudent);
+    setCommentText(genDraftText.trim());
+    setEditorStatus('DRAFT');
+    setInitialCommentText(existing?.generalComment || '');
+    setInitialEditorStatus(existing?.status || 'DRAFT');
+    setShowWarning(false);
     setShowGeneratorModal(false);
-    toast.success('Draf komentar berhasil diterapkan ke form komentar.');
+    toast.success('Draf komentar berhasil dipindahkan ke editor. Silakan periksa dan Simpan Draft.');
   };
 
 
@@ -2100,6 +2224,406 @@ export default function MonthlyReportCommentsPage() {
                   className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-rose-600 hover:bg-rose-700 text-white shadow-sm transition-colors"
                 >
                   Buang Perubahan
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Indonesian Comment Generator Modal (Midterm Pattern) */}
+      <AnimatePresence>
+        {showGeneratorModal && generatorStudent && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ duration: 0.18 }}
+              className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden max-h-[92vh] flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-[#002366] to-[#003399] px-6 py-4 flex items-center justify-between text-white shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-white/10 text-amber-300">
+                    <Sparkles size={20} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-base tracking-tight text-white">Generator Komentar Rapor Bulanan</h3>
+                      <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-white/20 text-white tracking-wider">
+                        Bahasa Indonesia
+                      </span>
+                    </div>
+                    <p className="text-xs text-blue-150 mt-0.5">
+                      {generatorStudent.name} ({generatorStudent.id}) · {selectedClassObj?.name || 'Junior High'} · {selectedMonth ? getIndonesianMonthLabel(selectedMonth) : ''}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowGeneratorModal(false)}
+                  className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Modal Body - Scrollable */}
+              <div className="p-6 overflow-y-auto space-y-5 text-xs text-slate-700">
+                
+                {/* 1. Context Data Indicator Banner */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-700 flex items-center gap-1.5 uppercase text-[10px] tracking-wider text-[#002366]">
+                      <Info size={14} className="text-[#002366]" /> Konteks Data Terdeteksi Bulan Ini
+                    </span>
+                    {loadingContextData && (
+                      <span className="flex items-center gap-1 text-[11px] text-blue-600 font-medium">
+                        <RefreshCw size={12} className="animate-spin" /> Membaca data siswa...
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
+                    <div className="p-2.5 bg-white rounded-lg border border-slate-200/80">
+                      <span className="block text-[10px] font-semibold text-slate-400 uppercase">Kehadiran Periode</span>
+                      <strong className="text-slate-800 text-xs">
+                        {genAttendance 
+                          ? `Sakit: ${genAttendance.sickLeave} · Izin: ${genAttendance.excusedLeave} · Alpa: ${genAttendance.absent}`
+                          : 'Kehadiran tertib / nihil catatan'}
+                      </strong>
+                    </div>
+                    <div className="p-2.5 bg-white rounded-lg border border-slate-200/80">
+                      <span className="block text-[10px] font-semibold text-slate-400 uppercase">Materi Pembelajaran Kelas</span>
+                      <strong className="text-slate-800 text-xs truncate block" title={genLearningJourney || 'Belum diisi'}>
+                        {genLearningJourney ? genLearningJourney.slice(0, 45) + '...' : <span className="text-slate-400 italic">Belum diisi di ringkasan</span>}
+                      </strong>
+                    </div>
+                    <div className="p-2.5 bg-white rounded-lg border border-slate-200/80">
+                      <span className="block text-[10px] font-semibold text-slate-400 uppercase">Eksplorasi Diri (Refleksi)</span>
+                      <strong className="text-slate-800 text-xs truncate block" title={genReflection || 'Belum ada refleksi'}>
+                        {genReflection ? genReflection.slice(0, 40) + '...' : <span className="text-slate-400 italic">Tidak ada catatan</span>}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Focus Template Selector */}
+                <div>
+                  <label className="block font-bold uppercase tracking-wider text-slate-600 text-[11px] mb-2 flex items-center gap-1.5">
+                    <Layers size={13} className="text-[#002366]" /> 1. Pilih Aspek Fokus / Gaya Komentar
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {JH_MONTHLY_TEMPLATES.map((tmpl) => {
+                      const isSelected = selectedTemplateId === tmpl.id;
+                      return (
+                        <div
+                          key={tmpl.id}
+                          onClick={() => setSelectedTemplateId(tmpl.id)}
+                          className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-blue-50/70 border-[#002366] shadow-xs'
+                              : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className={`font-bold text-xs ${isSelected ? 'text-[#002366]' : 'text-slate-800'}`}>
+                              {tmpl.title}
+                            </span>
+                            {isSelected && <CheckCircle2 size={15} className="text-[#002366] shrink-0" />}
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-relaxed">{tmpl.desc}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3. Student Calling Name & Gender */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                      Nama Panggilan Siswa
+                    </label>
+                    <input
+                      type="text"
+                      value={genNickname}
+                      onChange={(e) => setGenNickname(e.target.value)}
+                      placeholder="Nama panggilan siswa"
+                      className="w-full bg-white text-xs rounded-lg border-slate-200 py-1.5 px-3 focus:border-[#002366] focus:ring-[#002366]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                      Jenis Kelamin
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setGenGender('MALE')}
+                        className={`py-1.5 px-2 text-xs font-semibold rounded-lg border transition-all ${
+                          genGender === 'MALE'
+                            ? 'bg-[#002366] text-white border-[#002366]'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        Laki-laki
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGenGender('FEMALE')}
+                        className={`py-1.5 px-2 text-xs font-semibold rounded-lg border transition-all ${
+                          genGender === 'FEMALE'
+                            ? 'bg-[#002366] text-white border-[#002366]'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        Perempuan
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Strengths & Progress Bank */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-bold uppercase tracking-wider text-slate-600 text-[11px]">
+                      2. Kekuatan & Perkembangan Siswa ({genStrengths.length} terpilih)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setGenStrengths([])}
+                      className="text-[10px] text-slate-400 hover:text-slate-600"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {JH_MONTHLY_STRENGTHS_BANK.map((item, idx) => {
+                      const isSel = genStrengths.includes(item);
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            if (isSel) setGenStrengths(genStrengths.filter(s => s !== item));
+                            else setGenStrengths([...genStrengths, item]);
+                          }}
+                          className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
+                            isSel
+                              ? 'bg-blue-50 border-[#002366] text-[#002366] font-semibold'
+                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {isSel ? '✓ ' : '+ '} {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 5. Achievements Bank */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-bold uppercase tracking-wider text-slate-600 text-[11px]">
+                      3. Capaian & Prestasi Spesifik ({genAchievements.length} terpilih)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setGenAchievements([])}
+                      className="text-[10px] text-slate-400 hover:text-slate-600"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {JH_MONTHLY_ACHIEVEMENTS_BANK.map((item, idx) => {
+                      const isSel = genAchievements.includes(item);
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            if (isSel) setGenAchievements(genAchievements.filter(a => a !== item));
+                            else setGenAchievements([...genAchievements, item]);
+                          }}
+                          className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
+                            isSel
+                              ? 'bg-emerald-50 border-emerald-600 text-emerald-800 font-semibold'
+                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {isSel ? '✓ ' : '+ '} {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 6. Needs Improvement Bank */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-bold uppercase tracking-wider text-slate-600 text-[11px]">
+                      4. Area Peningkatan & Rekomendasi ({genNeeds.length} terpilih)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setGenNeeds([])}
+                      className="text-[10px] text-slate-400 hover:text-slate-600"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {JH_MONTHLY_NEEDS_IMPROVEMENT_BANK.map((item, idx) => {
+                      const isSel = genNeeds.includes(item);
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            if (isSel) setGenNeeds(genNeeds.filter(n => n !== item));
+                            else setGenNeeds([...genNeeds, item]);
+                          }}
+                          className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
+                            isSel
+                              ? 'bg-amber-50 border-amber-500 text-amber-900 font-semibold'
+                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {isSel ? '✓ ' : '+ '} {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 7. Additional Teacher Notes */}
+                <div>
+                  <label className="block font-bold uppercase tracking-wider text-slate-600 text-[11px] mb-1">
+                    5. Catatan Tambahan Guru (Opsional)
+                  </label>
+                  <textarea
+                    value={genManualNotes}
+                    onChange={(e) => setGenManualNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Tuliskan catatan khusus atau konteks unik siswa yang perlu dimasukkan ke dalam narasi..."
+                    className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 px-3"
+                  />
+                </div>
+
+                {/* Action Trigger Buttons Bar */}
+                <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={handleGenerateAI}
+                    disabled={isGeneratingAI}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#002366] text-white hover:bg-[#002366]/90 shadow-sm disabled:opacity-50 cursor-pointer transition-all"
+                  >
+                    {isGeneratingAI ? (
+                      <>
+                        <RefreshCw size={13} className="animate-spin" />
+                        Menyusun dengan AI...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={14} className="text-amber-300" />
+                        Generate Draf AI (Bahasa Indonesia)
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleGenerateDraftNarrative}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-xs cursor-pointer transition-all"
+                  >
+                    <Wand2 size={13} className="text-purple-600" />
+                    Rangkai Narasi Terstruktur
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handlePolishAI}
+                    disabled={isPolishingAI || !genDraftText.trim()}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-xs disabled:opacity-50 cursor-pointer transition-all"
+                  >
+                    {isPolishingAI ? (
+                      <>
+                        <RefreshCw size={13} className="animate-spin text-blue-600" />
+                        Merapikan draf...
+                      </>
+                    ) : (
+                      <>
+                        <Edit3 size={13} className="text-blue-600" />
+                        Rapikan Draf dengan AI
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* 8. Draft Result & Review Editor */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold uppercase tracking-wider text-slate-700 text-[11px] flex items-center gap-1">
+                      <BookOpen size={13} className="text-[#002366]" /> Pratinjau & Sunting Draf Narasi
+                    </label>
+                    <div className="flex items-center gap-3 text-[11px]">
+                      <span className="font-medium text-slate-400">
+                        Kata: <strong className="text-slate-700">{countWords(genDraftText)}</strong> (Target: 60 - 110 kata)
+                      </span>
+                      <span className="font-medium text-slate-400">
+                        Karakter: <strong className="text-slate-700">{genDraftText.length}</strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  <textarea
+                    value={genDraftText}
+                    onChange={(e) => setGenDraftText(e.target.value)}
+                    rows={4}
+                    placeholder="Hasil generate narasi komentar akan tampil di sini. Anda dapat langsung menyunting teks sebelum menerapkannya..."
+                    className="w-full text-xs leading-relaxed rounded-xl border-slate-200 focus:border-[#002366] focus:ring-[#002366] p-3 font-sans bg-white"
+                  />
+
+                  {/* Protection notices */}
+                  {commentsMap[generatorStudent.id]?.status === 'FINAL' && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2">
+                      <AlertCircle size={15} className="text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="block font-bold">Komentar Siswa Ini Sudah FINAL</strong>
+                        Komentar berstatus FINAL dilindungi dan tidak dapat ditimpa langsung. Buka status ke DRAFT di tabel jika ingin merevisi.
+                      </div>
+                    </div>
+                  )}
+
+                  {commentsMap[generatorStudent.id]?.status === 'DRAFT' && commentsMap[generatorStudent.id]?.generalComment?.trim() && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 flex items-center gap-2">
+                      <AlertTriangle size={14} className="text-amber-600 shrink-0" />
+                      <span>Siswa ini sudah memiliki draf. Menerapkan draf baru akan menimpa draf sebelumnya setelah konfirmasi.</span>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-between shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowGeneratorModal(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer"
+                >
+                  Tutup
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleApplyGeneratedToEditor}
+                  disabled={!genDraftText.trim() || commentsMap[generatorStudent.id]?.status === 'FINAL'}
+                  className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl bg-[#002366] hover:bg-[#002366]/90 text-white shadow-sm disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  <Check size={14} />
+                  Terapkan ke Komentar Siswa (DRAFT)
                 </button>
               </div>
             </motion.div>

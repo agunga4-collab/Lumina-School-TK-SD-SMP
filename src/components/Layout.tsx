@@ -919,7 +919,6 @@ export function Layout() {
                           <NavItem to="/junior-high/monthly-report" icon={<FileText size={16} />} label="Ringkasan" />
                           <NavItem to="/junior-high/monthly-comments" icon={<MessageSquare size={16} />} label="Komentar" />
                           <NavItem to="/junior-high/monthly-report-preview" icon={<Eye size={16} />} label="Preview" />
-                          <NavItem to="/junior-high/monthly-report-template" icon={<FileText size={16} />} label="Template" />
                           <NavItem to="/junior-high/monthly-report-pdf" icon={<FileText size={16} />} label="PDF" />
                           <NavItem to="/junior-high/monthly-report-pdf-link" icon={<Link size={16} />} label="Link PDF" />
                         </div>

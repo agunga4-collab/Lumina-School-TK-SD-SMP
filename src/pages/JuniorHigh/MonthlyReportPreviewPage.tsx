@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileText, Calendar, Users, RefreshCw, AlertCircle, Info, CheckCircle2, 
-  ChevronRight, ArrowRight, ShieldAlert, BadgeHelp, CheckCircle, HelpCircle
+  ChevronRight, ChevronLeft, ArrowRight, Printer, Sparkles, MessageSquare, 
+  BookOpen, CheckCircle, HelpCircle, ShieldAlert, Layers, Search, Download
 } from 'lucide-react';
 import { db, getClasses, getActiveStudents } from '../../lib/firebase';
 import { doc, getDoc, getDocs, query, collection, where } from 'firebase/firestore';
@@ -12,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useJHReportAttendance } from '../../hooks/useJHReportAttendance';
 import type { Class, Student, ClassReportSummary, JuniorHighMonthlyReportComment } from '../../types';
+import { JuniorHighMonthlyReportDocument } from '../../components/JuniorHigh/JuniorHighMonthlyReportDocument';
 import { validateReportReadiness } from './MonthlyReportReadinessHelper';
 
 const indonesianMonths = [
@@ -45,6 +47,8 @@ export default function MonthlyReportPreviewPage() {
   const [loadingClasses, setLoadingClasses] = React.useState<boolean>(false);
   const [students, setStudents] = React.useState<Student[]>([]);
   const [loadingStudents, setLoadingStudents] = React.useState<boolean>(false);
+  const [selectedStudentIndex, setSelectedStudentIndex] = React.useState<number>(0);
+  const [studentSearchQuery, setStudentSearchQuery] = React.useState<string>('');
 
   // Read-only data
   const [classSummary, setClassSummary] = React.useState<ClassReportSummary | null>(null);
@@ -57,12 +61,24 @@ export default function MonthlyReportPreviewPage() {
   const [semesterSummariesMap, setSemesterSummariesMap] = React.useState<Record<string, string>>({});
   const [loadingUaData, setLoadingUaData] = React.useState<boolean>(false);
 
-  // Error states for source health
+  // Self Exploration Reflections Map (studentId -> reflection doc)
+  const [reflectionMap, setReflectionMap] = React.useState<Record<string, any>>({});
+  const [loadingReflections, setLoadingReflections] = React.useState<boolean>(false);
+
+  // Logos, Configurations, and Signatures
+  const [logos, setLogos] = React.useState<any>(null);
+  const [reportConfig, setReportConfig] = React.useState<any>(null);
+  const [homeroomTeacherProfile, setHomeroomTeacherProfile] = React.useState<any>(null);
+
+  // UI view options
+  const [showReadinessDetails, setShowReadinessDetails] = React.useState<boolean>(false);
+
+  // Error states
   const [studentsError, setStudentsError] = React.useState<boolean>(false);
   const [summaryError, setSummaryError] = React.useState<boolean>(false);
   const [commentsError, setCommentsError] = React.useState<boolean>(false);
 
-  // Selected class display name for legacy fallback matching
+  // Selected class display object
   const selectedClassObj = React.useMemo(() => {
     return classesList.find(c => c.id === selectedClassId);
   }, [classesList, selectedClassId]);
@@ -72,34 +88,23 @@ export default function MonthlyReportPreviewPage() {
     const currentFirstYear = parseInt(selectedYear.split('/')[0]) || 0;
     const activationFirstYear = 2026;
 
-    if (currentFirstYear > activationFirstYear) {
-      return true;
-    }
-    if (currentFirstYear < activationFirstYear) {
-      return false;
-    }
+    if (currentFirstYear > activationFirstYear) return true;
+    if (currentFirstYear < activationFirstYear) return false;
 
-    if (selectedSemester === '2') {
-      return true;
-    }
-    if (selectedSemester === '1') {
-      if (selectedMonth >= '2026-08') {
-        return true;
-      }
-    }
+    if (selectedSemester === '2') return true;
+    if (selectedSemester === '1' && selectedMonth >= '2026-08') return true;
     return false;
   }, [selectedYear, selectedSemester, selectedMonth]);
 
-  // Derive student IDs for the query input
+  // Derive active student IDs
   const activeStudentIds = React.useMemo(() => {
     return students.map(s => s.id);
   }, [students]);
 
-  // Hook call for read-only monthly attendance resolution
+  // Hook for monthly attendance
   const {
     loading: loadingAttendance,
     error: attendanceError,
-    errorType: attendanceErrorType,
     attendanceAvailableForPeriod,
     studentAttendanceMap,
   } = useJHReportAttendance({
@@ -110,6 +115,93 @@ export default function MonthlyReportPreviewPage() {
     selectedMonth,
     studentIds: activeStudentIds,
   });
+
+  // Filter students based on search
+  const filteredStudents = React.useMemo(() => {
+    if (!studentSearchQuery.trim()) return students;
+    const q = studentSearchQuery.toLowerCase();
+    return students.filter(s => 
+      s.name.toLowerCase().includes(q) || 
+      (s.id && s.id.toLowerCase().includes(q)) ||
+      ((s as any).nis && String((s as any).nis).toLowerCase().includes(q))
+    );
+  }, [students, studentSearchQuery]);
+
+  // Currently selected student
+  const currentStudent = React.useMemo(() => {
+    if (students.length === 0) return null;
+    const safeIdx = Math.max(0, Math.min(selectedStudentIndex, students.length - 1));
+    return students[safeIdx] || null;
+  }, [students, selectedStudentIndex]);
+
+  // Load Logos and Configs
+  React.useEffect(() => {
+    const fetchLogosAndConfig = async () => {
+      try {
+        const logoDoc = await getDoc(doc(db, "settings", "logos"));
+        if (logoDoc.exists()) {
+          setLogos(logoDoc.data());
+        }
+      } catch (err) {
+        console.warn("Failed to load school logos:", err);
+      }
+
+      try {
+        const q = query(collection(db, "reportConfig"), where("status", "==", "active"));
+        const snap = await getDocs(q);
+        const configs = snap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+
+        let resolved = configs.find(c => 
+          (c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH') &&
+          c.reportType === 'MONTHLY_PROGRESS' &&
+          c.academicYear === selectedYear
+        );
+
+        if (!resolved) {
+          resolved = configs.find(c => 
+            (c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH') &&
+            c.reportType === 'MONTHLY_PROGRESS' &&
+            (!c.academicYear || c.academicYear === '')
+          );
+        }
+
+        if (!resolved) {
+          resolved = configs.find(c => 
+            (c.unit === 'JUNIOR_HIGH' || c.unitId === 'JUNIOR_HIGH') &&
+            (!c.reportType || c.reportType === '' || c.reportType === 'DEFAULT')
+          );
+        }
+
+        setReportConfig(resolved || null);
+      } catch (err) {
+        console.warn("Failed to load reportConfig in Preview:", err);
+      }
+    };
+
+    fetchLogosAndConfig();
+  }, [selectedYear]);
+
+  // Load homeroom teacher profile
+  React.useEffect(() => {
+    const fetchHomeroomTeacher = async () => {
+      if (!selectedClassObj?.homeroomTeacherId) {
+        setHomeroomTeacherProfile(null);
+        return;
+      }
+      try {
+        const userDoc = await getDoc(doc(db, 'users', selectedClassObj.homeroomTeacherId));
+        if (userDoc.exists()) {
+          setHomeroomTeacherProfile(userDoc.data());
+        } else {
+          setHomeroomTeacherProfile(null);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch homeroom teacher profile:", err);
+        setHomeroomTeacherProfile(null);
+      }
+    };
+    fetchHomeroomTeacher();
+  }, [selectedClassObj]);
 
   // Initial filter state
   React.useEffect(() => {
@@ -138,35 +230,27 @@ export default function MonthlyReportPreviewPage() {
         const activeClassKeys = new Set<string>();
         enrollmentsSnap.docs.forEach(d => {
           const e = d.data();
-          if (e.classId) {
-            activeClassKeys.add(e.classId);
-          }
+          if (e.classId) activeClassKeys.add(e.classId);
         });
 
         const jhClasses = (all || []).filter(c => {
           const isJH = c.unitId === 'JUNIOR_HIGH';
           const isActiveYear = c.academicYear === selectedYear;
           const isNotArchived = c.status !== 'archived';
-          
           if (!isJH || !isActiveYear || !isNotArchived) return false;
 
-          const hasEnrolledStudent = activeClassKeys.has(c.id) || 
-                                     activeClassKeys.has(c.name) || 
-                                     ((c as any).classId && activeClassKeys.has((c as any).classId));
-          return hasEnrolledStudent;
+          return activeClassKeys.has(c.id) || 
+                 activeClassKeys.has(c.name) || 
+                 ((c as any).classId && activeClassKeys.has((c as any).classId));
         });
 
         setClassesList(jhClasses);
 
-        // Selection Behavior:
-        // Clear if not valid in the new context, otherwise keep it
         if (selectedClassId) {
           const isStillEligible = jhClasses.some(c => c.id === selectedClassId);
-          if (!isStillEligible) {
-            setSelectedClassId('');
-          }
-        } else {
-          setSelectedClassId('');
+          if (!isStillEligible) setSelectedClassId('');
+        } else if (jhClasses.length > 0) {
+          setSelectedClassId(jhClasses[0].id);
         }
       } catch (err) {
         console.error('Error loading Junior High classes:', err);
@@ -178,25 +262,28 @@ export default function MonthlyReportPreviewPage() {
     fetchJHClasses();
   }, [selectedYear]);
 
-  // Immediate stale data cleanup on context filter change to guarantee checking state during loading (Requirement 8)
+  // Cleanup on context filter changes
   React.useEffect(() => {
     setStudents([]);
     setClassSummary(null);
     setCommentsMap({});
     setUnitActivityEnrollments([]);
     setSemesterSummariesMap({});
+    setReflectionMap({});
+    setSelectedStudentIndex(0);
     setStudentsError(false);
     setSummaryError(false);
     setCommentsError(false);
   }, [selectedClassId, selectedYear, selectedSemester, selectedMonth]);
 
-  // Read-only data assembly trigger
+  // Read-only data assembly
   const loadReportData = async () => {
     if (!selectedClassId || !selectedYear || !selectedSemester || !selectedMonth) return;
 
     setLoadingStudents(true);
     setLoadingSummary(true);
     setLoadingComments(true);
+    setLoadingReflections(true);
     setStudentsError(false);
     setSummaryError(false);
     setCommentsError(false);
@@ -207,12 +294,11 @@ export default function MonthlyReportPreviewPage() {
       const sorted = (list || []).sort((a, b) => {
         const numA = a.attendanceNumber ?? a.noAbsen ?? a.rollNumber ?? a.rosterNumber ?? 999;
         const numB = b.attendanceNumber ?? b.noAbsen ?? b.rollNumber ?? b.rosterNumber ?? 999;
-        if (numA !== numB) {
-          return numA - numB;
-        }
+        if (numA !== numB) return numA - numB;
         return a.name.localeCompare(b.name);
       });
       setStudents(sorted);
+      setSelectedStudentIndex(0);
     } catch (err) {
       console.error('Error fetching students:', err);
       setStudentsError(true);
@@ -229,7 +315,14 @@ export default function MonthlyReportPreviewPage() {
       if (summarySnap.exists()) {
         setClassSummary(summarySnap.data() as ClassReportSummary);
       } else {
-        setClassSummary(null);
+        // Fallback to non-prefixed ID
+        const fallbackId = `${selectedClassId}_${academicYearNormalized}_${selectedSemester}_${selectedMonth}`;
+        const fallbackSnap = await getDoc(doc(db, 'class_report_summaries', fallbackId));
+        if (fallbackSnap.exists()) {
+          setClassSummary(fallbackSnap.data() as ClassReportSummary);
+        } else {
+          setClassSummary(null);
+        }
       }
     } catch (err) {
       console.error('Error fetching class summary:', err);
@@ -263,7 +356,31 @@ export default function MonthlyReportPreviewPage() {
       setLoadingComments(false);
     }
 
-    // 4. Fetch UA Enrollments and summaries if UA is active
+    // 4. Fetch Self Exploration reflections
+    try {
+      const qRefl = query(
+        collection(db, 'seMonthlyReflections'),
+        where('academicYear', '==', selectedYear),
+        where('semester', '==', selectedSemester),
+        where('periodKey', '==', selectedMonth)
+      );
+      const reflSnap = await getDocs(qRefl);
+      const rMap: Record<string, any> = {};
+      reflSnap.docs.forEach(d => {
+        const data = d.data();
+        if (data.studentId) {
+          rMap[data.studentId] = { id: d.id, ...data };
+        }
+      });
+      setReflectionMap(rMap);
+    } catch (err) {
+      console.warn('Error loading reflections:', err);
+      setReflectionMap({});
+    } finally {
+      setLoadingReflections(false);
+    }
+
+    // 5. Fetch UA Enrollments and summaries if UA is active
     if (isUaActive) {
       setLoadingUaData(true);
       try {
@@ -307,7 +424,7 @@ export default function MonthlyReportPreviewPage() {
     }
   }, [selectedClassId, selectedYear, selectedSemester, selectedMonth]);
 
-  // Compute readiness stats using the pure shared helper (Requirement 1, 2, 3, 4, 5, 6)
+  // Compute readiness stats
   const readinessResult = React.useMemo(() => {
     return validateReportReadiness(
       {
@@ -339,646 +456,406 @@ export default function MonthlyReportPreviewPage() {
       }
     );
   }, [
-    selectedClassId,
-    selectedYear,
-    selectedSemester,
-    selectedMonth,
-    loadingClasses,
-    loadingStudents,
-    loadingSummary,
-    loadingComments,
-    loadingAttendance,
-    studentsError,
-    summaryError,
-    commentsError,
-    attendanceError,
-    students,
-    classSummary,
-    commentsMap,
-    attendanceAvailableForPeriod,
+    selectedClassId, selectedYear, selectedSemester, selectedMonth,
+    loadingClasses, loadingStudents, loadingSummary, loadingComments, loadingAttendance,
+    studentsError, summaryError, commentsError, attendanceError,
+    students, classSummary, commentsMap, attendanceAvailableForPeriod,
   ]);
 
   const { overallState, checklist, counts } = readinessResult;
-  const isReportReady = overallState === 'READY FOR FUTURE PUBLISH';
+
+  // Resolve weekly lessons and unit activities for current student
+  const resolvedWeeklyLessons = React.useMemo(() => {
+    if (!classSummary) return [];
+    const baseLessons = (classSummary.sections?.weeklyLessonsAndUnitActivities || [])
+      .filter(item => item.category === 'WEEKLY_LESSON')
+      .sort((a, b) => a.order - b.order);
+
+    let uaItems: any[] = [];
+    if (isUaActive && currentStudent) {
+      const studentEnrollments = unitActivityEnrollments.filter(
+        e => e.studentId === currentStudent.id && e.status === 'CONFIRMED'
+      );
+      uaItems = studentEnrollments.map((e, index) => {
+        const desc = semesterSummariesMap[e.normalizedUaName] || '';
+        return {
+          id: `ua_dyn_${e.normalizedUaName}_${index}`,
+          category: 'UNIT_ACTIVITY',
+          title: e.normalizedUaName,
+          summary: desc.trim() || '[Deskripsi aktivitas bulanan belum diisi di menu Unit Aktivitas.]'
+        };
+      }).sort((a, b) => a.title.localeCompare(b.title));
+    } else if (classSummary) {
+      uaItems = (classSummary.sections?.weeklyLessonsAndUnitActivities || [])
+        .filter(item => item.category === 'UNIT_ACTIVITY')
+        .sort((a, b) => a.order - b.order);
+    }
+
+    return [...baseLessons, ...uaItems];
+  }, [classSummary, isUaActive, currentStudent, unitActivityEnrollments, semesterSummariesMap]);
+
+  // Resolve approved self-exploration reflection slots for current student
+  const resolvedSelfExplorationSlots = React.useMemo(() => {
+    if (!currentStudent) return [];
+    const reflectionDoc = reflectionMap[currentStudent.id];
+    if (reflectionDoc?.overallStatus !== 'APPROVED') return [];
+    return (reflectionDoc.slots || [])
+      .filter((slot: any) => slot.status === 'APPROVED' && slot.reflectionText?.trim())
+      .sort((a: any, b: any) => a.slot - b.slot);
+  }, [currentStudent, reflectionMap]);
+
+  // Current student specific data
+  const currentComment = currentStudent ? commentsMap[currentStudent.id] : null;
+  const currentAttendance = currentStudent ? studentAttendanceMap[currentStudent.id] : null;
+
+  // Navigation handlers
+  const handlePrevStudent = () => {
+    if (selectedStudentIndex > 0) {
+      setSelectedStudentIndex(selectedStudentIndex - 1);
+    }
+  };
+
+  const handleNextStudent = () => {
+    if (selectedStudentIndex < students.length - 1) {
+      setSelectedStudentIndex(selectedStudentIndex + 1);
+    }
+  };
+
+  const handlePrint = () => {
+    if (!currentStudent) {
+      toast.error('Pilih siswa terlebih dahulu.');
+      return;
+    }
+    window.print();
+  };
 
   return (
-    <div id="monthly-report-preview-page" className="min-h-screen bg-slate-50/50 p-6">
-      {/* Header */}
-      <div className="mx-auto max-w-6xl mb-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#002366]/10 text-[#002366] border border-[#002366]/20">
-                JUNIOR HIGH ONLY
-              </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                Pratinjau & Validasi Rapor Bulanan
-              </span>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <FileText className="text-[#002366]" size={26} />
-              Preview & Validasi Rapor Bulanan
-            </h1>
-            <p className="text-sm text-slate-500 mt-0.5">
-              Gunakan workspace ini untuk memvalidasi kelengkapan ringkasan kelas dan komentar per siswa sebelum proses publikasi.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 self-start md:self-center">
-            <button
-              onClick={loadReportData}
-              disabled={loadingStudents || loadingSummary || loadingComments}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={15} className={(loadingStudents || loadingSummary || loadingComments) ? 'animate-spin' : ''} />
-              Muat Ulang
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Context Filters */}
-      <div className="mx-auto max-w-6xl bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
-              <Calendar size={13} className="text-[#002366]" /> Tahun Ajaran
-            </label>
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
-              className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50"
-            >
-              <option value="2025/2026">2025/2026</option>
-              <option value="2026/2027">2026/2027</option>
-              <option value="2027/2028">2027/2028</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-              Semester
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {['1', '2'].map((sem) => (
-                <button
-                  key={sem}
-                  onClick={() => setSelectedSemester(sem)}
-                  className={`py-2 text-sm font-semibold rounded-lg border transition-all ${
-                    selectedSemester === sem
-                      ? 'bg-[#002366] text-white border-[#002366] shadow-sm'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  Sem {sem}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
-              <Calendar size={13} className="text-[#002366]" /> Periode Bulan
-            </label>
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5 bg-slate-50/50"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
-              <Users size={13} className="text-[#002366]" /> Kelas Junior High
-            </label>
-            {loadingClasses ? (
-              <div className="h-10 flex items-center px-3 bg-slate-50 rounded-lg text-xs text-slate-400">
-                <RefreshCw size={14} className="animate-spin mr-2" />
-                Memuat kelas...
+    <div className="min-h-screen bg-slate-100/60 pb-16">
+      
+      {/* Top Banner & Control Zone (Screen only, hidden on print) */}
+      <div className="print:hidden bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 py-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#002366]/10 text-[#002366] border border-[#002366]/20">
+                  PREVIEW DOKUMEN RAPOR
+                </span>
+                <span className="text-xs text-slate-400">· 2 Halaman A4 Identik PDF</span>
               </div>
-            ) : (
-              <select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50 font-medium"
-              >
-                <option value="" disabled>
-                  {classesList.length === 0 
-                    ? "Tidak ada kelas aktif" 
-                    : "-- Pilih Kelas --"}
-                </option>
-                {classesList.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-
-        {!loadingClasses && classesList.length === 0 && (
-          <div className="mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
-            <AlertCircle size={15} className="shrink-0" />
-            <span>Tidak ada kelas aktif dengan siswa terdaftar pada konteks ini.</span>
-          </div>
-        )}
-      </div>
-
-      {/* Main Assembly Grid */}
-      <div className="mx-auto max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Left Hand: Readiness & Checklist */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="border-b border-slate-150 bg-slate-50/50 px-4 py-3">
-              <h2 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-                <CheckCircle2 size={16} className="text-[#002366]" />
-                Pre-Publish Validation
-              </h2>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                <FileText className="text-[#002366]" size={24} />
+                Pratinjau Rapor Bulanan Junior High
+              </h1>
             </div>
 
-            <div className="p-4 space-y-4">
-              {/* Readiness status card */}
-              <div className={`p-4 rounded-xl border text-center ${
-                overallState === 'READY FOR FUTURE PUBLISH'
-                  ? 'bg-emerald-50/60 border-emerald-200 text-emerald-800'
-                  : overallState === 'CHECKING'
-                  ? 'bg-sky-50/50 border-sky-200 text-sky-800'
-                  : 'bg-amber-50/50 border-amber-200 text-amber-800'
-              }`}>
-                <span className="text-[10px] font-bold uppercase tracking-widest block mb-1">Status Kesiapan</span>
-                <strong className="text-base font-black tracking-tight">
-                  {overallState === 'READY FOR FUTURE PUBLISH' 
-                    ? 'READY FOR FUTURE PUBLISH' 
-                    : overallState === 'CHECKING'
-                    ? 'CHECKING'
-                    : 'NOT READY'}
-                </strong>
-                <p className="text-xs mt-1.5 leading-relaxed font-medium">
-                  {overallState === 'READY FOR FUTURE PUBLISH' 
-                    ? 'All required report data is complete. This report has not been published.'
-                    : overallState === 'CHECKING'
-                    ? 'Memeriksa kelengkapan data rapor...'
-                    : 'Complete the items below before this report can enter a future publish workflow.'}
-                </p>
-              </div>
-
-              {/* Step checklist */}
-              <div className="space-y-2.5 pt-2">
-                {checklist.map(item => {
-                  const stateColorClass = (() => {
-                    switch (item.state) {
-                      case 'Ready': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
-                      case 'Missing': return 'bg-rose-100 text-rose-800 border-rose-200';
-                      case 'Incomplete': return 'bg-amber-100 text-amber-800 border-amber-200';
-                      case 'Unavailable': return 'bg-slate-100 text-slate-600 border-slate-200';
-                      case 'Loading': return 'bg-blue-100 text-blue-800 border-blue-200';
-                      case 'Error': return 'bg-red-100 text-red-900 border-red-200';
-                      default: return 'bg-slate-150 text-slate-700 border-slate-200';
-                    }
-                  })();
-
-                  const stateIcon = (() => {
-                    switch (item.state) {
-                      case 'Ready': return <CheckCircle className="text-emerald-500 shrink-0" size={14} />;
-                      case 'Missing': return <AlertCircle className="text-rose-500 shrink-0" size={14} />;
-                      case 'Incomplete': return <HelpCircle className="text-amber-500 shrink-0" size={14} />;
-                      case 'Unavailable': return <HelpCircle className="text-slate-400 shrink-0" size={14} />;
-                      case 'Loading': return <RefreshCw className="text-blue-500 animate-spin shrink-0" size={14} />;
-                      case 'Error': return <ShieldAlert className="text-red-600 shrink-0" size={14} />;
-                      default: return <HelpCircle className="text-slate-400 shrink-0" size={14} />;
-                    }
-                  })();
-
-                  return (
-                    <div key={item.key} className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/50 flex flex-col gap-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2">
-                          {stateIcon}
-                          <span className="font-bold text-slate-700">{item.label}</span>
-                        </div>
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${stateColorClass}`}>
-                          {item.state}
-                        </span>
-                      </div>
-                      {item.reason && (
-                        <p className="text-[10px] text-slate-500 leading-normal pl-5 font-medium italic">
-                          {item.reason}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {/* Counts Panel */}
-                <div className="border-t border-slate-100 pt-3 mt-4 space-y-1.5 text-[11px] text-slate-500">
-                  <div className="font-bold text-[#002366] uppercase tracking-wider text-[9px] mb-2">
-                    Statistik Data
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Siswa Aktif:</span>
-                    <strong className="text-slate-700 font-bold">{counts.totalStudents} siswa</strong>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Komentar FINAL:</span>
-                    <strong className="text-emerald-700 font-bold">{counts.finalCommentsCount}</strong>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Komentar DRAFT:</span>
-                    <strong className="text-amber-700 font-bold">{counts.draftCommentsCount}</strong>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Belum Komentar / Draft:</span>
-                    <strong className="text-rose-700 font-bold">{counts.missingFinalCommentsCount}</strong>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Status Kehadiran Periode:</span>
-                    <strong className={`font-bold ${counts.attendanceAvailable ? 'text-emerald-700' : 'text-slate-500'}`}>
-                      {counts.attendanceAvailable ? 'Tercatat (Tersedia)' : 'Tidak Tersedia'}
-                    </strong>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          </div>
-
-          {/* Context description card */}
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 text-xs text-slate-500 space-y-3">
-            <h3 className="font-bold text-slate-700 flex items-center gap-1">
-              <Info size={14} className="text-[#002366]" /> Informasi Preview
-            </h3>
-            <p>
-              Halaman ini menyatukan data secara read-only untuk melakukan review pra-cetak. Perubahan data tidak dapat dilakukan di sini secara langsung.
-            </p>
-            <div className="space-y-1.5 pt-2 border-t border-slate-150">
-              <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
-                <span>Ubah Ringkasan di <strong>Report Summary</strong></span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
-                <span>Tulis komentar di <strong>Report Comments</strong></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Hand: Class Summary Rendering & Students Listing */}
-        <div className="lg:col-span-2 space-y-6">
-          
-          {/* Class Summary Container */}
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="border-b border-slate-150 bg-slate-50/50 px-5 py-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">Review Ringkasan Kelas (Summary)</h3>
-                <p className="text-[11px] text-slate-400">Diambil langsung dari workspace ringkasan rapor bulanan kelas.</p>
-              </div>
+            {/* Quick Actions Bar */}
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => navigate('/junior-high/monthly-report')}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[#002366] hover:underline"
+                onClick={handlePrint}
+                disabled={!currentStudent}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#002366] text-white hover:bg-[#002366]/90 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                title="Cetak rapor atau simpan sebagai file PDF"
               >
-                Edit Summary <ArrowRight size={13} />
+                <Printer size={15} />
+                Cetak / Simpan PDF
               </button>
-            </div>
 
-            <div className="p-5">
-              {loadingSummary ? (
-                <div className="py-6 text-center">
-                  <RefreshCw size={20} className="animate-spin text-slate-400 mx-auto mb-2" />
-                  <span className="text-xs text-slate-400">Memuat summary...</span>
-                </div>
-              ) : !classSummary ? (
-                <div className="border border-dashed border-slate-200 rounded-xl p-6 text-center bg-slate-50/40">
-                  <AlertCircle size={24} className="mx-auto text-amber-500 mb-2" />
-                  <p className="text-xs font-semibold text-slate-600">Class summary has not been completed for this context.</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Gunakan tautan di kanan atas untuk mengisi ringkasan pembelajaran.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {/* Learning Journey Box */}
-                  <div className="border border-slate-100 rounded-xl p-4 bg-slate-50/50">
-                    <span className="text-[10px] font-bold text-[#002366] uppercase block mb-1">Learning Journey</span>
-                    <h4 className="text-sm font-bold text-slate-800">{classSummary.sections?.learningJourney?.title || '-'}</h4>
-                    <p className="text-xs text-slate-600 mt-1.5 leading-relaxed whitespace-pre-wrap">
-                      {classSummary.sections?.learningJourney?.summary || '-'}
-                    </p>
-                  </div>
-
-                  {/* Weekly & Unit Activities list rendering */}
-                  {classSummary.sections?.weeklyLessonsAndUnitActivities && classSummary.sections.weeklyLessonsAndUnitActivities.length > 0 && (() => {
-                    const filteredItems = isUaActive 
-                      ? classSummary.sections.weeklyLessonsAndUnitActivities.filter(item => item.category === 'WEEKLY_LESSON')
-                      : classSummary.sections.weeklyLessonsAndUnitActivities;
-
-                    if (filteredItems.length === 0 && !isUaActive) return null;
-
-                    return (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between animate-fade-in">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                            Weekly Lessons {!isUaActive && '& Unit Activities'}
-                          </span>
-                          {isUaActive && (
-                            <span className="text-[9px] font-extrabold text-[#002366] bg-blue-50/50 border border-blue-100 px-2 py-0.5 rounded">
-                              Unit Activities Terpusat & Dinamis (Aktif)
-                            </span>
-                          )}
-                        </div>
-                        {filteredItems.length > 0 ? (
-                          <div className="space-y-2">
-                            {filteredItems.map((item, index) => (
-                              <div 
-                                key={item.id || index}
-                                className={`border rounded-lg p-3 text-xs flex gap-3 ${
-                                  item.category === 'WEEKLY_LESSON' ? 'bg-blue-50/20 border-blue-100' : 'bg-purple-50/10 border-purple-100'
-                                }`}
-                              >
-                                <span className="font-bold text-slate-400 mt-0.5">#{index + 1}</span>
-                                <div className="space-y-1">
-                                  <div className="flex items-center gap-1.5">
-                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                                      item.category === 'WEEKLY_LESSON' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
-                                    }`}>
-                                      {item.category === 'WEEKLY_LESSON' ? 'WEEKLY' : 'UA'}
-                                    </span>
-                                    <strong className="text-slate-800">{item.title}</strong>
-                                  </div>
-                                  <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{item.summary}</p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="border border-dashed border-slate-200 rounded-xl p-6 text-center bg-slate-50/20 text-slate-400 text-xs italic">
-                            Belum ada item Weekly Lesson ditambahkan.
-                          </div>
-                        )}
-                        {isUaActive && (
-                          <p className="text-[10.5px] text-slate-400 leading-normal italic mt-2">
-                            * Unit Activity siswa bersifat dinamis berdasarkan pendaftaran terkonfirmasi di **Junior High → Unit Aktivitas** dan tidak tercantum pada ringkasan kelas di atas. Narasi lengkap akan dimuat secara otomatis di lembar PDF masing-masing siswa.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Student Comment Assembly List */}
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="border-b border-slate-150 bg-slate-50/50 px-5 py-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">Assembly Komentar & Kehadiran Siswa</h3>
-                <p className="text-[11px] text-slate-400">Roster siswa terurut berdasarkan No. Absen dengan komentar gabungan.</p>
-              </div>
               <button
                 onClick={() => navigate('/junior-high/monthly-comments')}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[#002366] hover:underline"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
               >
-                Tulis Komentar <ArrowRight size={13} />
+                <MessageSquare size={14} className="text-[#002366]" />
+                Komentar Siswa
+              </button>
+
+              <button
+                onClick={() => navigate('/junior-high/monthly-report')}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
+              >
+                <BookOpen size={14} className="text-[#002366]" />
+                Input Materi Kelas
+              </button>
+
+              <button
+                onClick={() => navigate('/junior-high/monthly-report-pdf')}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
+              >
+                <Download size={14} className="text-[#002366]" />
+                PDF Massal
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 pt-5 space-y-5">
+        
+        {/* Context Filters Card (Screen only) */}
+        <div className="print:hidden bg-white border border-slate-200 rounded-2xl shadow-sm p-4 sm:p-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
+                <Calendar size={13} className="text-[#002366]" /> Tahun Ajaran
+              </label>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="w-full text-xs sm:text-sm rounded-xl border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50 font-medium"
+              >
+                <option value="2025/2026">2025/2026</option>
+                <option value="2026/2027">2026/2027</option>
+                <option value="2027/2028">2027/2028</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                Semester
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {['1', '2'].map((sem) => (
+                  <button
+                    key={sem}
+                    type="button"
+                    onClick={() => setSelectedSemester(sem)}
+                    className={`py-2 text-xs sm:text-sm font-semibold rounded-xl border transition-all cursor-pointer ${
+                      selectedSemester === sem
+                        ? 'bg-[#002366] text-white border-[#002366] shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    Sem {sem}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
+                <Calendar size={13} className="text-[#002366]" /> Periode Bulan
+              </label>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="w-full text-xs sm:text-sm rounded-xl border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5 bg-slate-50/50 font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
+                <Users size={13} className="text-[#002366]" /> Kelas Junior High
+              </label>
+              {loadingClasses ? (
+                <div className="h-10 flex items-center px-3 bg-slate-50 rounded-xl text-xs text-slate-400">
+                  <RefreshCw size={14} className="animate-spin mr-2" />
+                  Memuat kelas...
+                </div>
+              ) : (
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="w-full text-xs sm:text-sm rounded-xl border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50 font-medium"
+                >
+                  <option value="" disabled>
+                    {classesList.length === 0 ? "Tidak ada kelas aktif" : "-- Pilih Kelas --"}
+                  </option>
+                  {classesList.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Readiness Compact Summary Strip (Screen only) */}
+        {selectedClassId && selectedMonth && (
+          <div className="print:hidden bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-bold text-slate-700 flex items-center gap-1.5 uppercase text-[10px] tracking-wider text-[#002366]">
+                  <Info size={14} className="text-[#002366]" /> Kesiapan Dokumen:
+                </span>
+
+                {/* Ringkasan Kelas Badge */}
+                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                  classSummary?.sections?.learningJourney?.summary
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                }`}>
+                  {classSummary?.sections?.learningJourney?.summary ? '✓ Ringkasan Kelas Siap' : '⚠️ Ringkasan Belum Diisi'}
+                </span>
+
+                {/* Current Student Comment Badge */}
+                {currentStudent && (
+                  <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                    currentComment?.status === 'FINAL'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : currentComment?.status === 'DRAFT'
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : 'bg-rose-50 text-rose-800 border-rose-200'
+                  }`}>
+                    {currentComment?.status === 'FINAL'
+                      ? '✓ Komentar: FINAL'
+                      : currentComment?.status === 'DRAFT'
+                      ? '⚠️ Komentar: DRAFT'
+                      : '❌ Belum Ada Komentar'}
+                  </span>
+                )}
+
+                {/* Kehadiran Badge */}
+                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                  attendanceAvailableForPeriod
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}>
+                  {attendanceAvailableForPeriod ? '✓ Kehadiran Tercatat' : 'Kehadiran Nihil'}
+                </span>
+
+                {/* Total Class Progress */}
+                <span className="text-[11px] text-slate-500 font-medium pl-1">
+                  (Kelas: <strong>{counts.finalCommentsCount}</strong> dari <strong>{counts.totalStudents}</strong> siswa FINAL)
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowReadinessDetails(!showReadinessDetails)}
+                className="text-xs font-semibold text-[#002366] hover:underline self-start md:self-auto"
+              >
+                {showReadinessDetails ? 'Sembunyikan Rincian ▲' : 'Lihat Rincian Validasi ▼'}
               </button>
             </div>
 
-            <div className="divide-y divide-slate-100">
-              {/* Attendance status banner notice */}
-              {selectedClassId && selectedYear && selectedSemester && selectedMonth && (
-                <div className="px-5 py-3 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs font-semibold text-slate-500 border-b border-slate-100">
-                  <div className="flex items-center gap-2">
-                    <Calendar size={14} className="text-[#002366]" />
-                    <span>Presensi Kehadiran Bulanan</span>
-                  </div>
-                  <div>
-                    {loadingAttendance ? (
-                      <span className="inline-flex items-center gap-1.5 text-blue-650">
-                        <RefreshCw size={12} className="animate-spin" /> Memuat data presensi...
+            {/* Expandable Readiness Details */}
+            {showReadinessDetails && (
+              <div className="mt-4 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                {checklist.map(item => (
+                  <div key={item.key} className="p-2.5 rounded-xl border border-slate-100 bg-slate-50/50 flex flex-col gap-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-700">{item.label}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                        item.state === 'Ready' ? 'bg-emerald-100 text-emerald-800' :
+                        item.state === 'Incomplete' ? 'bg-amber-100 text-amber-800' :
+                        'bg-slate-150 text-slate-700'
+                      }`}>
+                        {item.state}
                       </span>
-                    ) : attendanceError ? (
-                      attendanceErrorType === 'permission-denied' ? (
-                        <span className="text-rose-600 font-bold bg-rose-50 px-2.5 py-0.5 rounded border border-rose-100">
-                          Attendance data could not be accessed for this report period.
-                        </span>
-                      ) : (
-                        <span className="text-rose-600 font-bold bg-rose-50 px-2.5 py-0.5 rounded border border-rose-100">
-                          Attendance data could not be loaded for this report period.
-                        </span>
-                      )
-                    ) : !attendanceAvailableForPeriod ? (
-                      <span className="text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded border border-amber-100">
-                        Attendance has not been recorded for this report period.
-                      </span>
-                    ) : (
-                      <span className="text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-100">
-                        Attendance is recorded for this period
-                      </span>
+                    </div>
+                    {item.reason && (
+                      <p className="text-[10px] text-slate-400 italic leading-snug">{item.reason}</p>
                     )}
                   </div>
-                </div>
-              )}
-
-              {loadingStudents || loadingComments ? (
-                <div className="py-12 text-center">
-                  <RefreshCw size={24} className="animate-spin text-slate-400 mx-auto mb-2" />
-                  <span className="text-xs text-slate-400">Assembling roster...</span>
-                </div>
-              ) : students.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-xs">
-                  Tidak ada data siswa dalam kelas ini.
-                </div>
-              ) : (
-                students.map((student, index) => {
-                  const commentObj = commentsMap[student.id];
-                  const absNum = student.attendanceNumber ?? student.noAbsen ?? student.rollNumber ?? student.rosterNumber ?? (index + 1);
-                  const status = commentObj?.status || 'NOT_FOUND';
-
-                  return (
-                    <div key={student.id} className="p-5 hover:bg-slate-50/50 transition-colors space-y-3">
-                      
-                      {/* Student Card Header info */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center font-bold text-xs shrink-0">
-                            {absNum}
-                          </span>
-                          <div>
-                            <h4 className="text-sm font-bold text-slate-800">{student.name}</h4>
-                            <span className="text-[10px] text-slate-400 font-mono">NIS: {student.id}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 self-start sm:self-center">
-                          {/* Status badge */}
-                          {status === 'FINAL' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                              FINAL
-                            </span>
-                          ) : status === 'DRAFT' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                              Draft
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200">
-                              Belum Diisi
-                            </span>
-                          )}
-
-                          <button
-                            onClick={() => navigate('/junior-high/monthly-comments')}
-                            className="p-1 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700 text-xs font-semibold px-2"
-                            title="Tulis atau edit komentar di Workspace Komentar"
-                          >
-                            Open Comments
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Attendance labels & placeholders */}
-                      <div className="grid grid-cols-3 gap-2 border border-slate-100 rounded-lg p-2.5 bg-slate-50/30 text-xs text-center">
-                        <div>
-                          <span className="block text-[10px] font-medium text-slate-400">Sick Leave</span>
-                          <strong className="text-slate-700">
-                            {loadingAttendance ? (
-                              <span className="text-slate-300">...</span>
-                            ) : attendanceAvailableForPeriod && studentAttendanceMap[student.id] ? (
-                              studentAttendanceMap[student.id].sickLeave ?? '-'
-                            ) : (
-                              '-'
-                            )}
-                          </strong>
-                        </div>
-                        <div className="border-x border-slate-100">
-                          <span className="block text-[10px] font-medium text-slate-400">Excused Leave</span>
-                          <strong className="text-slate-700">
-                            {loadingAttendance ? (
-                              <span className="text-slate-300">...</span>
-                            ) : attendanceAvailableForPeriod && studentAttendanceMap[student.id] ? (
-                              studentAttendanceMap[student.id].excusedLeave ?? '-'
-                            ) : (
-                              '-'
-                            )}
-                          </strong>
-                        </div>
-                        <div>
-                          <span className="block text-[10px] font-medium text-slate-400">Absent</span>
-                          <strong className="text-slate-700">
-                            {loadingAttendance ? (
-                              <span className="text-slate-300">...</span>
-                            ) : attendanceAvailableForPeriod && studentAttendanceMap[student.id] ? (
-                              studentAttendanceMap[student.id].absent ?? '-'
-                            ) : (
-                              '-'
-                            )}
-                          </strong>
-                        </div>
-                      </div>
-
-                      {/* Dynamic Unit Activities for this student (Requirement 3 & 4) */}
-                      {isUaActive && (() => {
-                        const studentEnrollments = unitActivityEnrollments.filter(e => e.studentId === student.id);
-                        if (studentEnrollments.length === 0) return null;
-                        
-                        return (
-                          <div className="space-y-2 mt-3 mb-1">
-                            <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">
-                              Unit Activities ({studentEnrollments.length})
-                            </span>
-                            <div className="space-y-2">
-                              {studentEnrollments.map((enroll, eIdx) => {
-                                const uaName = enroll.normalizedUaName;
-                                const narrative = semesterSummariesMap[uaName];
-                                
-                                if (!narrative || narrative.trim().length === 0) {
-                                  // Enrollment exists but narrative is missing: show staff warning ONLY
-                                  return (
-                                    <div key={eIdx} className="border border-dashed border-amber-200 bg-amber-50/30 p-2.5 rounded-lg text-[11px] flex gap-2 text-amber-800 leading-normal">
-                                      <ShieldAlert size={14} className="shrink-0 text-amber-600 mt-0.5" />
-                                      <div>
-                                        <p className="font-bold">{uaName}</p>
-                                        <p className="text-[10px] font-medium text-amber-700">
-                                          Peringatan Staf: Deskripsi narasi bulanan belum diisi untuk "{uaName}". Orang tua tidak akan melihat bagian kosong ini pada lembar PDF.
-                                        </p>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-
-                                return (
-                                  <div key={eIdx} className="border border-purple-100 bg-purple-50/10 p-3 rounded-lg text-xs space-y-1">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="bg-purple-100 text-purple-800 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase">
-                                        UA • {enroll.category || 'Dinamis'}
-                                      </span>
-                                      <strong className="text-slate-800">{uaName}</strong>
-                                    </div>
-                                    <p className="text-slate-650 leading-relaxed whitespace-pre-wrap">{narrative}</p>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Comment text rendering wrapper based on status */}
-                      <div className="text-xs">
-                        {status === 'FINAL' ? (
-                          <div className="p-3 rounded-lg border border-slate-100 bg-slate-50/40 text-slate-650 leading-relaxed whitespace-pre-wrap">
-                            {commentObj.generalComment}
-                          </div>
-                        ) : status === 'DRAFT' ? (
-                          <div className="p-3 rounded-lg border border-amber-100 bg-amber-50/20 text-slate-500 italic text-center">
-                            Draft comment — not included in final report
-                          </div>
-                        ) : (
-                          <div className="p-3 rounded-lg border border-dashed border-slate-200 text-slate-400 italic text-center">
-                            No final comment yet
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          {/* Data Integrity Notices banner list */}
-          <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-5 space-y-2.5">
-            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide">Data Integrity Notices</h4>
-            <div className="space-y-1.5 text-xs text-slate-500">
-              {!classSummary && (
-                <div className="flex items-center gap-2 text-rose-600 font-medium">
-                  <ShieldAlert size={14} />
-                  <span>Missing class summary for the selected period.</span>
-                </div>
-              )}
-              {counts.draftCommentsCount > 0 && (
-                <div className="flex items-center gap-2 text-amber-600 font-medium">
-                  <ShieldAlert size={14} />
-                  <span>Draft comments found. Drafts are excluded from the official final reports.</span>
-                </div>
-              )}
-              {counts.missingFinalCommentsCount > 0 && (
-                <div className="flex items-center gap-2 text-amber-600 font-medium">
-                  <ShieldAlert size={14} />
-                  <span>{counts.missingFinalCommentsCount} student(s) do not have a finalized general comment.</span>
-                </div>
-              )}
-              <div className="flex items-center gap-2 text-slate-400">
-                <Info size={14} />
-                <span>Attendance not connected; values shown as `-`.</span>
+                ))}
               </div>
-              <div className="flex items-center gap-2 text-slate-400">
-                <Info size={14} />
-                <span>This is an internal preview. No report has been published or shared.</span>
+            )}
+          </div>
+        )}
+
+        {/* Student Navigation Toolbar (Screen only) */}
+        {students.length > 0 && (
+          <div className="print:hidden bg-white border border-slate-200 rounded-2xl shadow-sm p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+            
+            {/* Left: Previous / Next & Index */}
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={handlePrevStudent}
+                disabled={selectedStudentIndex <= 0}
+                className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Siswa Sebelumnya"
+              >
+                <ChevronLeft size={18} />
+              </button>
+
+              <span className="text-xs font-semibold text-slate-600 px-2 min-w-[120px] text-center">
+                Siswa <strong>{selectedStudentIndex + 1}</strong> dari <strong>{students.length}</strong>
+              </span>
+
+              <button
+                type="button"
+                onClick={handleNextStudent}
+                disabled={selectedStudentIndex >= students.length - 1}
+                className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Siswa Selanjutnya"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+
+            {/* Center/Right: Dropdown selector */}
+            <div className="flex flex-1 items-center gap-3 w-full sm:w-auto justify-end">
+              <div className="w-full sm:max-w-xs">
+                <select
+                  value={selectedStudentIndex}
+                  onChange={(e) => setSelectedStudentIndex(Number(e.target.value))}
+                  className="w-full text-xs sm:text-sm rounded-xl border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50 font-semibold text-slate-800"
+                >
+                  {students.map((st, idx) => {
+                    const cStat = commentsMap[st.id]?.status;
+                    const cMarker = cStat === 'FINAL' ? '✓' : cStat === 'DRAFT' ? '✎' : '○';
+                    const noAbsen = st.attendanceNumber ?? st.noAbsen ?? (idx + 1);
+                    return (
+                      <option key={st.id} value={idx}>
+                        {noAbsen}. {st.name} ({cMarker} {cStat || 'Belum Diisi'})
+                      </option>
+                    );
+                  })}
+                </select>
               </div>
             </div>
-          </div>
 
+          </div>
+        )}
+
+        {/* Main Document Viewer Container */}
+        <div className="flex justify-center py-2">
+          {loadingStudents || loadingSummary ? (
+            <div className="py-24 text-center">
+              <RefreshCw size={32} className="animate-spin text-[#002366] mx-auto mb-3" />
+              <p className="text-sm font-semibold text-slate-600">Menyusun dokumen rapor bulanan...</p>
+              <p className="text-xs text-slate-400 mt-1">Mengambil data perjalanan belajar, materi mingguan, kehadiran, dan komentar siswa.</p>
+            </div>
+          ) : !selectedClassId ? (
+            <div className="py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl max-w-lg mx-auto p-8 bg-white/70">
+              <Users size={36} className="text-slate-300 mx-auto mb-3" />
+              <h3 className="text-sm font-bold text-slate-700">Pilih Kelas Terlebih Dahulu</h3>
+              <p className="text-xs text-slate-400 mt-1">Pilih kelas di filter atas untuk melihat pratinjau lembar rapor bulanan siswa.</p>
+            </div>
+          ) : students.length === 0 ? (
+            <div className="py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl max-w-lg mx-auto p-8 bg-white/70">
+              <AlertCircle size={36} className="text-amber-500 mx-auto mb-3" />
+              <h3 className="text-sm font-bold text-slate-700">Tidak Ada Siswa Aktif</h3>
+              <p className="text-xs text-slate-400 mt-1">Belum ada siswa yang terdaftar aktif pada kelas ini untuk tahun ajaran terpilih.</p>
+            </div>
+          ) : currentStudent ? (
+            <div className="w-full flex justify-center overflow-x-auto pb-8">
+              {/* Actual 2-Page A4 Document Sheet */}
+              <JuniorHighMonthlyReportDocument
+                documentIdPrefix="jh-preview"
+                student={currentStudent}
+                className={selectedClassObj?.name || ''}
+                periodKey={selectedMonth}
+                logos={logos}
+                reportConfig={reportConfig}
+                homeroomTeacherProfile={homeroomTeacherProfile}
+                homeroomTeacherName={homeroomTeacherProfile?.displayName || selectedClassObj?.homeroomTeacherName || 'Wali Kelas'}
+                classSummary={classSummary}
+                weeklyLessons={resolvedWeeklyLessons}
+                selfExplorationSlots={resolvedSelfExplorationSlots}
+                attendance={currentAttendance || null}
+                attendanceAvailable={attendanceAvailableForPeriod}
+                comment={currentComment || null}
+                isPreview={true}
+              />
+            </div>
+          ) : null}
         </div>
+
       </div>
+
     </div>
   );
 }
