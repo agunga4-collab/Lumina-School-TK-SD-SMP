@@ -77,4 +77,23 @@
     size: A4 portrait;
     margin: 15mm;
   }
+
+  /* Junior High Monthly Report Print Sheets */
+  .jh-monthly-report-wrapper {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .jh-page-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 auto !important;
+    page-break-inside: avoid !important;
+  }
+
+  .jh-page-sheet:first-child {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
 }
+

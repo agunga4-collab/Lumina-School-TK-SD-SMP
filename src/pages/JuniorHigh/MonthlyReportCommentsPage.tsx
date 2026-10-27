@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   MessageSquare, Calendar, Users, Save, CheckCircle2, RefreshCw, 
   AlertCircle, Info, Check, Search, X, Edit3, UserCheck, Eye, EyeOff, Sparkles,
-  Copy, Clipboard, Download, Upload, AlertTriangle
+  Copy, Clipboard, Download, Upload, AlertTriangle, Wand2, BookOpen, Layers
 } from 'lucide-react';
 import { db, getClasses, getActiveStudents } from '../../lib/firebase';
 import { doc, getDoc, getDocs, setDoc, query, collection, where, writeBatch } from 'firebase/firestore';
@@ -13,6 +13,54 @@ import { toast } from 'sonner';
 import type { Class, Student, JuniorHighMonthlyReportComment } from '../../types';
 import * as XLSX from 'xlsx';
 import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
+
+export const JH_MONTHLY_TEMPLATES = [
+  {
+    id: 'ACADEMIC_INDEPENDENCE',
+    title: 'Prestasi & Kemandirian Belajar',
+    desc: 'Fokus pada penguasaan tujuan pembelajaran (LO), inisiatif, dan ketuntasan tugas mandiri.'
+  },
+  {
+    id: 'ACTIVE_COLLABORATION',
+    title: 'Perkembangan & Keaktifan Kolaborasi',
+    desc: 'Fokus pada interaksi positif, keaktifan bertanya, dan kerja sama tim.'
+  },
+  {
+    id: 'GUIDANCE_FOCUS',
+    title: 'Pendampingan & Peningkatan Fokus',
+    desc: 'Fokus pada konsistensi fokus belajar, manajemen waktu, dan ketelitian.'
+  },
+  {
+    id: 'ISLAMIC_CHARACTER',
+    title: 'Karakter Islami & Kepemimpinan',
+    desc: 'Fokus pada akhlak mulia, adab islami, empati, dan kepedulian sosial.'
+  }
+];
+
+export const JH_MONTHLY_STRENGTHS_BANK = [
+  'Aktif dan antusias dalam mengikuti proses pembelajaran di kelas',
+  'Menunjukkan rasa ingin tahu yang tinggi dan daya nalar kritis',
+  'Disiplin, bertanggung jawab, dan tepat waktu dalam menuntaskan tugas',
+  'Memiliki inisiatif belajar mandiri dan adaptasi yang sangat baik',
+  'Mampu bekerja sama dan menghargai pandangan teman dalam kerja kelompok',
+  'Menunjukkan adab sopan santun dan kepedulian sosial yang konsisten'
+];
+
+export const JH_MONTHLY_ACHIEVEMENTS_BANK = [
+  'Memahami tujuan pembelajaran (LO) bulan ini dengan penguasaan yang sangat baik',
+  'Menunjukkan peningkatan signifikan dalam penyelesaian tugas dan proyek kelas',
+  'Mampu mempresentasikan hasil belajar dan gagasan dengan percaya diri',
+  'Konsisten dalam mengaplikasikan konsep pelajaran pada pemecahan masalah',
+  'Aktif berpartisipasi dalam aktivitas eksplorasi dan unjuk bakat siswa'
+];
+
+export const JH_MONTHLY_NEEDS_IMPROVEMENT_BANK = [
+  'mempertahankan konsistensi fokus selama sesi pengerjaan tugas mandiri',
+  'lebih percaya diri dalam mengungkapkan pendapat dan mengajukan pertanyaan di kelas',
+  'meningkatkan ketelitian dengan memeriksa kembali hasil kerja sebelum dikumpulkan',
+  'mengoptimalkan manajemen waktu dalam menyelesaikan setiap rangkaian aktivitas belajar',
+  'lebih aktif berkonsultasi dengan guru saat menemui materi atau tugas yang menantang'
+];
 
 const indonesianMonths = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -28,6 +76,7 @@ function getIndonesianMonthLabel(periodKey: string): string {
   }
   return periodKey;
 }
+
 
 // Helper to compute previous month code in format YYYY-MM
 const getPreviousMonthKey = (periodKey: string): string => {
@@ -176,6 +225,110 @@ export default function MonthlyReportCommentsPage() {
   const [importFile, setImportFile] = React.useState<File | null>(null);
   const [showDraftOverwriteOption, setShowDraftOverwriteOption] = React.useState<boolean>(false);
   const [isImporting, setIsImporting] = React.useState<boolean>(false);
+
+  // Indonesian Comment Generator States
+  const [showGeneratorModal, setShowGeneratorModal] = React.useState<boolean>(false);
+  const [generatorStudent, setGeneratorStudent] = React.useState<Student | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>('ACADEMIC_INDEPENDENCE');
+  const [genNickname, setGenNickname] = React.useState<string>('');
+  const [genGender, setGenGender] = React.useState<'MALE' | 'FEMALE'>('MALE');
+  const [genStrengths, setGenStrengths] = React.useState<string[]>([]);
+  const [genAchievements, setGenAchievements] = React.useState<string[]>([]);
+  const [genNeeds, setGenNeeds] = React.useState<string[]>([]);
+  const [genManualNotes, setGenManualNotes] = React.useState<string>('');
+  const [genDraftText, setGenDraftText] = React.useState<string>('');
+
+  const handleOpenGenerator = (student: Student) => {
+    setGeneratorStudent(student);
+    const existing = commentsMap[student.id]?.generalComment || '';
+    const sName = student.name || '';
+    const firstName = sName.split(' ')[0] || sName;
+    const detectedGender = (student.gender === 'P' || student.gender === 'FEMALE') ? 'FEMALE' : 'MALE';
+
+    setGenNickname(firstName);
+    setGenGender(detectedGender);
+    setSelectedTemplateId('ACADEMIC_INDEPENDENCE');
+    setGenStrengths([JH_MONTHLY_STRENGTHS_BANK[0]]);
+    setGenAchievements([JH_MONTHLY_ACHIEVEMENTS_BANK[0]]);
+    setGenNeeds([JH_MONTHLY_NEEDS_IMPROVEMENT_BANK[0]]);
+    setGenManualNotes('');
+    setGenDraftText(existing);
+    setShowGeneratorModal(true);
+  };
+
+  const handleGenerateDraftNarrative = () => {
+    if (!generatorStudent) return;
+    const callName = genNickname.trim() || generatorStudent.name.split(' ')[0] || generatorStudent.name;
+
+    if (genStrengths.length === 0 && genAchievements.length === 0 && genNeeds.length === 0 && !genManualNotes.trim()) {
+      toast.error('Silakan pilih minimal satu aspek perkembangan atau tulis catatan khusus untuk siswa.');
+      return;
+    }
+
+    let opening = '';
+    if (selectedTemplateId === 'ACADEMIC_INDEPENDENCE') {
+      opening = `Alhamdulillah, selama periode bulan ini, ananda ${callName} menunjukkan capaian belajar dan kemandirian yang sangat baik.`;
+    } else if (selectedTemplateId === 'ACTIVE_COLLABORATION') {
+      opening = `Alhamdulillah, ananda ${callName} memperlihatkan perkembangan yang positif dalam interaksi sosial dan keaktifan pembelajaran di kelas.`;
+    } else if (selectedTemplateId === 'GUIDANCE_FOCUS') {
+      opening = `Alhamdulillah, proses pembelajaran ananda ${callName} bulan ini terus menunjukkan kemajuan yang patut diapresiasi.`;
+    } else if (selectedTemplateId === 'ISLAMIC_CHARACTER') {
+      opening = `Alhamdulillah, ananda ${callName} senantiasa menunjukkan akhlak terpuji, budi pekerti yang baik, dan semangat kebersamaan.`;
+    } else {
+      opening = `Alhamdulillah, ananda ${callName} menunjukkan kesungguhan dan dedikasi dalam mengikuti seluruh kegiatan belajar.`;
+    }
+
+    const sentences: string[] = [opening];
+
+    if (genStrengths.length > 0) {
+      const sJoin = genStrengths.map(s => s.toLowerCase()).join(', serta ');
+      sentences.push(`${callName} senantiasa ${sJoin}.`);
+    }
+
+    if (genAchievements.length > 0) {
+      const aJoin = genAchievements.map(a => a.toLowerCase()).join(', dan ');
+      sentences.push(`Dalam aspek capaian akademik, ${callName} berhasil ${aJoin}.`);
+    }
+
+    if (genNeeds.length > 0) {
+      const nJoin = genNeeds.map(n => n.toLowerCase()).join(', serta ');
+      sentences.push(`Untuk terus mengoptimalkan potensi belajarnya ke depan, ${callName} diharapkan dapat ${nJoin}.`);
+    }
+
+    if (genManualNotes.trim()) {
+      sentences.push(genManualNotes.trim());
+    }
+
+    sentences.push(`Semoga ananda ${callName} senantiasa istiqomah dalam meraih prestasi dan kebaikan.`);
+
+    const result = sentences.join(' ');
+    setGenDraftText(result);
+    toast.success('Draf komentar berhasil dirangkai. Silakan tinjau dan sesuaikan di bawah.');
+  };
+
+  const handleApplyGeneratedToEditor = () => {
+    if (!genDraftText.trim()) {
+      toast.error('Draf komentar masih kosong. Klik tombol "Rangkai Draf Komentar" terlebih dahulu.');
+      return;
+    }
+
+    if (generatorStudent) {
+      if (editingStudent?.id === generatorStudent.id) {
+        setCommentText(genDraftText.trim());
+      } else {
+        const existing = commentsMap[generatorStudent.id];
+        setEditingStudent(generatorStudent);
+        setCommentText(genDraftText.trim());
+        setEditorStatus(existing?.status || 'DRAFT');
+        setInitialCommentText(existing?.generalComment || '');
+        setInitialEditorStatus(existing?.status || 'DRAFT');
+        setShowWarning(existing?.status === 'FINAL');
+      }
+    }
+    setShowGeneratorModal(false);
+    toast.success('Draf komentar berhasil diterapkan ke form komentar.');
+  };
+
 
   // Initialize dates and default values
   React.useEffect(() => {
@@ -1258,19 +1411,29 @@ export default function MonthlyReportCommentsPage() {
                         )}
                       </td>
                       <td className="py-3.5 px-5 text-center">
-                        <button
-                          onClick={() => handleOpenEditor(student)}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
-                            isFinal
-                              ? 'bg-[#002366] text-white border-[#002366] hover:bg-[#002366]/90'
-                              : isDraft
-                              ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                          }`}
-                        >
-                          <Edit3 size={13} />
-                          {isFinal || isDraft ? 'Edit Komentar' : 'Tulis Komentar'}
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenEditor(student)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
+                              isFinal
+                                ? 'bg-[#002366] text-white border-[#002366] hover:bg-[#002366]/90'
+                                : isDraft
+                                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            <Edit3 size={13} />
+                            {isFinal || isDraft ? 'Edit' : 'Tulis'}
+                          </button>
+                          <button
+                            onClick={() => handleOpenGenerator(student)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 shadow-xs transition-all"
+                            title="Bantu buat komentar otomatis berbahasa Indonesia"
+                          >
+                            <Sparkles size={13} />
+                            Generator
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
