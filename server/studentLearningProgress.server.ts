@@ -27,7 +27,44 @@ const categories=[
 ];
 const validDocId=(value:string)=>!!value&&value.length<=128&&!value.includes('/');
 const yearKey=(value:unknown)=>{const match=clean(value).match(/^(\d{4})[\/_-](\d{4})$/);return match&&Number(match[2])===Number(match[1])+1?`${match[1]}/${match[2]}`:'';};
-const millis=(value:any):number=>typeof value==='number'&&Number.isFinite(value)?value:typeof value?.toMillis==='function'?value.toMillis():typeof value?.seconds==='number'?value.seconds*1000:0;
+function parseTimestamp(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (!value) return 0;
+  if (typeof (value as any).toMillis === 'function') {
+    try {
+      const ms = (value as any).toMillis();
+      if (typeof ms === 'number' && Number.isFinite(ms)) return ms;
+    } catch { /* ignore */ }
+  }
+  if (typeof (value as any).seconds === 'number') {
+    return (value as any).seconds * 1000 + Math.floor(((value as any).nanoseconds || 0) / 1e6);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value.trim());
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+const millis = parseTimestamp;
+
+function getLatestTime(doc: DocumentData): number {
+  const corrected = parseTimestamp(doc.correctedAt);
+  if (corrected > 0) return corrected;
+  const updated = parseTimestamp(doc.updatedAt);
+  if (updated > 0) return updated;
+  const created = parseTimestamp(doc.createdAt);
+  if (created > 0) return created;
+  return 0;
+}
+
+function compareEntriesDesc(a: DocumentData, b: DocumentData): number {
+  const timeA = getLatestTime(a);
+  const timeB = getLatestTime(b);
+  if (timeB !== timeA) {
+    return timeB - timeA;
+  }
+  return clean(b.id).localeCompare(clean(a.id));
+}
 function categoryKey(value:unknown):string {
   const aliases:Record<string,string>={
     'arts & makerspace':'Arts & Makerspace','seni rupa':'Arts & Makerspace','seni rupa (arts & makerspace)':'Arts & Makerspace',
@@ -169,8 +206,8 @@ function makeGoals(goalDocs:DocumentData[],loDocs:DocumentData[],formativeDocs:D
       id:goal.id,code:clean(goal.code),text:clean(goal.goalText),summative,
       los:objectives.map(lo=>{
         const history=formativeDocs.filter(value=>value.lgId===goal.id&&value.loId===lo.id)
-          .sort((a,b)=>millis(a.createdAt)-millis(b.createdAt)||a.id.localeCompare(b.id)).map(publicResult);
-        return {id:lo.id,code:clean(lo.code),title:clean(lo.title),order:Number(lo.order)||0,current:history[history.length-1]||null,history:[...history].reverse()};
+          .sort(compareEntriesDesc).map(publicResult);
+        return {id:lo.id,code:clean(lo.code),title:clean(lo.title),order:Number(lo.order)||0,current:history[0]||null,history};
       })
     };
   });
@@ -349,120 +386,199 @@ export async function handleStudentLearningProgress(req:ApiRequest,res:ServerRes
 
     const dailyItems:StudentDailyEntryItem[]=[];
 
-    // 1. Formative items
+    const getContextKey=(doc:DocumentData,isUA:boolean,actName?:string,cat?:string,subjectKey?:string):string=>{
+      if(isUA) return `UA:${lower(cat||'')}:${lower(actName||'')}`;
+      return `REG:${lower(subjectKey||'')}`;
+    };
+
+    // 1. Group Formative items by verified student, year, semester, context, LG, LO, and date
+    const formativeGroups=new Map<string,DocumentData[]>();
     for(const f of dateFormative){
       const isUA=isUnitActivityItem(f);
       const actName=isUA?resolveUAActivityName(f):undefined;
       const cat=isUA?(resolveUACategory(f,actName||'',uaCategoryMap)||'Tanpa Kategori'):undefined;
-      const catLabel=cat?(categories.find(c=>c.key===cat)?.label||cat):undefined;
       const catalogMatch=!isUA?findCatalogEntry(f.subjectId):undefined;
       const subjectKey=isUA?(cat||'ua'):(catalogMatch?.key||normalizeSubjectName(f.subjectId));
-      const subjectLabel=isUA?(catLabel||cat||'Unit Aktivitas'):(catalogMatch?.label||clean(f.subjectId)||'Mata Pelajaran');
+      const contextKey=getContextKey(f,isUA,actName,cat,subjectKey);
+      const loKey=clean(f.loId)||`NOLO_${clean(f.loCode)}_${clean(f.formativeTask)}`;
+      const groupingKey=`${identity.id}|${year}|${semester}|${contextKey}|${clean(f.lgId)}|${loKey}|${clean(f.date)}`;
 
-      const loDoc=f.loId?loMap.get(f.loId):undefined;
-      const lgDoc=f.lgId?lgMap.get(f.lgId):undefined;
+      if(!formativeGroups.has(groupingKey)){
+        formativeGroups.set(groupingKey,[]);
+      }
+      formativeGroups.get(groupingKey)!.push(f);
+    }
 
-      // Complete history of assessments for this LO
+    // Process each formative group: pick the latest entry for the primary card, with complete history in modal
+    for(const [,entries] of formativeGroups){
+      entries.sort(compareEntriesDesc);
+      const primary=entries[0];
+
+      const isUA=isUnitActivityItem(primary);
+      const actName=isUA?resolveUAActivityName(primary):undefined;
+      const cat=isUA?(resolveUACategory(primary,actName||'',uaCategoryMap)||'Tanpa Kategori'):undefined;
+      const catLabel=cat?(categories.find(c=>c.key===cat)?.label||cat):undefined;
+      const catalogMatch=!isUA?findCatalogEntry(primary.subjectId):undefined;
+      const subjectKey=isUA?(cat||'ua'):(catalogMatch?.key||normalizeSubjectName(primary.subjectId));
+      const subjectLabel=isUA?(catLabel||cat||'Unit Aktivitas'):(catalogMatch?.label||clean(primary.subjectId)||'Mata Pelajaran');
+
+      const loDoc=primary.loId?loMap.get(primary.loId):undefined;
+      const lgDoc=primary.lgId?lgMap.get(primary.lgId):undefined;
+
+      // Complete history of all assessments for this exact LO context across the semester, sorted newest first
       const loHistory=allFormative
-        .filter(item=>item.loId===f.loId&&isUnitActivityItem(item)===isUA&&(!isUA||resolveUAActivityName(item)===actName))
-        .sort((a,b)=>millis(b.createdAt)-millis(a.createdAt)||b.id.localeCompare(a.id))
+        .filter(item=>{
+          if(clean(item.lgId)!==clean(primary.lgId))return false;
+          if(primary.loId&&clean(item.loId)!==clean(primary.loId))return false;
+          const itemIsUA=isUnitActivityItem(item);
+          if(itemIsUA!==isUA)return false;
+          if(isUA){
+            const itemAct=resolveUAActivityName(item);
+            if(lower(itemAct)!==lower(actName||''))return false;
+          }else{
+            const itemMatch=findCatalogEntry(item.subjectId);
+            const itemKey=itemMatch?.key||normalizeSubjectName(item.subjectId);
+            if(lower(itemKey)!==lower(subjectKey))return false;
+          }
+          return true;
+        })
+        .sort(compareEntriesDesc)
         .map(publicResult);
 
       dailyItems.push({
-        id:f.id,
+        id:primary.id,
         type:'FORMATIVE',
-        date:f.date,
+        date:primary.date,
         isUA,
         subjectKey,
         subjectLabel,
         unitActivityName:actName,
         unitActivityCategory:cat,
         unitActivityCategoryLabel:catLabel,
-        lgId:clean(f.lgId),
+        lgId:clean(primary.lgId),
         lgCode:clean(lgDoc?.code),
         lgText:clean(lgDoc?.goalText),
-        loId:clean(f.loId),
+        loId:clean(primary.loId),
         loCode:clean(loDoc?.code)||'LO',
         loTitle:clean(loDoc?.title),
-        score:clean(f.comprehensionLevel),
-        task:clean(f.formativeTask)||'Kegiatan formatif',
-        nextAction:clean(f.nextAction),
-        teacherName:clean(f.teacherName),
-        createdAt:millis(f.createdAt),
-        correctedAt:millis(f.correctedAt),
+        score:clean(primary.comprehensionLevel),
+        task:clean(primary.formativeTask)||'Kegiatan formatif',
+        nextAction:clean(primary.nextAction),
+        teacherName:clean(primary.teacherName),
+        createdAt:parseTimestamp(primary.createdAt),
+        correctedAt:parseTimestamp(primary.correctedAt),
         history:loHistory
       });
     }
 
-    // 2. Summative items
+    // 2. Summative items: deduplicate multiple summative entries on same date for same LG and context
+    const summativeGroups=new Map<string,DocumentData[]>();
     for(const s of dateSummative){
       const isUA=isUnitActivityItem(s);
       const actName=isUA?resolveUAActivityName(s):undefined;
       const cat=isUA?(resolveUACategory(s,actName||'',uaCategoryMap)||'Tanpa Kategori'):undefined;
-      const catLabel=cat?(categories.find(c=>c.key===cat)?.label||cat):undefined;
       const catalogMatch=!isUA?findCatalogEntry(s.subjectId):undefined;
       const subjectKey=isUA?(cat||'ua'):(catalogMatch?.key||normalizeSubjectName(s.subjectId));
-      const subjectLabel=isUA?(catLabel||cat||'Unit Aktivitas'):(catalogMatch?.label||clean(s.subjectId)||'Mata Pelajaran');
-      const lgDoc=s.lgId?lgMap.get(s.lgId):undefined;
+      const contextKey=getContextKey(s,isUA,actName,cat,subjectKey);
+      const groupingKey=`${identity.id}|${year}|${semester}|${contextKey}|${clean(s.lgId)}|${clean(s.date)}`;
+
+      if(!summativeGroups.has(groupingKey)){
+        summativeGroups.set(groupingKey,[]);
+      }
+      summativeGroups.get(groupingKey)!.push(s);
+    }
+
+    for(const [,entries] of summativeGroups){
+      entries.sort(compareEntriesDesc);
+      const primary=entries[0];
+
+      const isUA=isUnitActivityItem(primary);
+      const actName=isUA?resolveUAActivityName(primary):undefined;
+      const cat=isUA?(resolveUACategory(primary,actName||'',uaCategoryMap)||'Tanpa Kategori'):undefined;
+      const catLabel=cat?(categories.find(c=>c.key===cat)?.label||cat):undefined;
+      const catalogMatch=!isUA?findCatalogEntry(primary.subjectId):undefined;
+      const subjectKey=isUA?(cat||'ua'):(catalogMatch?.key||normalizeSubjectName(primary.subjectId));
+      const subjectLabel=isUA?(catLabel||cat||'Unit Aktivitas'):(catalogMatch?.label||clean(primary.subjectId)||'Mata Pelajaran');
+      const lgDoc=primary.lgId?lgMap.get(primary.lgId):undefined;
 
       dailyItems.push({
-        id:s.id,
+        id:primary.id,
         type:'SUMMATIVE',
-        date:s.date,
+        date:primary.date,
         isUA,
         subjectKey,
         subjectLabel,
         unitActivityName:actName,
         unitActivityCategory:cat,
         unitActivityCategoryLabel:catLabel,
-        lgId:clean(s.lgId),
+        lgId:clean(primary.lgId),
         lgCode:clean(lgDoc?.code),
         lgText:clean(lgDoc?.goalText),
-        score:clean(s.summativeScore),
-        task:clean(s.summativeTask)||'Asesmen sumatif',
-        teacherName:clean(s.teacherName),
-        createdAt:millis(s.createdAt)
+        score:clean(primary.summativeScore),
+        task:clean(primary.summativeTask)||'Asesmen sumatif',
+        teacherName:clean(primary.teacherName),
+        createdAt:parseTimestamp(primary.createdAt)
       });
     }
 
-    // 3. Shared tasks (unassessed activities)
+    // 3. Shared tasks (unassessed activities): deduplicate and suppress if already assessed
+    const sharedTaskGroups=new Map<string,DocumentData[]>();
     for(const t of dateSharedTasks){
       const isUA=isUnitActivityItem(t);
       const actName=isUA?resolveUAActivityName(t):undefined;
-      const alreadyAssessed=dateFormative.some(f=>
-        f.loId===t.loId&&(isUA?resolveUAActivityName(f)===actName:isSameJHSubject(f.subjectId,t.subjectId))
-      );
-      if(alreadyAssessed)continue;
-
       const cat=isUA?(resolveUACategory(t,actName||'',uaCategoryMap)||'Tanpa Kategori'):undefined;
-      const catLabel=cat?(categories.find(c=>c.key===cat)?.label||cat):undefined;
       const catalogMatch=!isUA?findCatalogEntry(t.subjectId):undefined;
       const subjectKey=isUA?(cat||'ua'):(catalogMatch?.key||normalizeSubjectName(t.subjectId));
-      const subjectLabel=isUA?(catLabel||cat||'Unit Aktivitas'):(catalogMatch?.label||clean(t.subjectId)||'Mata Pelajaran');
+      const contextKey=getContextKey(t,isUA,actName,cat,subjectKey);
+      const loKey=clean(t.loId)||`NOLO_${clean(t.formativeTask)}`;
+      const groupingKey=`${identity.id}|${year}|${semester}|${contextKey}|${clean(t.lgId)}|${loKey}|${clean(t.date)}`;
 
-      const loDoc=t.loId?loMap.get(t.loId):undefined;
-      const lgDoc=t.lgId?lgMap.get(t.lgId):undefined;
+      // Shared task "Belum dinilai" must not appear as second card if a formative entry exists on the same LO/context/date
+      if(formativeGroups.has(groupingKey)){
+        continue;
+      }
+
+      if(!sharedTaskGroups.has(groupingKey)){
+        sharedTaskGroups.set(groupingKey,[]);
+      }
+      sharedTaskGroups.get(groupingKey)!.push(t);
+    }
+
+    for(const [,entries] of sharedTaskGroups){
+      entries.sort(compareEntriesDesc);
+      const primary=entries[0];
+
+      const isUA=isUnitActivityItem(primary);
+      const actName=isUA?resolveUAActivityName(primary):undefined;
+      const cat=isUA?(resolveUACategory(primary,actName||'',uaCategoryMap)||'Tanpa Kategori'):undefined;
+      const catLabel=cat?(categories.find(c=>c.key===cat)?.label||cat):undefined;
+      const catalogMatch=!isUA?findCatalogEntry(primary.subjectId):undefined;
+      const subjectKey=isUA?(cat||'ua'):(catalogMatch?.key||normalizeSubjectName(primary.subjectId));
+      const subjectLabel=isUA?(catLabel||cat||'Unit Aktivitas'):(catalogMatch?.label||clean(primary.subjectId)||'Mata Pelajaran');
+
+      const loDoc=primary.loId?loMap.get(primary.loId):undefined;
+      const lgDoc=primary.lgId?lgMap.get(primary.lgId):undefined;
 
       dailyItems.push({
-        id:t.id,
+        id:primary.id,
         type:'SHARED_TASK',
-        date:t.date,
+        date:primary.date,
         isUA,
         subjectKey,
         subjectLabel,
         unitActivityName:actName,
         unitActivityCategory:cat,
         unitActivityCategoryLabel:catLabel,
-        lgId:clean(t.lgId),
+        lgId:clean(primary.lgId),
         lgCode:clean(lgDoc?.code),
         lgText:clean(lgDoc?.goalText),
-        loId:clean(t.loId),
+        loId:clean(primary.loId),
         loCode:clean(loDoc?.code)||'LO',
         loTitle:clean(loDoc?.title),
         score:undefined,
-        task:clean(t.formativeTask)||'Kegiatan Asesmen',
-        teacherName:clean(t.teacherName),
-        createdAt:millis(t.createdAt)
+        task:clean(primary.formativeTask)||'Kegiatan Asesmen',
+        teacherName:clean(primary.teacherName),
+        createdAt:parseTimestamp(primary.createdAt)
       });
     }
 

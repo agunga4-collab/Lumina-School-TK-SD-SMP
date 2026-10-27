@@ -185,14 +185,21 @@ function HistoryDetails({ result, isCurrent }: { result: StudentProgressResult; 
   return (
     <article className={`space-y-2.5 rounded-xl border p-3.5 ${isCurrent ? 'border-blue-200 bg-blue-50/30' : 'border-slate-200 bg-white'}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-bold ${
-          isAch ? 'border-emerald-300 bg-emerald-100 text-emerald-900' :
-          isNach ? 'border-amber-300 bg-amber-100 text-amber-950' :
-          'border-slate-300 bg-slate-100 text-slate-800'
-        }`}>
-          {isAch ? <CheckCircle2 size={12} /> : isNach ? <ArrowUpRight size={12} /> : <Clock size={12} />}
-          {result.score || 'Belum dinilai'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-bold ${
+            isAch ? 'border-emerald-300 bg-emerald-100 text-emerald-900' :
+            isNach ? 'border-amber-300 bg-amber-100 text-amber-950' :
+            'border-slate-300 bg-slate-100 text-slate-800'
+          }`}>
+            {isAch ? <CheckCircle2 size={12} /> : isNach ? <ArrowUpRight size={12} /> : <Clock size={12} />}
+            {result.score || 'Belum dinilai'}
+          </span>
+          {isCurrent && (
+            <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-100 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-blue-800 shadow-2xs">
+              Terkini
+            </span>
+          )}
+        </div>
         <span className="text-xs font-semibold text-slate-500">{formatFullDateWIB(result.date)}</span>
       </div>
       <div>
