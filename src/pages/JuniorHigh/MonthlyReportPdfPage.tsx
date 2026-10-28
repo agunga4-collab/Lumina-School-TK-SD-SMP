@@ -569,8 +569,8 @@ export default function MonthlyReportPdfPage() {
 
     // Double check comment and attendance is fully present
     const commentObj = commentsMap[student.id];
-    if (!commentObj || commentObj.status !== 'FINAL') {
-      toast.error(`Komentar umum siswa ${student.name} belum final.`);
+    if (!commentObj || commentObj.status !== 'FINAL' || commentObj.reviewStatus !== 'APPROVED') {
+      toast.error(`Komentar umum siswa ${student.name} harus berstatus FINAL dan telah DISETUJUI (APPROVED) oleh Kepala Unit / Admin.`);
       return;
     }
 
@@ -1125,7 +1125,7 @@ export default function MonthlyReportPdfPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {students.map((student) => {
-                  const hasComment = commentsMap[student.id]?.status === 'FINAL';
+                  const hasComment = commentsMap[student.id]?.status === 'FINAL' && commentsMap[student.id]?.reviewStatus === 'APPROVED';
                   const hasAttendance = attendanceAvailableForPeriod && studentAttendanceMap[student.id];
                   const studentReadiness = hasComment && hasAttendance && classSummary?.status === 'READY';
 

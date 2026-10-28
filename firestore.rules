@@ -2318,7 +2318,16 @@ service cloud.firestore {
       allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
       allow write: if isActive() && (isJuniorHighStaff() || isAdmin()) &&
         incoming().unit == 'JUNIOR_HIGH' &&
-        incoming().reportType == 'MONTHLY_PROGRESS';
+        incoming().reportType == 'MONTHLY_PROGRESS' &&
+        (
+          !('reviewStatus' in incoming()) ||
+          incoming().reviewStatus == 'DRAFT' ||
+          incoming().reviewStatus == 'SUBMITTED' ||
+          (
+            incoming().reviewStatus in ['APPROVED', 'REVISION_REQUESTED'] &&
+            (isAdmin() || userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL'])
+          )
+        );
     }
 
     match /manual_junior_high_report_links/{linkId} {

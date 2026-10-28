@@ -147,8 +147,10 @@ export function validateReportReadiness(
     students.forEach(student => {
       const comment = commentsMap[student.id];
       if (comment) {
-        if (comment.status === 'FINAL') {
+        if (comment.status === 'FINAL' && comment.reviewStatus === 'APPROVED') {
           finalCommentsCount++;
+        } else if (comment.status === 'FINAL' && comment.reviewStatus !== 'APPROVED') {
+          missingFinalCommentsCount++;
         } else if (comment.status === 'DRAFT') {
           draftCommentsCount++;
           missingFinalCommentsCount++;
@@ -162,10 +164,10 @@ export function validateReportReadiness(
       commentsState = 'Ready';
     } else if (finalCommentsCount === 0) {
       commentsState = 'Missing';
-      commentsReason = `${missingFinalCommentsCount} students still need FINAL general comments.`;
+      commentsReason = `${missingFinalCommentsCount} students still need FINAL & APPROVED general comments.`;
     } else {
       commentsState = 'Incomplete';
-      commentsReason = `${missingFinalCommentsCount} students still need FINAL general comments.`;
+      commentsReason = `${missingFinalCommentsCount} students still need FINAL & APPROVED general comments.`;
     }
   }
 

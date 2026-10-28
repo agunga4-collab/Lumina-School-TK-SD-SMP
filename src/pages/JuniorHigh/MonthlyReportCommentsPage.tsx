@@ -3,20 +3,28 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   MessageSquare, Calendar, Users, Save, CheckCircle2, RefreshCw, 
   AlertCircle, Info, Check, Search, X, Edit3, UserCheck, Eye, EyeOff, Sparkles,
-  Copy, Clipboard, Download, Upload, AlertTriangle, Wand2, BookOpen, Layers
+  Copy, Clipboard, Download, Upload, AlertTriangle, Wand2, BookOpen, Layers,
+  CheckSquare, Square, CheckCheck, Send, RotateCcw, ShieldCheck, Lock, Unlock, FileText, Clock
 } from 'lucide-react';
 import { db, getClasses, getActiveStudents } from '../../lib/firebase';
 import { doc, getDoc, getDocs, setDoc, query, collection, where, writeBatch } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import { useAcademicYear } from '../../context/AcademicYearContext';
 import { toast } from 'sonner';
-import type { Class, Student, JuniorHighMonthlyReportComment } from '../../types';
+import type { Class, Student, JuniorHighMonthlyReportComment, MonthlyGenComReviewStatus } from '../../types';
 import * as XLSX from 'xlsx';
 import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
 import { 
   generateMonthlyGeneralCommentAI, 
   refineMonthlyGeneralCommentAI, 
-  generateDeterministicMonthlyComment 
+  generateDeterministicMonthlyComment,
+  isJuniorHighApprover,
+  submitMonthlyCommentsForReview,
+  approveMonthlyComments,
+  requestRevisionMonthlyComments,
+  openRevisionMonthlyComment,
+  fetchStudentPreviousGencomHistory,
+  PreviousGencomHistoryItem
 } from '../../services/juniorHighMonthlyReportService';
 
 export const JH_MONTHLY_TEMPLATES = [
@@ -82,6 +90,22 @@ function getIndonesianMonthLabel(periodKey: string): string {
   return periodKey;
 }
 
+export function formatDateTime(isoString?: string | null): string {
+  if (!isoString) return 'Belum tercatat';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return 'Belum tercatat';
+    return d.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {
+    return 'Belum tercatat';
+  }
+}
 
 // Helper to compute previous month code in format YYYY-MM
 const getPreviousMonthKey = (periodKey: string): string => {
@@ -175,7 +199,7 @@ const parsePastedTSV = (text: string): { identifier: string; comment: string; na
   return parsed;
 };
 
-export default function MonthlyReportCommentsPage() {
+function MonthlyReportCommentsContent() {
   const { profile } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
 
@@ -249,6 +273,291 @@ export default function MonthlyReportCommentsPage() {
   const [loadingContextData, setLoadingContextData] = React.useState<boolean>(false);
   const [isGeneratingAI, setIsGeneratingAI] = React.useState<boolean>(false);
   const [isPolishingAI, setIsPolishingAI] = React.useState<boolean>(false);
+
+  // Approver role check (Super Admin OR Kepala Unit SMP)
+  const isApprover = React.useMemo(() => {
+    return isJuniorHighApprover(profile);
+  }, [profile]);
+
+  // Inline history states (Eye toggle, NOT popup)
+  const [expandedHistoryStudentIds, setExpandedHistoryStudentIds] = React.useState<Record<string, boolean>>({});
+  const [historyDataMap, setHistoryDataMap] = React.useState<Record<string, PreviousGencomHistoryItem[]>>({});
+  const [loadingHistoryMap, setLoadingHistoryMap] = React.useState<Record<string, boolean>>({});
+
+  const toggleStudentHistory = async (studentId: string) => {
+    const isCurrentlyExpanded = !!expandedHistoryStudentIds[studentId];
+    if (isCurrentlyExpanded) {
+      setExpandedHistoryStudentIds(prev => ({ ...prev, [studentId]: false }));
+      return;
+    }
+
+    setExpandedHistoryStudentIds(prev => ({ ...prev, [studentId]: true }));
+
+    // Fetch history if not already loaded
+    if (!historyDataMap[studentId]) {
+      setLoadingHistoryMap(prev => ({ ...prev, [studentId]: true }));
+      try {
+        const history = await fetchStudentPreviousGencomHistory(
+          studentId,
+          selectedYear,
+          selectedMonth,
+          selectedSemester
+        );
+        setHistoryDataMap(prev => ({ ...prev, [studentId]: history }));
+      } catch (err) {
+        console.error('Error fetching student gencom history:', err);
+        toast.error('Gagal memuat riwayat komentar sebelumnya.');
+      } finally {
+        setLoadingHistoryMap(prev => ({ ...prev, [studentId]: false }));
+      }
+    }
+  };
+
+  // Review & Approval Checkbox selection states
+  const [selectedStudentIds, setSelectedStudentIds] = React.useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = React.useState<'ALL' | 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REVISION_REQUESTED'>('ALL');
+
+  // Revision Modal states (Mandatory feedback, applied to all selected students)
+  const [showRevisionModal, setShowRevisionModal] = React.useState<boolean>(false);
+  const [revisionFeedbackText, setRevisionFeedbackText] = React.useState<string>('');
+  const [pendingRevisionTargetIds, setPendingRevisionTargetIds] = React.useState<string[]>([]);
+  const [isSubmittingRevision, setIsSubmittingRevision] = React.useState<boolean>(false);
+  const [isProcessingBulkAction, setIsProcessingBulkAction] = React.useState<boolean>(false);
+
+  const handleToggleSelectStudent = (studentId: string) => {
+    setSelectedStudentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(studentId)) {
+        next.delete(studentId);
+      } else {
+        next.add(studentId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllFiltered = (studentsToSelect: Student[]) => {
+    const allSelected = studentsToSelect.length > 0 && studentsToSelect.every(s => selectedStudentIds.has(s.id));
+    if (allSelected) {
+      setSelectedStudentIds(new Set());
+    } else {
+      setSelectedStudentIds(new Set(studentsToSelect.map(s => s.id)));
+    }
+  };
+
+  // Bulk Submit for Review (DRAFT / REVISION_REQUESTED -> SUBMITTED)
+  const handleBulkSubmitForReview = async () => {
+    const eligibleComments = Array.from(selectedStudentIds)
+      .map(id => commentsMap[id])
+      .filter((c): c is JuniorHighMonthlyReportComment => {
+        if (!c || !c.generalComment || !c.generalComment.trim()) return false;
+        const rev = c.reviewStatus || 'DRAFT';
+        return rev === 'DRAFT' || rev === 'REVISION_REQUESTED';
+      });
+
+    if (eligibleComments.length === 0) {
+      toast.error('Tidak ada komentar terpilih yang memenuhi syarat untuk diajukan (harus berisi teks dan berstatus Draft/Perlu Revisi).');
+      return;
+    }
+
+    setIsProcessingBulkAction(true);
+    try {
+      const res = await submitMonthlyCommentsForReview(eligibleComments, {
+        uid: profile?.uid || 'unknown',
+        displayName: profile?.displayName || profile?.email || 'Guru',
+        email: profile?.email || 'unknown',
+        role: profile?.role || 'TEACHER'
+      });
+
+      if (res.successCount > 0) {
+        toast.success(`Berhasil mengajukan ${res.successCount} komentar untuk review.`);
+        await loadRosterAndComments();
+        setSelectedStudentIds(new Set());
+      }
+      if (res.errors.length > 0) {
+        toast.error(`Beberapa komentar gagal diajukan: ${res.errors.join(', ')}`);
+      }
+    } catch (err: any) {
+      console.error('Error submitting comments for review:', err);
+      toast.error(err.message || 'Gagal mengajukan komentar.');
+    } finally {
+      setIsProcessingBulkAction(false);
+    }
+  };
+
+  // Bulk Approve (SUBMITTED -> APPROVED)
+  const handleBulkApprove = async () => {
+    if (!isApprover) {
+      toast.error('Hanya Kepala Unit SMP atau Super Admin yang dapat menyetujui komentar.');
+      return;
+    }
+
+    const eligibleComments = Array.from(selectedStudentIds)
+      .map(id => commentsMap[id])
+      .filter((c): c is JuniorHighMonthlyReportComment => {
+        if (!c) return false;
+        return c.reviewStatus === 'SUBMITTED';
+      });
+
+    if (eligibleComments.length === 0) {
+      toast.error('Tidak ada komentar terpilih yang berstatus Diajukan (SUBMITTED).');
+      return;
+    }
+
+    setIsProcessingBulkAction(true);
+    try {
+      const res = await approveMonthlyComments(eligibleComments, {
+        uid: profile?.uid || 'unknown',
+        displayName: profile?.displayName || profile?.email || 'Reviewer',
+        email: profile?.email || 'unknown',
+        role: profile?.role || 'HEAD_JUNIOR'
+      });
+
+      if (res.successCount > 0) {
+        toast.success(`Berhasil menyetujui (Approve) ${res.successCount} komentar siswa.`);
+        await loadRosterAndComments();
+        setSelectedStudentIds(new Set());
+      }
+      if (res.errors.length > 0) {
+        toast.error(`Beberapa komentar gagal disetujui: ${res.errors.join(', ')}`);
+      }
+    } catch (err: any) {
+      console.error('Error approving comments:', err);
+      toast.error(err.message || 'Gagal menyetujui komentar.');
+    } finally {
+      setIsProcessingBulkAction(false);
+    }
+  };
+
+  // Open Revision Modal (Single or Bulk)
+  const handleOpenRevisionModal = (targetStudentIds: string[]) => {
+    if (!isApprover) {
+      toast.error('Hanya Kepala Unit SMP atau Super Admin yang dapat meminta revisi komentar.');
+      return;
+    }
+    setPendingRevisionTargetIds(targetStudentIds);
+    setRevisionFeedbackText('');
+    setShowRevisionModal(true);
+  };
+
+  // Confirm Revision (Mandatory Feedback)
+  const handleConfirmRevision = async () => {
+    const feedback = revisionFeedbackText.trim();
+    if (!feedback) {
+      toast.error('Catatan/feedback revisi wajib diisi agar guru mengetahui bagian yang perlu diperbaiki.');
+      return;
+    }
+
+    const targetComments = pendingRevisionTargetIds
+      .map(id => commentsMap[id])
+      .filter((c): c is JuniorHighMonthlyReportComment => Boolean(c));
+
+    if (targetComments.length === 0) {
+      toast.error('Komentar siswa tidak ditemukan.');
+      setShowRevisionModal(false);
+      return;
+    }
+
+    setIsSubmittingRevision(true);
+    try {
+      const res = await requestRevisionMonthlyComments(targetComments, feedback, {
+        uid: profile?.uid || 'unknown',
+        displayName: profile?.displayName || profile?.email || 'Reviewer',
+        email: profile?.email || 'unknown',
+        role: profile?.role || 'HEAD_JUNIOR'
+      });
+
+      if (res.successCount > 0) {
+        toast.success(`Permintaan revisi berhasil dikirim untuk ${res.successCount} siswa.`);
+        await loadRosterAndComments();
+        setShowRevisionModal(false);
+        setSelectedStudentIds(new Set());
+        setPendingRevisionTargetIds([]);
+        setRevisionFeedbackText('');
+      }
+    } catch (err: any) {
+      console.error('Error requesting revision:', err);
+      toast.error(err.message || 'Gagal mengirim permintaan revisi.');
+    } finally {
+      setIsSubmittingRevision(false);
+    }
+  };
+
+  // Single Action: Open Revision (Unlock approved/submitted comment)
+  const handleOpenRevision = async (studentId: string) => {
+    const comment = commentsMap[studentId];
+    if (!comment) return;
+
+    if (!isApprover) {
+      toast.error('Hanya Kepala Unit SMP atau Super Admin yang dapat membuka revisi.');
+      return;
+    }
+
+    const confirmOpen = window.confirm(`Buka revisi komentar siswa ${comment.studentNameSnapshot}? Komentar akan dapat diedit kembali oleh guru.`);
+    if (!confirmOpen) return;
+
+    try {
+      await openRevisionMonthlyComment(comment, {
+        uid: profile?.uid || 'unknown',
+        displayName: profile?.displayName || profile?.email || 'Reviewer',
+        email: profile?.email || 'unknown',
+        role: profile?.role || 'HEAD_JUNIOR'
+      });
+      toast.success(`Revisi dibuka untuk ${comment.studentNameSnapshot}. Guru dapat mengedit komentar kembali.`);
+      await loadRosterAndComments();
+    } catch (err: any) {
+      console.error('Error opening revision:', err);
+      toast.error(err.message || 'Gagal membuka revisi.');
+    }
+  };
+
+  // Single Action: Submit for review
+  const handleSingleSubmit = async (studentId: string) => {
+    const comment = commentsMap[studentId];
+    if (!comment || !comment.generalComment?.trim()) {
+      toast.error('Komentar masih kosong. Tulis atau generate komentar terlebih dahulu.');
+      return;
+    }
+
+    try {
+      await submitMonthlyCommentsForReview([comment], {
+        uid: profile?.uid || 'unknown',
+        displayName: profile?.displayName || profile?.email || 'Guru',
+        email: profile?.email || 'unknown',
+        role: profile?.role || 'TEACHER'
+      });
+      toast.success(`Komentar ${comment.studentNameSnapshot} berhasil diajukan untuk review.`);
+      await loadRosterAndComments();
+    } catch (err: any) {
+      console.error('Error submitting comment:', err);
+      toast.error(err.message || 'Gagal mengajukan komentar.');
+    }
+  };
+
+  // Single Action: Approve
+  const handleSingleApprove = async (studentId: string) => {
+    const comment = commentsMap[studentId];
+    if (!comment) return;
+
+    if (!isApprover) {
+      toast.error('Hanya Kepala Unit SMP atau Super Admin yang dapat menyetujui komentar.');
+      return;
+    }
+
+    try {
+      await approveMonthlyComments([comment], {
+        uid: profile?.uid || 'unknown',
+        displayName: profile?.displayName || profile?.email || 'Reviewer',
+        email: profile?.email || 'unknown',
+        role: profile?.role || 'HEAD_JUNIOR'
+      });
+      toast.success(`Komentar ${comment.studentNameSnapshot} disetujui (APPROVED).`);
+      await loadRosterAndComments();
+    } catch (err: any) {
+      console.error('Error approving comment:', err);
+      toast.error(err.message || 'Gagal menyetujui komentar.');
+    }
+  };
 
   // Helper to count words in comment draft
   const countWords = (text: string) => {
@@ -619,6 +928,11 @@ export default function MonthlyReportCommentsPage() {
   // Open Comment Editor Modal
   const handleOpenEditor = (student: Student) => {
     const existing = commentsMap[student.id];
+    if (existing?.reviewStatus === 'SUBMITTED' || existing?.reviewStatus === 'APPROVED') {
+      toast.error('Komentar ini telah diajukan atau disetujui dan dikunci. Buka revisi terlebih dahulu melalui Kepala Unit/Admin.');
+      return;
+    }
+
     setEditingStudent(student);
     const text = existing ? existing.generalComment : '';
     const status = existing ? existing.status : 'DRAFT';
@@ -666,6 +980,9 @@ export default function MonthlyReportCommentsPage() {
       const docRef = doc(db, 'junior_high_monthly_report_comments', docId);
       const existingDoc = commentsMap[studentId];
 
+      const actorName = profile?.displayName || profile?.email || 'Guru';
+      const actorUid = profile?.uid || 'unknown';
+
       const payload: JuniorHighMonthlyReportComment = {
         unit: 'JUNIOR_HIGH',
         reportType: 'MONTHLY_PROGRESS',
@@ -682,8 +999,14 @@ export default function MonthlyReportCommentsPage() {
         status: targetStatus,
         createdBy: existingDoc?.createdBy || profile?.email || 'unknown',
         createdAt: existingDoc?.createdAt || new Date().toISOString(),
+        createdByName: existingDoc?.createdByName || actorName,
+        createdByUid: existingDoc?.createdByUid || actorUid,
         updatedBy: profile?.email || 'unknown',
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        updatedByName: actorName,
+        updatedByUid: actorUid,
+        version: (existingDoc?.version || 1) + 1,
+        reviewStatus: existingDoc?.reviewStatus || 'DRAFT'
       };
 
       await setDoc(docRef, payload);
@@ -1255,10 +1578,22 @@ export default function MonthlyReportCommentsPage() {
   };
 
   // Filter students based on search query
-  const filteredStudents = students.filter(student => 
-    student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (student.id && student.id.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredStudents = React.useMemo(() => {
+    return students.filter(student => 
+      student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (student.id && student.id.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+  }, [students, searchQuery]);
+
+  // Filter students based on status tabs (ALL, DRAFT, SUBMITTED, APPROVED, REVISION_REQUESTED)
+  const filteredStudentsByStatus = React.useMemo(() => {
+    return filteredStudents.filter(student => {
+      if (statusFilter === 'ALL') return true;
+      const comment = commentsMap[student.id];
+      const rev = comment?.reviewStatus || 'DRAFT';
+      return rev === statusFilter;
+    });
+  }, [filteredStudents, commentsMap, statusFilter]);
 
   const selectedClassObj = classesList.find(c => c.id === selectedClassId);
 
@@ -1425,12 +1760,88 @@ export default function MonthlyReportCommentsPage() {
         </div>
       </div>
 
+      {/* Status Filter Tabs */}
+      <div className="mx-auto max-w-6xl mb-4 flex flex-wrap items-center gap-2">
+        {(['ALL', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REVISION_REQUESTED'] as const).map(tabKey => {
+          const labelMap = {
+            ALL: 'Semua Status',
+            DRAFT: 'Draft',
+            SUBMITTED: 'Diajukan',
+            APPROVED: 'Disetujui',
+            REVISION_REQUESTED: 'Perlu Revisi'
+          };
+          const isActive = statusFilter === tabKey;
+          return (
+            <button
+              key={tabKey}
+              onClick={() => setStatusFilter(tabKey)}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                isActive
+                  ? 'bg-[#002366] text-white border-[#002366] shadow-xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              {labelMap[tabKey]}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Bulk Action Bar */}
+      {selectedStudentIds.size > 0 && (
+        <div className="mx-auto max-w-6xl mb-4 bg-[#002366] text-white px-5 py-3 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-2 text-xs font-semibold">
+            <CheckSquare size={16} className="text-amber-300" />
+            <span>{selectedStudentIds.size} siswa terpilih</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleBulkSubmitForReview}
+              disabled={isProcessingBulkAction}
+              className="px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-xs font-bold rounded-lg transition-colors flex items-center gap-1 border border-white/20"
+            >
+              <Send size={13} /> Ajukan untuk Review
+            </button>
+            {isApprover && (
+              <>
+                <button
+                  onClick={handleBulkApprove}
+                  disabled={isProcessingBulkAction}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <ShieldCheck size={13} /> Setujui (Approve)
+                </button>
+                <button
+                  onClick={() => handleOpenRevisionModal(Array.from(selectedStudentIds))}
+                  disabled={isProcessingBulkAction}
+                  className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <RotateCcw size={13} /> Minta Revisi
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => setSelectedStudentIds(new Set())}
+              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs font-medium rounded-lg transition-colors"
+            >
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Roster & Grid Table list */}
       <div className="mx-auto max-w-6xl bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         {/* Roster Toolbar */}
         <div className="p-4 bg-slate-50/50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-700">Roster Siswa ({filteredStudents.length})</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => handleSelectAllFiltered(filteredStudentsByStatus)}
+              className="text-xs font-semibold text-[#002366] hover:underline flex items-center gap-1"
+            >
+              <CheckSquare size={14} /> Pilih Semua ({filteredStudentsByStatus.length})
+            </button>
+            <span className="text-sm font-semibold text-slate-700">Roster Siswa ({filteredStudentsByStatus.length})</span>
             <div className="text-xs text-slate-400">
               Kelas: <span className="font-semibold text-slate-600">{selectedClassObj?.name || '-'}</span>
             </div>
@@ -1463,103 +1874,245 @@ export default function MonthlyReportCommentsPage() {
             <RefreshCw size={30} className="animate-spin text-[#002366] mx-auto mb-3" />
             <p className="text-slate-500 text-sm font-medium">Memuat daftar siswa & komentar...</p>
           </div>
-        ) : filteredStudents.length === 0 ? (
+        ) : filteredStudentsByStatus.length === 0 ? (
           <div className="p-16 text-center">
             <AlertCircle size={32} className="text-slate-300 mx-auto mb-2" />
-            <p className="text-slate-600 font-medium">Tidak ada siswa ditemukan</p>
-            <p className="text-xs text-slate-400 mt-1">Harap ganti pilihan filter kelas atau sesuaikan pencarian Anda.</p>
+            <p className="text-slate-600 font-medium">Tidak ada siswa ditemukan sesuai filter</p>
+            <p className="text-xs text-slate-400 mt-1">Harap ganti pilihan filter status atau pencarian Anda.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/30 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  <th className="py-3 px-5 w-16 text-center">No</th>
-                  <th className="py-3 px-5 w-28">NIS</th>
-                  <th className="py-3 px-5">Nama Siswa</th>
-                  <th className="py-3 px-5 w-32 text-center">Grade</th>
-                  <th className="py-3 px-5 text-slate-500 font-bold text-center">
-                    Attendance Preview
-                    <span className="block text-[9px] font-normal text-slate-400 lowercase italic">sick / excused / absent</span>
+                  <th className="py-3 px-4 w-12 text-center">
+                    <span className="sr-only">Pilih</span>
                   </th>
-                  <th className="py-3 px-5 w-32 text-center">Status</th>
-                  <th className="py-3 px-5 w-40 text-center">Aksi</th>
+                  <th className="py-3 px-3 w-12 text-center">No</th>
+                  <th className="py-3 px-4 w-28">NIS / Nama</th>
+                  <th className="py-3 px-4">Komentar Umum (Gencom) & Riwayat</th>
+                  <th className="py-3 px-4 w-36 text-center">Status Review</th>
+                  <th className="py-3 px-4 w-44 text-center">Aksi & Kontrol</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredStudents.map((student, idx) => {
+                {filteredStudentsByStatus.map((student, idx) => {
                   const comment = commentsMap[student.id];
                   const absNum = student.attendanceNumber ?? student.noAbsen ?? student.rollNumber ?? student.rosterNumber ?? (idx + 1);
-                  const isDraft = comment?.status === 'DRAFT';
+                  const isSelected = selectedStudentIds.has(student.id);
+                  const isExpanded = !!expandedHistoryStudentIds[student.id];
+
+                  const hasText = Boolean(comment?.generalComment && comment.generalComment.trim());
+                  const reviewStat = comment?.reviewStatus || 'DRAFT';
                   const isFinal = comment?.status === 'FINAL';
 
                   return (
-                    <tr key={student.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3.5 px-5 text-center font-medium text-slate-400 text-xs">{absNum}</td>
-                      <td className="py-3.5 px-5 font-mono text-xs text-slate-500">{student.id}</td>
-                      <td className="py-3.5 px-5">
-                        <div className="font-semibold text-slate-800">{student.name}</div>
-                      </td>
-                      <td className="py-3.5 px-5 text-center text-xs font-medium text-slate-600">
-                        {selectedClassObj?.gradeLevel ? `Grade ${selectedClassObj.gradeLevel}` : `Grade ${student.grade || 'JH'}`}
-                      </td>
-                      <td className="py-3.5 px-5">
-                        <div className="flex items-center justify-center gap-2.5 text-xs">
-                          <span className="inline-flex items-center gap-1 text-slate-400">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                            Sick Leave: <strong className="text-slate-600 font-semibold">-</strong>
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-slate-400">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                            Excused Leave: <strong className="text-slate-600 font-semibold">-</strong>
-                          </span>
-                          <span className="inline-flex items-center gap-1 text-slate-400">
-                            <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                            Absent: <strong className="text-slate-600 font-semibold">-</strong>
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-5 text-center">
-                        {isFinal ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
-                            <Check size={12} /> Final
-                          </span>
-                        ) : isDraft ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
-                            Draft
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-400 border border-slate-200">
-                            Belum Diisi
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-5 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
+                    <React.Fragment key={student.id}>
+                      <tr className={`hover:bg-slate-50/60 transition-colors ${isSelected ? 'bg-blue-50/40' : ''}`}>
+                        <td className="py-4 px-4 text-center">
                           <button
-                            onClick={() => handleOpenEditor(student)}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-xs transition-all ${
-                              isFinal
-                                ? 'bg-[#002366] text-white border-[#002366] hover:bg-[#002366]/90'
-                                : isDraft
-                                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                            }`}
+                            type="button"
+                            onClick={() => handleToggleSelectStudent(student.id)}
+                            className="text-slate-400 hover:text-[#002366]"
                           >
-                            <Edit3 size={13} />
-                            {isFinal || isDraft ? 'Edit' : 'Tulis'}
+                            {isSelected ? <CheckSquare size={16} className="text-[#002366]" /> : <Square size={16} />}
                           </button>
-                          <button
-                            onClick={() => handleOpenGenerator(student)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 shadow-xs transition-all"
-                            title="Bantu buat komentar otomatis berbahasa Indonesia"
-                          >
-                            <Sparkles size={13} />
-                            Generator
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="py-4 px-3 text-center font-medium text-slate-400 text-xs">{absNum}</td>
+                        <td className="py-4 px-4 align-top">
+                          <div className="font-bold text-slate-800 text-sm">{student.name}</div>
+                          <div className="font-mono text-xs text-slate-400 mt-0.5">{student.id}</div>
+                          <div className="text-[10px] text-slate-500 mt-1">
+                            {selectedClassObj?.gradeLevel ? `Grade ${selectedClassObj.gradeLevel}` : `Grade ${student.grade || 'JH'}`}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 align-top">
+                          {hasText ? (
+                            <div className="space-y-1.5">
+                              <p className="text-xs text-slate-800 font-sans leading-relaxed bg-slate-50/80 p-3 rounded-lg border border-slate-200/70 whitespace-pre-wrap">
+                                {comment.generalComment}
+                              </p>
+                              {comment.reviewFeedback && (
+                                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-1.5">
+                                  <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                                  <div>
+                                    <strong className="font-bold">Feedback Revisi:</strong> {comment.reviewFeedback}
+                                  </div>
+                                </div>
+                              )}
+                              <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-x-3 gap-y-0.5 pt-0.5">
+                                <span>Dibuat oleh: <strong className="text-slate-600">{comment.createdByName || comment.createdBy || 'Belum tercatat'}</strong></span>
+                                <span>•</span>
+                                <span>Terakhir diedit: <strong className="text-slate-600">{comment.updatedByName || comment.updatedBy || 'Belum tercatat'} ({formatDateTime(comment.updatedAt)})</strong></span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-slate-400 italic bg-slate-50 p-3 rounded-lg border border-dashed border-slate-200">
+                              Belum ada Gencom. Klik Tulis atau Generator untuk menyusun komentar bulanan.
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-4 px-4 text-center align-top">
+                          <div className="flex flex-col items-center gap-1.5">
+                            {reviewStat === 'APPROVED' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <ShieldCheck size={13} /> Disetujui
+                              </span>
+                            ) : reviewStat === 'SUBMITTED' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                <Send size={12} /> Diajukan
+                              </span>
+                            ) : reviewStat === 'REVISION_REQUESTED' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                <RotateCcw size={12} /> Perlu Revisi
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                Draft
+                              </span>
+                            )}
+
+                            {isFinal && (
+                              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-medium">
+                                Final Report
+                              </span>
+                            )}
+
+                            {comment?.reviewedByName && (
+                              <span className="text-[10px] text-slate-400 mt-1 max-w-[140px] truncate" title={`Oleh ${comment.reviewedByName}`}>
+                                Rev: {comment.reviewedByName}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-center align-top">
+                          <div className="flex flex-col items-center gap-2">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => handleOpenEditor(student)}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border shadow-2xs transition-all ${
+                                  isFinal
+                                    ? 'bg-[#002366] text-white border-[#002366] hover:bg-[#002366]/90'
+                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                }`}
+                                title={comment?.reviewStatus === 'SUBMITTED' || comment?.reviewStatus === 'APPROVED' ? 'Terkunci (memerlukan buka revisi)' : 'Edit Komentar'}
+                              >
+                                <Edit3 size={12} />
+                                {isFinal || hasText ? 'Edit' : 'Tulis'}
+                              </button>
+
+                              <button
+                                onClick={() => handleOpenGenerator(student)}
+                                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 shadow-2xs transition-all"
+                                title="Generator AI / Narasi"
+                              >
+                                <Sparkles size={12} />
+                              </button>
+
+                              <button
+                                onClick={() => toggleStudentHistory(student.id)}
+                                className={`p-1.5 rounded-lg border text-xs transition-all ${
+                                  isExpanded 
+                                    ? 'bg-[#002366] text-white border-[#002366]' 
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                }`}
+                                title={isExpanded ? 'Tutup riwayat inline' : 'Lihat riwayat Gencom sebelumnya'}
+                              >
+                                {isExpanded ? <EyeOff size={14} /> : <Eye size={14} />}
+                              </button>
+                            </div>
+
+                            {/* Quick Review Action Buttons */}
+                            <div className="flex flex-wrap items-center justify-center gap-1 pt-1 border-t border-slate-100 w-full">
+                              {(reviewStat === 'DRAFT' || reviewStat === 'REVISION_REQUESTED') && hasText && (
+                                <button
+                                  onClick={() => handleSingleSubmit(student.id)}
+                                  className="text-[10px] font-bold px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200"
+                                >
+                                  Ajukan
+                                </button>
+                              )}
+
+                              {isApprover && reviewStat === 'SUBMITTED' && (
+                                <>
+                                  <button
+                                    onClick={() => handleSingleApprove(student.id)}
+                                    className="text-[10px] font-bold px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200"
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenRevisionModal([student.id])}
+                                    className="text-[10px] font-bold px-2 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
+                                  >
+                                    Revisi
+                                  </button>
+                                </>
+                              )}
+
+                              {isApprover && (reviewStat === 'APPROVED' || reviewStat === 'SUBMITTED') && (
+                                <button
+                                  onClick={() => handleOpenRevision(student.id)}
+                                  className="text-[10px] font-bold px-2 py-1 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300"
+                                  title="Buka kembali agar guru dapat mengedit"
+                                >
+                                  Buka Revisi
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Inline History Expandable Row */}
+                      {isExpanded && (
+                        <tr className="bg-slate-50/90 border-b border-slate-200">
+                          <td colSpan={6} className="p-4 pl-14">
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                                  <Clock size={14} className="text-[#002366]" />
+                                  <span>Riwayat Gencom Sebelumnya — {student.name} (Tahun Ajaran {selectedYear})</span>
+                                </div>
+                                <span className="text-[11px] text-slate-400">Read-only · Periode sebelumnya</span>
+                              </div>
+
+                              {loadingHistoryMap[student.id] ? (
+                                <div className="p-4 text-center text-xs text-slate-400">
+                                  <RefreshCw size={14} className="animate-spin inline mr-1.5 text-[#002366]" /> Memuat riwayat...
+                                </div>
+                              ) : (!historyDataMap[student.id] || historyDataMap[student.id].length === 0) ? (
+                                <div className="p-4 bg-white border border-slate-200 rounded-lg text-xs text-slate-400 italic text-center">
+                                  Belum ada riwayat Gencom pada periode sebelumnya dalam tahun ajaran ini.
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {historyDataMap[student.id].map((hist, hIdx) => (
+                                    <div key={hIdx} className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs space-y-2">
+                                      <div className="flex items-center justify-between text-[11px]">
+                                        <span className="font-bold text-[#002366] px-2 py-0.5 bg-[#002366]/5 rounded">
+                                          {hist.periodLabel}
+                                        </span>
+                                        <span className="text-slate-400 font-mono">
+                                          {hist.source === 'MONTHLY' ? 'Monthly' : 'Midterm'} · Status: {hist.status}
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-slate-700 leading-relaxed font-sans bg-slate-50 p-2.5 rounded border border-slate-100">
+                                        {hist.commentText}
+                                      </p>
+                                      <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1">
+                                        <span>Diedit oleh: {hist.updatedByName || 'Guru'}</span>
+                                        <span>{formatDateTime(hist.updatedAt)}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -1567,6 +2120,82 @@ export default function MonthlyReportCommentsPage() {
           </div>
         )}
       </div>
+
+      {/* Revision Feedback Modal */}
+      <AnimatePresence>
+        {showRevisionModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden"
+            >
+              <div className="bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-amber-50 text-amber-700">
+                    <RotateCcw size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800">Minta Revisi Komentar</h3>
+                    <p className="text-xs text-slate-400">Berikan catatan feedback wajib untuk {pendingRevisionTargetIds.length} siswa terpilih</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowRevisionModal(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
+                    Catatan / Feedback Revisi <span className="text-rose-500">*wajib</span>
+                  </label>
+                  <textarea
+                    value={revisionFeedbackText}
+                    onChange={(e) => setRevisionFeedbackText(e.target.value)}
+                    rows={4}
+                    placeholder="Tuliskan bagian mana yang perlu direvisi atau diperbaiki oleh guru..."
+                    className="w-full text-xs leading-relaxed rounded-xl border-slate-200 focus:border-[#002366] focus:ring-[#002366] p-3"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-1">
+                    Feedback ini akan tercatat pada profil komentar masing-masing siswa terpilih.
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setShowRevisionModal(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmRevision}
+                  disabled={isSubmittingRevision || !revisionFeedbackText.trim()}
+                  className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-sm disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  {isSubmittingRevision ? (
+                    <>
+                      <RefreshCw size={13} className="animate-spin" /> Mengirim...
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw size={14} /> Kirim Permintaan Revisi
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Editor dialog / modal */}
       <AnimatePresence>
@@ -2631,5 +3260,56 @@ export default function MonthlyReportCommentsPage() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+class MonthlyReportCommentsErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("MonthlyReportCommentsPage Error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 max-w-xl mx-auto my-12 bg-white rounded-2xl border border-red-200 shadow-sm text-center space-y-4">
+          <div className="w-14 h-14 bg-red-50 text-red-600 rounded-xl flex items-center justify-center mx-auto">
+            <AlertCircle size={28} />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-lg font-bold text-slate-800">Terjadi Kendala Memuat Komentar</h3>
+            <p className="text-xs text-slate-500">
+              {this.state.error?.message || 'Terjadi kesalahan saat memuat halaman komentar rapor bulanan.'}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            className="px-4 py-2 bg-[#002366] text-white text-xs font-semibold rounded-lg hover:bg-[#002366]/90 transition-all cursor-pointer"
+          >
+            Muat Ulang Halaman
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function MonthlyReportCommentsPage() {
+  return (
+    <MonthlyReportCommentsErrorBoundary>
+      <MonthlyReportCommentsContent />
+    </MonthlyReportCommentsErrorBoundary>
   );
 }

@@ -2308,6 +2308,18 @@ export interface ClassReportSummary {
   updatedAt: string; // ISO format
 }
 
+export type MonthlyGenComReviewStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REVISION_REQUESTED';
+
+export interface MonthlyCommentReviewHistoryEntry {
+  action: 'DRAFT_SAVED' | 'SUBMITTED' | 'RESUBMITTED' | 'APPROVED' | 'REVISION_REQUESTED' | 'REVISION_OPENED';
+  actorId: string;
+  actorName: string;
+  actorRole: string;
+  timestamp: string; // ISO format
+  feedback?: string;
+  commentSnapshot?: string;
+}
+
 export interface JuniorHighMonthlyReportComment {
   id?: string; // Format: `JUNIOR_HIGH_MONTHLY_COMMENT_${studentId}_${classId}_${academicYearNormalized}_${semester}_${periodKey}`
   unit: 'JUNIOR_HIGH';
@@ -2325,8 +2337,25 @@ export interface JuniorHighMonthlyReportComment {
   status: 'DRAFT' | 'FINAL';
   createdBy: string;
   createdAt: string; // ISO format
+  createdByName?: string;
+  createdByUid?: string;
   updatedBy: string;
   updatedAt: string; // ISO format
+  updatedByName?: string;
+  updatedByUid?: string;
+
+  // Review & Approval Workflow
+  reviewStatus?: MonthlyGenComReviewStatus;
+  submittedAt?: string;
+  submittedByUid?: string;
+  submittedByName?: string;
+  reviewedAt?: string;
+  reviewedByUid?: string;
+  reviewedByName?: string;
+  reviewedByRole?: string;
+  reviewFeedback?: string;
+  reviewHistory?: MonthlyCommentReviewHistoryEntry[];
+  version?: number;
 }
 
 export interface JuniorHighAAPResult {
