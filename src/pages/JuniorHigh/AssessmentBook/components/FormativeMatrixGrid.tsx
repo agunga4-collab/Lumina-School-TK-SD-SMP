@@ -118,12 +118,21 @@ export function FormativeMatrixGrid(props: Props) {
         )}
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+      <div className="relative isolate w-full min-w-0 overflow-x-auto">
+  <table className="w-full min-w-[900px] text-left text-xs border-separate border-spacing-0">
           <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-700">
             <tr>
-              <th className="p-3 w-12 text-center font-bold">No</th>
-              <th className="p-3 min-w-[200px] font-bold">Nama Siswa</th>
+             <th
+  className="sticky left-0 z-20 w-[48px] min-w-[48px] max-w-[48px] bg-slate-50 p-3 text-center font-bold"
+>
+  No
+</th>
+
+<th
+  className="sticky left-[48px] z-20 w-[200px] min-w-[200px] max-w-[200px] border-r border-slate-200 bg-slate-50 p-3 font-bold shadow-[4px_0_6px_-4px_rgba(15,23,42,0.25)]"
+>
+  Nama Siswa
+</th>
               {los.map(lo => {
                 const count = students.filter(item => latest[`${item.id}|${lo.id}`]).length;
                 return (
@@ -166,16 +175,28 @@ export function FormativeMatrixGrid(props: Props) {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {visible.map((student, index) => (
-              <tr key={student.id} className="hover:bg-slate-50/90 transition-colors">
-                <td className="p-3 align-top text-center text-slate-400 font-mono">
-                  {student.attendanceNumber ?? (student as Student & { noAbsen?: number }).noAbsen ?? index + 1}
-                </td>
-                <td className="p-3 align-top font-semibold text-slate-900">
-                  <span className="block text-xs">{student.name}</span>
-                  <span className="text-[10px] text-slate-400 font-normal font-mono block mt-0.5">
-                    {student.nisn || student.id}
-                  </span>
-                </td>
+              <tr
+  key={student.id}
+  className="group hover:bg-slate-50/90 transition-colors"
+>
+                <td
+  className="sticky left-0 z-10 w-[48px] min-w-[48px] max-w-[48px] bg-white p-3 align-top text-center font-mono text-slate-400 group-hover:bg-slate-50"
+>
+  {student.attendanceNumber ??
+    (student as Student & { noAbsen?: number }).noAbsen ??
+    index + 1}
+</td>
+
+<td
+  className="sticky left-[48px] z-10 w-[200px] min-w-[200px] max-w-[200px] border-r border-slate-200 bg-white p-3 align-top font-semibold text-slate-900 shadow-[4px_0_6px_-4px_rgba(15,23,42,0.25)] group-hover:bg-slate-50"
+>
+  <span className="block whitespace-normal break-words text-xs">
+    {student.name}
+  </span>
+  <span className="mt-0.5 block break-all font-mono text-[10px] font-normal text-slate-400">
+    {student.nisn || student.id}
+  </span>
+</td>
                 {los.map(lo => {
                   const entry = latest[`${student.id}|${lo.id}`];
                   const assigned = getAssignedFormativeTask(lo, student.id);
