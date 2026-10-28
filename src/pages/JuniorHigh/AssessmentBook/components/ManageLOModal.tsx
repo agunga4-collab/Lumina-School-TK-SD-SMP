@@ -2,11 +2,12 @@ import * as React from 'react';
 import { useState } from 'react';
 import { X, Plus, Trash2, Edit2, Check, Target, Copy, CheckSquare, Square, Layers, AlertCircle } from 'lucide-react';
 import { JHAssessmentLO, LearningGoal, Class } from '../../../../types';
-import { 
-  saveLO, 
-  softDeleteLO, 
-  saveLOMultiClass, 
-  getLGGrades 
+import {
+  saveLO,
+  softDeleteLO,
+  saveLOMultiClass,
+  getLGGrades,
+  getLOsForLG
 } from '../../../../services/juniorHighAssessmentBookService';
 import { getJHGradeLevelNumber } from '../../../../services/juniorHighMidtermService';
 import { toast } from 'sonner';
@@ -118,8 +119,74 @@ export function ManageLOModal({
       return;
     }
 
-    setSaving(true);
+        setSaving(true);
     try {
+      if (isUAMode) {
+        if (!lg.id || !classId) {
+          toast.error('LG atau kelompok Unit Aktivitas belum dipilih.');
+          return;
+        }
+
+        const existing = await getLOsForLG({
+          lgId: lg.id,
+          classId,
+          subjectId,
+          academicYear,
+          semester,
+          isUAMode: true
+        });
+
+        const titleClean = newTitle.trim();
+        const duplicate = existing.find(
+          lo => lo.title.trim().toLowerCase() === titleClean.toLowerCase()
+        );
+
+        if (duplicate) {
+          toast.info(
+            `LO dengan deskripsi serupa sudah ada (${duplicate.code}).`
+          );
+          return;
+        }
+
+        const nextOrder =
+          existing.reduce(
+            (max, lo) => Math.max(max, lo.order || 0),
+            0
+          ) + 1;
+
+        const usedCodes = new Set(
+          existing.map(lo => lo.code.trim().toLowerCase())
+        );
+
+        let targetCode = newCode.trim() || `LO ${nextOrder}`;
+        let codeNumber = nextOrder;
+
+        while (usedCodes.has(targetCode.toLowerCase())) {
+          targetCode = `LO ${codeNumber++}`;
+        }
+
+        await saveLO({
+          lgId: lg.id,
+          classId,
+          subjectId,
+          academicYear,
+          semester,
+          code: targetCode,
+          title: titleClean,
+          order: nextOrder,
+          teacherId: teacherUid,
+          teacherName
+        });
+
+        toast.success(
+          'Learning Objective Unit Aktivitas berhasil ditambahkan.'
+        );
+        setNewTitle('');
+        setNewCode(`LO ${nextOrder + 1}`);
+        onRefresh();
+        return;
+      }
+
       const res = await saveLOMultiClass({
         lgId: lg.id,
         targetClassIds: selectedClassIds,
@@ -132,28 +199,40 @@ export function ManageLOModal({
         teacherName
       });
 
-      const getCName = (cid: string) => eligibleClasses.find(c => c.id === cid)?.name || cid;
+      const getCName = (cid: string) =>
+        eligibleClasses.find(c => c.id === cid)?.name || cid;
 
       if (res.successClasses.length > 0) {
-        if (res.successClasses.length === 1 && res.successClasses[0] === classId) {
+        if (
+          res.successClasses.length === 1 &&
+          res.successClasses[0] === classId
+        ) {
           toast.success('Learning Objective berhasil ditambahkan.');
         } else {
-          toast.success(`LO berhasil dibuat pada ${res.successClasses.length} kelas: ${res.successClasses.map(getCName).join(', ')}`);
+          toast.success(
+            `LO berhasil dibuat pada ${res.successClasses.length} kelas: ${res.successClasses.map(getCName).join(', ')}`
+          );
         }
       }
 
       if (res.skippedClasses.length > 0) {
-        toast.info(`Dilewati: ${res.skippedClasses.map(s => `${getCName(s.classId)} (${s.reason})`).join(', ')}`);
+        toast.info(
+          `Dilewati: ${res.skippedClasses.map(s => `${getCName(s.classId)} (${s.reason})`).join(', ')}`
+        );
       }
 
       if (res.failedClasses.length > 0) {
-        toast.error(`Gagal pada: ${res.failedClasses.map(f => `${getCName(f.classId)}: ${f.error}`).join(', ')}`);
+        toast.error(
+          `Gagal pada: ${res.failedClasses.map(f => `${getCName(f.classId)}: ${f.error}`).join(', ')}`
+        );
       }
 
-      setNewTitle('');
-      setNewCode(`LO ${los.length + 2}`);
-      setSelectedClassIds([classId]);
-      onRefresh();
+      if (res.successClasses.length > 0) {
+        setNewTitle('');
+        setNewCode(`LO ${los.length + 2}`);
+        setSelectedClassIds([classId]);
+        onRefresh();
+      }
     } catch (err: any) {
       console.error(err);
       toast.error('Gagal menambahkan LO: ' + (err.message || 'Error'));
