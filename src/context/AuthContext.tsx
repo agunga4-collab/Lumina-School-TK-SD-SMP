@@ -20,6 +20,7 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>;
   googleAccessToken: string | null;
   getGoogleDriveToken: () => Promise<string | null>;
+  getGoogleSheetsToken: () => Promise<string | null>;
 }
 
 const AuthContext = React.createContext<AuthContextType | undefined>(undefined);
@@ -37,6 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const driveProvider = new GoogleAuthProvider();
     driveProvider.addScope('https://www.googleapis.com/auth/drive');
     driveProvider.addScope('https://www.googleapis.com/auth/drive.file');
+    driveProvider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
 
     try {
       const result = await signInWithPopup(auth, driveProvider);
@@ -48,6 +50,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return null;
     } catch (err: any) {
       console.error("Failed to obtain Drive tokens:", err);
+      throw err;
+    }
+  };
+
+  const getGoogleSheetsToken = async (): Promise<string | null> => {
+    if (googleAccessToken) return googleAccessToken;
+
+    const sheetsProvider = new GoogleAuthProvider();
+    sheetsProvider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
+    sheetsProvider.addScope('https://www.googleapis.com/auth/drive.file');
+
+    try {
+      const result = await signInWithPopup(auth, sheetsProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setGoogleAccessToken(credential.accessToken);
+        return credential.accessToken;
+      }
+      return null;
+    } catch (err: any) {
+      console.error("Failed to obtain Sheets token:", err);
       throw err;
     }
   };
@@ -135,7 +158,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signOut, 
       refreshProfile, 
       googleAccessToken, 
-      getGoogleDriveToken 
+      getGoogleDriveToken,
+      getGoogleSheetsToken
     }}>
       {children}
     </AuthContext.Provider>

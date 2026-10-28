@@ -1869,6 +1869,30 @@ service cloud.firestore {
       allow delete: if isActive() && isAdmin();
     }
 
+    match /jh_ab_sheet_sources/{sourceId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow create, update: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher())
+      );
+      allow delete: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && resource.data.createdBy == request.auth.uid)
+      );
+    }
+
+    match /jh_ab_sheet_sync_logs/{logId} {
+      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+      allow create: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher())
+      );
+      allow update, delete: if false;
+    }
+
     match /elem_midterm_master_goals/{goalId} {
       allow read, write: if isElementaryStaff();
     }

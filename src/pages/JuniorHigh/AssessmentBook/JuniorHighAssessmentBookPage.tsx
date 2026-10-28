@@ -15,6 +15,7 @@ import { SharedFormativeTaskModal } from './components/SharedFormativeTaskModal'
 import { ManageLOModal } from './components/ManageLOModal';
 import { ProposeLGModal } from './components/ProposeLGModal';
 import { BulkFormativeModal } from './components/BulkFormativeModal';
+import { ImportLOSheetModal } from './components/ImportLOSheetModal';
 import { AssessmentBookSettingsModal } from './components/AssessmentBookSettingsModal';
 import { exportJuniorHighAssessmentBookExcel } from '../../../utils/exportJuniorHighAssessmentBookExcel';
 import { JH_SUBJECT_CATALOG, getJHSubjectLabel } from '../../../constants/juniorHighSubjectCatalog';
@@ -133,6 +134,7 @@ export default function JuniorHighAssessmentBookPage() {
   const [proposal, setProposal] = React.useState<{ open: boolean; parentLG?: LearningGoal; existingLG?: LearningGoal }>({ open: false });
   const [sharedTaskLO, setSharedTaskLO] = React.useState<JHAssessmentLO | null>(null);
   const [bulkLO, setBulkLO] = React.useState<JHAssessmentLO | null>(null);
+  const [sheetSyncLO, setSheetSyncLO] = React.useState<JHAssessmentLO | null>(null);
   const [individual, setIndividual] = React.useState<{ student: Student; lo: JHAssessmentLO } | null>(null);
   const [sumStudent, setSumStudent] = React.useState<Student | null>(null);
   const [quickKey, setQuickKey] = React.useState('');
@@ -865,8 +867,8 @@ export default function JuniorHighAssessmentBookPage() {
                 formativeEntries={formative}
                 summativeEntries={summative}
                 options={options}
-                classId={classId}
-                subjectId={subject}
+                classId={effectiveClassId}
+                subjectId={effectiveSubject}
                 academicYear={year}
                 semester={semester}
                 teacherId={teacherId}
@@ -877,6 +879,7 @@ export default function JuniorHighAssessmentBookPage() {
                 onOpenManageLOModal={() => setManageOpen(true)}
                 onOpenSharedTaskModal={setSharedTaskLO}
                 onOpenBulkModal={setBulkLO}
+                onOpenSheetImportModal={setSheetSyncLO}
                 onRefreshData={loadAssessmentData}
               />
             ) : (
@@ -914,6 +917,25 @@ export default function JuniorHighAssessmentBookPage() {
       />
     )}
     {bulkLO && !isReadOnly && (isUA ? <UASessionModal key={`${scopeKey}|${bulkLO.id}`} students={students as UAStudent[]} lo={bulkLO} scope={{ classId: effectiveClassId, subjectId: effectiveSubject, academicYear: year, semester }} options={options} teacherId={teacherId} teacherName={teacherName} onClose={() => setBulkLO(null)} onSaved={loadAssessmentData} /> : <BulkFormativeModal isOpen onClose={() => setBulkLO(null)} lo={bulkLO} students={students} classId={classId} subjectId={subject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} onSuccess={loadAssessmentData} />)}
+    {sheetSyncLO && activeLG && !isReadOnly && (
+      <ImportLOSheetModal
+        key={`${scopeKey}|sheet|${sheetSyncLO.id}`}
+        isOpen
+        onClose={() => setSheetSyncLO(null)}
+        lo={sheetSyncLO}
+        lg={activeLG}
+        students={students}
+        classId={effectiveClassId}
+        subjectId={effectiveSubject}
+        academicYear={year}
+        semester={semester}
+        isUAMode={isUA}
+        options={options}
+        teacherId={teacherId}
+        teacherName={teacherName}
+        onSuccess={loadAssessmentData}
+      />
+    )}
     {sharedTaskLO && !isReadOnly && <SharedFormativeTaskModal key={`${scopeKey}|task|${sharedTaskLO.id}`} lo={sharedTaskLO} students={students} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} onClose={() => setSharedTaskLO(null)} onSaved={loadAssessmentData} />}
     {individual && <FormativeAssessmentModal key={`${scopeKey}|${individual.student.id}|${individual.lo.id}`} isOpen onClose={() => setIndividual(null)} student={individual.student} lo={individual.lo} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} historyEntries={formative.filter(entry => entry.studentId === individual.student.id && entry.loId === individual.lo.id)} teacherId={teacherId} teacherName={teacherName} isSuperAdmin={isSuperAdmin} isReadOnly={isReadOnly} onSaved={loadAssessmentData} {...{ ...context, isUAMode: isUA }} />}
     {sumStudent && activeLG && <SummativeModal key={`${scopeKey}|${sumStudent.id}`} isOpen onClose={() => setSumStudent(null)} student={sumStudent} lg={activeLG} los={los} loScores={Object.fromEntries(los.map(lo => [lo.id, latestEntries(formative)[`${sumStudent.id}|${lo.id}`]?.comprehensionLevel]))} existingSummative={summative.find(entry => entry.studentId === sumStudent.id)} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} isReadOnly={isReadOnly} onSaved={loadAssessmentData} {...{ ...context, isUAMode: isUA }} />}

@@ -5,5 +5,7 @@
   "authDomain": "luminaschoolproject.firebaseapp.com",
   "storageBucket": "luminaschoolproject.firebasestorage.app",
   "messagingSenderId": "934670222823",
-  "measurementId": "G-MQ1LFFH9TH"
+  "measurementId": "G-MQ1LFFH9TH",
+  "oAuthClientId": "939199484135-kddhs10c8s48apv6khtiprqmf6gl9a36.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { toast } from 'sonner';
-import { Check, X, Search, Award, Loader2 } from 'lucide-react';
+import { Check, X, Search, Award, Loader2, FileSpreadsheet } from 'lucide-react';
 import { AssessmentBookOptions, JHAssessmentLO, JHFormativeEntry, JHSummativeEntry, LearningGoal, Student, isLegacyScore } from '../../../../types';
 import { addFormativeEntry, correctFormativeEntry, formatDateWIB, getAssignedFormativeTask, getTodayWIB } from '../../../../services/juniorHighAssessmentBookService';
 
@@ -23,6 +23,7 @@ interface Props {
   onOpenManageLOModal: () => void;
   onOpenBulkModal: (lo: JHAssessmentLO) => void;
   onOpenSharedTaskModal: (lo: JHAssessmentLO) => void;
+  onOpenSheetImportModal?: (lo: JHAssessmentLO) => void;
   onRefreshData: () => void;
 }
 
@@ -45,6 +46,7 @@ export function FormativeMatrixGrid(props: Props) {
     onOpenManageLOModal,
     onOpenBulkModal,
     onOpenSharedTaskModal,
+    onOpenSheetImportModal,
     onRefreshData
   } = props;
 
@@ -161,6 +163,15 @@ export function FormativeMatrixGrid(props: Props) {
                           onClick={() => onOpenBulkModal(lo)}
                         >
                           Nilai massal — nilai sama
+                        </button>
+                        <button
+                          type="button"
+                          className="py-1.5 px-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-emerald-400 whitespace-nowrap"
+                          onClick={() => onOpenSheetImportModal?.(lo)}
+                          title="Ambil dan sinkronkan nilai dari Google Sheet"
+                        >
+                          <FileSpreadsheet size={12} className="text-emerald-600" />
+                          Ambil dari Sheet
                         </button>
                       </div>
                     )}
