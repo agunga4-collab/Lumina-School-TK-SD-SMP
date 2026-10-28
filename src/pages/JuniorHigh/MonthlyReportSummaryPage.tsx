@@ -1226,51 +1226,38 @@ export default function MonthlyReportSummaryPage() {
                 <div className="flex items-center gap-2 self-end sm:self-center">
                   <button
                     onClick={() => handleAddItem('WEEKLY_LESSON')}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#002366] text-xs font-semibold border border-blue-200 transition-colors"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#002366] text-xs font-semibold border border-blue-200 transition-colors cursor-pointer"
                   >
                     <Plus size={14} /> + Lesson
                   </button>
-                  {!isUaActive && (
-                    <button
-                      onClick={() => handleAddItem('UNIT_ACTIVITY')}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 transition-colors"
-                    >
-                      <Plus size={14} /> + Unit Activity
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleAddItem('UNIT_ACTIVITY')}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 transition-colors cursor-pointer"
+                  >
+                    <Plus size={14} /> + Unit Activity
+                  </button>
                 </div>
               </div>
-
-              {isUaActive && (
-                <div className="mx-5 mt-5 p-4 bg-blue-50/70 border border-blue-100 rounded-xl flex gap-3 text-[#002366] items-center">
-                  <Info size={16} className="shrink-0 text-blue-600" />
-                  <p className="text-xs font-semibold text-blue-800">
-                    Unit Activity diambil otomatis dari Unit Aktivitas sesuai enrollment siswa dan bulan laporan.
-                  </p>
-                </div>
-              )}
 
               <div className="p-5">
                 {reportItems.length === 0 ? (
                   <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50/30">
                     <Info size={28} className="mx-auto text-slate-400 mb-2" />
                     <p className="text-sm font-semibold text-slate-600">Belum ada item ditambahkan</p>
-                    <p className="text-xs text-slate-400 mt-1 mb-4">Tambahkan setidaknya satu item Weekly Lesson menggunakan tombol di kanan atas.</p>
+                    <p className="text-xs text-slate-400 mt-1 mb-4">Tambahkan setidaknya satu item Weekly Lesson atau Unit Activity menggunakan tombol di kanan atas.</p>
                     <div className="flex items-center justify-center gap-3">
                       <button
                         onClick={() => handleAddItem('WEEKLY_LESSON')}
-                        className="flex items-center gap-1 px-4 py-2 rounded-lg bg-[#002366] text-white text-xs font-semibold hover:bg-[#002366]/90 transition-all"
+                        className="flex items-center gap-1 px-4 py-2 rounded-lg bg-[#002366] text-white text-xs font-semibold hover:bg-[#002366]/90 transition-all cursor-pointer"
                       >
                         <Plus size={14} /> Tambah Weekly Lesson
                       </button>
-                      {!isUaActive && (
-                        <button
-                          onClick={() => handleAddItem('UNIT_ACTIVITY')}
-                          className="flex items-center gap-1 px-4 py-2 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition-all"
-                        >
-                          <Plus size={14} /> Tambah Unit Activity
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleAddItem('UNIT_ACTIVITY')}
+                        className="flex items-center gap-1 px-4 py-2 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition-all cursor-pointer"
+                      >
+                        <Plus size={14} /> Tambah Unit Activity
+                      </button>
                     </div>
                   </div>
                 ) : (
@@ -1342,19 +1329,11 @@ export default function MonthlyReportSummaryPage() {
                               <select
                                 value={item.category}
                                 onChange={(e) => handleItemChange(item.id, 'category', e.target.value as any)}
-                                disabled={isUaActive}
-                                className={`w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5 ${
-                                  isUaActive ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-slate-50/50'
-                                }`}
+                                className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5 bg-slate-50/50"
                               >
                                 <option value="WEEKLY_LESSON">Weekly Lesson</option>
                                 <option value="UNIT_ACTIVITY">Unit Activity</option>
                               </select>
-                              {isUaActive && item.category === 'UNIT_ACTIVITY' && (
-                                <p className="text-[10px] text-amber-600 font-bold mt-1 leading-normal">
-                                  Kategori ini terkunci karena laporan menggunakan Unit Activity Bulanan dinamis.
-                                </p>
-                              )}
 
                               <div className="mt-3">
                                 <label className="block text-xs font-semibold text-slate-600 mb-1">

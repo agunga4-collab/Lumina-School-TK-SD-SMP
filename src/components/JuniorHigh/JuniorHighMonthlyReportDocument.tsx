@@ -10,7 +10,7 @@ export interface JuniorHighMonthlyReportDocumentProps {
   homeroomTeacherProfile?: any;
   homeroomTeacherName?: string;
   classSummary?: ClassReportSummary | null;
-  weeklyLessons?: { title: string; summary: string }[];
+  weeklyLessons?: { title: string; summary: string; category?: string; id?: string; order?: number }[];
   selfExplorationSlots?: { slot: number; strandNameSnapshot: string; activityNameSnapshot: string; reflectionText: string }[];
   attendance?: { sickLeave: number; excusedLeave: number; absent: number } | null;
   attendanceAvailable?: boolean;
@@ -149,16 +149,22 @@ export const JuniorHighMonthlyReportDocument: React.FC<JuniorHighMonthlyReportDo
               <table className="w-full text-left border-collapse" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr className="bg-[#002366] text-white text-[10px] font-bold uppercase tracking-wider">
-                    <th className="border border-[#002366] p-2.5 w-[35%]">LEARNING JOURNEY</th>
-                    <th className="border border-[#002366] p-2.5 w-[65%]">SUMMARY</th>
+                    <th className="border border-[#002366] p-2" style={{ width: '24%' }}>LEARNING JOURNEY</th>
+                    <th className="border border-[#002366] p-2" style={{ width: '76%' }}>SUMMARY</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="bg-white text-[10.5px]">
-                    <td className="border border-slate-300 p-3 font-bold align-top text-slate-900 leading-snug">
+                  <tr className="bg-white text-[10px]">
+                    <td 
+                      className="border border-slate-300 p-2.5 font-bold align-top text-slate-900 leading-snug break-words"
+                      style={{ width: '24%' }}
+                    >
                       {classSummary?.sections?.learningJourney?.title || 'Learning Journey'}
                     </td>
-                    <td className="border border-slate-300 p-3 text-slate-700 align-top leading-relaxed whitespace-pre-wrap">
+                    <td 
+                      className="border border-slate-300 p-2.5 text-slate-700 align-top leading-relaxed whitespace-pre-wrap break-words"
+                      style={{ width: '76%' }}
+                    >
                       {classSummary?.sections?.learningJourney?.summary || (
                         <span className="text-slate-400 italic">No summary available for this period.</span>
                       )}
@@ -169,30 +175,36 @@ export const JuniorHighMonthlyReportDocument: React.FC<JuniorHighMonthlyReportDo
             </div>
 
             {/* Table 2: Weekly Lessons & Summary */}
-            <div className="overflow-hidden">
+            <div className="mb-2">
               <table className="w-full text-left border-collapse" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr className="bg-[#002366] text-white text-[10px] font-bold uppercase tracking-wider">
-                    <th className="border border-[#002366] p-2.5 w-[35%]">WEEKLY LESSONS</th>
-                    <th className="border border-[#002366] p-2.5 w-[65%]">SUMMARY</th>
+                    <th className="border border-[#002366] p-2" style={{ width: '24%' }}>WEEKLY LESSONS & UNIT ACTIVITY</th>
+                    <th className="border border-[#002366] p-2" style={{ width: '76%' }}>SUMMARY</th>
                   </tr>
                 </thead>
                 <tbody>
                   {weeklyLessons.length > 0 ? (
                     weeklyLessons.map((item, idx) => (
                       <tr key={idx} className="bg-white text-[10px]">
-                        <td className="border border-slate-300 p-2.5 font-bold align-top text-slate-900 leading-snug">
+                        <td 
+                          className="border border-slate-300 p-2 font-bold align-top text-slate-900 leading-snug break-words"
+                          style={{ width: '24%' }}
+                        >
                           {item.title}
                         </td>
-                        <td className="border border-slate-300 p-2.5 text-slate-700 align-top leading-relaxed whitespace-pre-wrap">
+                        <td 
+                          className="border border-slate-300 p-2 text-slate-700 align-top leading-relaxed whitespace-pre-wrap break-words"
+                          style={{ width: '76%' }}
+                        >
                           {item.summary}
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr className="bg-white text-[10px]">
-                      <td colSpan={2} className="border border-slate-300 p-4 text-center text-slate-400 italic">
-                        No weekly lessons recorded for this period.
+                      <td colSpan={2} className="border border-slate-300 p-3 text-center text-slate-400 italic">
+                        No weekly lessons or unit activities recorded for this period.
                       </td>
                     </tr>
                   )}

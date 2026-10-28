@@ -688,8 +688,37 @@ export default function MonthlyReportPdfPage() {
       pdf.text(`Class : ${selectedClassObj?.name || ''}`, 10, 14);
       pdf.text(`Period : ${periodDetails.monthName} ${periodDetails.year}`, 10, 16);
       pdf.text(`LEARNING JOURNEY: ${classSummary?.sections?.learningJourney?.title || ''} - ${classSummary?.sections?.learningJourney?.summary || ''}`, 10, 18);
-      weeklyLessons.forEach((item, index) => {
-        pdf.text(`WEEKLY LESSONS ${index + 1}: ${item.title} - ${item.summary}`, 10, 20 + (index * 2));
+      const studentLessons = (() => {
+        if (!classSummary) return [];
+        const rawItems = classSummary.sections?.weeklyLessonsAndUnitActivities || [];
+        const savedItems = rawItems
+          .filter(item => Boolean(item.title?.trim() || item.summary?.trim()))
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        const hasSavedUa = savedItems.some(item => item.category === 'UNIT_ACTIVITY');
+        if (!hasSavedUa && isUaActive && student) {
+          const studentEnrollments = unitActivityEnrollments.filter(
+            e => e.studentId === student.id && e.status === 'CONFIRMED'
+          );
+          if (studentEnrollments.length > 0) {
+            const dynamicUaItems = studentEnrollments.map((e, index) => {
+              const desc = semesterSummariesMap[e.normalizedUaName] || '';
+              return {
+                id: `ua_dyn_${e.normalizedUaName}_${index}`,
+                order: savedItems.length + index,
+                category: 'UNIT_ACTIVITY' as const,
+                title: e.normalizedUaName,
+                summary: desc.trim() || '[Deskripsi aktivitas bulanan belum diisi di menu Unit Aktivitas.]'
+              };
+            }).sort((a, b) => a.title.localeCompare(b.title));
+            return [...savedItems, ...dynamicUaItems];
+          }
+        }
+        return savedItems;
+      })();
+
+      studentLessons.forEach((item, index) => {
+        const itemType = item.category === 'UNIT_ACTIVITY' ? 'UNIT ACTIVITY' : 'WEEKLY LESSONS';
+        pdf.text(`${itemType} ${index + 1}: ${item.title} - ${item.summary}`, 10, 20 + (index * 2));
       });
       pdf.text(`Griya Cinere I, Jl. Garuda Ujung No. 35, Cinere, Kec Limo, Kota Depok, Jawa barat 16515`, 10, 200);
       pdf.text(`Telp. (021) 753 4841 Email: information@lazuardi.sch.id WhatsApp: +62 813 8925 7784`, 10, 202);
@@ -820,14 +849,6 @@ export default function MonthlyReportPdfPage() {
     }
   };
 
-  // Pre-calculate weekly and unit activities elements for generatingStudent
-  const weeklyLessons = React.useMemo(() => {
-    if (!classSummary) return [];
-    return (classSummary.sections?.weeklyLessonsAndUnitActivities || [])
-      .filter(item => item.category === 'WEEKLY_LESSON')
-      .sort((a, b) => a.order - b.order);
-  }, [classSummary]);
-
   const isUaActive = React.useMemo(() => {
     if (!selectedYear || !selectedSemester || !selectedMonth) return false;
     const currentFirstYear = parseInt(selectedYear.split('/')[0]) || 0;
@@ -851,28 +872,40 @@ export default function MonthlyReportPdfPage() {
     return false;
   }, [selectedYear, selectedSemester, selectedMonth]);
 
-  const unitActivities = React.useMemo(() => {
-    if (isUaActive) {
-      if (!generatingStudent) return [];
+  // Pre-calculate weekly and unit activities elements for generatingStudent
+  const resolvedLessonsAndActivities = React.useMemo(() => {
+    if (!classSummary) return [];
+
+    const rawItems = classSummary.sections?.weeklyLessonsAndUnitActivities || [];
+    const savedItems = rawItems
+      .filter(item => Boolean(item.title?.trim() || item.summary?.trim()))
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    const hasSavedUa = savedItems.some(item => item.category === 'UNIT_ACTIVITY');
+
+    // If no UNIT_ACTIVITY was entered in classSummary and UA is active, supplement dynamic student enrollments if present
+    if (!hasSavedUa && isUaActive && generatingStudent) {
       const studentEnrollments = unitActivityEnrollments.filter(
         e => e.studentId === generatingStudent.id && e.status === 'CONFIRMED'
       );
-      return studentEnrollments.map((e, index) => {
-        const desc = semesterSummariesMap[e.normalizedUaName] || '';
-        return {
-          id: `ua_dyn_${e.normalizedUaName}_${index}`,
-          category: 'UNIT_ACTIVITY',
-          title: e.normalizedUaName,
-          summary: desc.trim() || '[PERINGATAN STAF: Deskripsi narasi bulanan belum diisi di menu Unit Aktivitas. Orang tua tidak akan melihat bagian kosong ini.]'
-        };
-      }).sort((a, b) => a.title.localeCompare(b.title));
+      if (studentEnrollments.length > 0) {
+        const dynamicUaItems = studentEnrollments.map((e, index) => {
+          const desc = semesterSummariesMap[e.normalizedUaName] || '';
+          return {
+            id: `ua_dyn_${e.normalizedUaName}_${index}`,
+            order: savedItems.length + index,
+            category: 'UNIT_ACTIVITY' as const,
+            title: e.normalizedUaName,
+            summary: desc.trim() || '[Deskripsi aktivitas bulanan belum diisi di menu Unit Aktivitas.]'
+          };
+        }).sort((a, b) => a.title.localeCompare(b.title));
+
+        return [...savedItems, ...dynamicUaItems];
+      }
     }
 
-    if (!classSummary) return [];
-    return (classSummary.sections?.weeklyLessonsAndUnitActivities || [])
-      .filter(item => item.category === 'UNIT_ACTIVITY')
-      .sort((a, b) => a.order - b.order);
-  }, [isUaActive, generatingStudent, unitActivityEnrollments, semesterSummariesMap, classSummary]);
+    return savedItems;
+  }, [classSummary, isUaActive, generatingStudent, unitActivityEnrollments, semesterSummariesMap]);
 
   // Pre-calculate approved self exploration reflection content for generatingStudent
   const approvedSelfExplorationSlots = React.useMemo(() => {
@@ -901,7 +934,7 @@ export default function MonthlyReportPdfPage() {
             homeroomTeacherProfile={homeroomTeacherProfile}
             homeroomTeacherName={homeroomTeacherProfile?.displayName || selectedClassObj?.homeroomTeacherName || 'Wali Kelas'}
             classSummary={classSummary}
-            weeklyLessons={[...weeklyLessons, ...unitActivities]}
+            weeklyLessons={resolvedLessonsAndActivities}
             selfExplorationSlots={approvedSelfExplorationSlots}
             attendance={studentAttendanceMap[generatingStudent.id] || null}
             attendanceAvailable={attendanceAvailableForPeriod}

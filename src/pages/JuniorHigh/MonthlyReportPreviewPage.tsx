@@ -467,31 +467,36 @@ export default function MonthlyReportPreviewPage() {
   // Resolve weekly lessons and unit activities for current student
   const resolvedWeeklyLessons = React.useMemo(() => {
     if (!classSummary) return [];
-    const baseLessons = (classSummary.sections?.weeklyLessonsAndUnitActivities || [])
-      .filter(item => item.category === 'WEEKLY_LESSON')
-      .sort((a, b) => a.order - b.order);
 
-    let uaItems: any[] = [];
-    if (isUaActive && currentStudent) {
+    const rawItems = classSummary.sections?.weeklyLessonsAndUnitActivities || [];
+    const savedItems = rawItems
+      .filter(item => Boolean(item.title?.trim() || item.summary?.trim()))
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    const hasSavedUa = savedItems.some(item => item.category === 'UNIT_ACTIVITY');
+
+    // If no UNIT_ACTIVITY was entered in classSummary and UA is active, supplement dynamic student enrollments if present
+    if (!hasSavedUa && isUaActive && currentStudent) {
       const studentEnrollments = unitActivityEnrollments.filter(
         e => e.studentId === currentStudent.id && e.status === 'CONFIRMED'
       );
-      uaItems = studentEnrollments.map((e, index) => {
-        const desc = semesterSummariesMap[e.normalizedUaName] || '';
-        return {
-          id: `ua_dyn_${e.normalizedUaName}_${index}`,
-          category: 'UNIT_ACTIVITY',
-          title: e.normalizedUaName,
-          summary: desc.trim() || '[Deskripsi aktivitas bulanan belum diisi di menu Unit Aktivitas.]'
-        };
-      }).sort((a, b) => a.title.localeCompare(b.title));
-    } else if (classSummary) {
-      uaItems = (classSummary.sections?.weeklyLessonsAndUnitActivities || [])
-        .filter(item => item.category === 'UNIT_ACTIVITY')
-        .sort((a, b) => a.order - b.order);
+      if (studentEnrollments.length > 0) {
+        const dynamicUaItems = studentEnrollments.map((e, index) => {
+          const desc = semesterSummariesMap[e.normalizedUaName] || '';
+          return {
+            id: `ua_dyn_${e.normalizedUaName}_${index}`,
+            order: savedItems.length + index,
+            category: 'UNIT_ACTIVITY' as const,
+            title: e.normalizedUaName,
+            summary: desc.trim() || '[Deskripsi aktivitas bulanan belum diisi di menu Unit Aktivitas.]'
+          };
+        }).sort((a, b) => a.title.localeCompare(b.title));
+
+        return [...savedItems, ...dynamicUaItems];
+      }
     }
 
-    return [...baseLessons, ...uaItems];
+    return savedItems;
   }, [classSummary, isUaActive, currentStudent, unitActivityEnrollments, semesterSummariesMap]);
 
   // Resolve approved self-exploration reflection slots for current student
