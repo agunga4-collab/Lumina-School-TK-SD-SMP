@@ -459,15 +459,245 @@ export async function getLOsForLG(params: AssessmentScope): Promise<JHAssessment
     .map(item => ({ ...item, sharedTasks: tasks.filter(task => task.loId === item.id) }))
     .sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));
 }
-export async function saveLO(params: { id?: string; lgId: string; classId: string; subjectId: string; academicYear: string; semester: string; code: string; title: string; order: number; teacherId: string; teacherName?: string } & JHAssessmentUAContext): Promise<string> {
+
+export interface LODateResolution {
+  date: string;
+  isExplicit: boolean;
+  hasConflict: boolean;
+  distinctDates: { date: string; count: number }[];
+  totalEntriesCount: number;
+}
+
+export function getEffectiveLODate(lo: JHAssessmentLO, entriesForLO: JHFormativeEntry[]): LODateResolution {
+  const datesCount = new Map<string, number>();
+  for (const entry of entriesForLO) {
+    if (entry.date) {
+      datesCount.set(entry.date, (datesCount.get(entry.date) || 0) + 1);
+    }
+  }
+  const distinctDates = [...datesCount.entries()]
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => b.count - a.count || b.date.localeCompare(a.date));
+
+  const hasConflict = distinctDates.length > 1;
+
+  if (lo.assessmentDate) {
+    return {
+      date: lo.assessmentDate,
+      isExplicit: true,
+      hasConflict,
+      distinctDates,
+      totalEntriesCount: entriesForLO.length
+    };
+  }
+
+  if (distinctDates.length === 1) {
+    return {
+      date: distinctDates[0].date,
+      isExplicit: false,
+      hasConflict: false,
+      distinctDates,
+      totalEntriesCount: entriesForLO.length
+    };
+  }
+
+  if (distinctDates.length > 1) {
+    return {
+      date: distinctDates[0].date,
+      isExplicit: false,
+      hasConflict: true,
+      distinctDates,
+      totalEntriesCount: entriesForLO.length
+    };
+  }
+
+  return {
+    date: getTodayWIB(),
+    isExplicit: false,
+    hasConflict: false,
+    distinctDates: [],
+    totalEntriesCount: 0
+  };
+}
+
+export interface UpdateLODateParams {
+  loId: string;
+  newDate: string;
+  teacherId: string;
+  teacherName: string;
+  scope: AssessmentScope;
+}
+
+export interface UpdateLODateResult {
+  success: boolean;
+  loId: string;
+  newDate: string;
+  oldDate?: string;
+  updatedEntriesCount: number;
+  failedEntriesCount: number;
+  error?: string;
+}
+
+export async function updateLOAssessmentDate(params: UpdateLODateParams): Promise<UpdateLODateResult> {
+  const { loId, newDate, teacherId, teacherName, scope } = params;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+    throw new Error('Format tanggal harus YYYY-MM-DD');
+  }
+
+  const now = Date.now();
+  const loRef = doc(db, 'jh_ab_los', loId);
+  const loSnap = await getDoc(loRef);
+  if (!loSnap.exists()) {
+    throw new Error('LO tidak ditemukan');
+  }
+  const loData = loSnap.data() as JHAssessmentLO;
+  const oldDate = loData.assessmentDate;
+
+  // 1. Update the LO document
+  try {
+    await updateDoc(loRef, {
+      assessmentDate: newDate,
+      dateUpdatedAt: now,
+      dateUpdatedBy: teacherId,
+      dateUpdatedByName: teacherName,
+      updatedAt: now
+    });
+  } catch (err: any) {
+    throw new Error(`Gagal memperbarui tanggal LO: ${err.message || String(err)}`);
+  }
+
+  // 2. Query ALL formative entries for this LO across the entire scope
+  // For UA, this matches all participants across grades/classes!
+  const context = uaContext(scope);
+  const constraints: any[] = [
+    where('academicYear', '==', scope.academicYear),
+    where('semester', '==', scope.semester),
+    where('lgId', '==', scope.lgId),
+    where('loId', '==', loId)
+  ];
+  if (!context) {
+    constraints.push(where('classId', '==', scope.classId));
+  }
+
+  const entriesSnap = await getDocs(query(collection(db, 'jh_ab_formative_entries'), ...constraints));
+  const entries = entriesSnap.docs
+    .map(d => ({ ...d.data(), id: d.id } as JHFormativeEntry))
+    .filter(item => context ? sameContext(item, context) : item.assessmentMode !== 'UNIT_ACTIVITY');
+
+  const entriesToUpdate = entries.filter(e => e.date !== newDate);
+
+  let updatedCount = 0;
+  let failedCount = 0;
+  let firstError = '';
+
+  for (let i = 0; i < entriesToUpdate.length; i += 400) {
+    const chunk = entriesToUpdate.slice(i, i + 400);
+    const batch = writeBatch(db);
+    chunk.forEach(entry => {
+      const ref = doc(db, 'jh_ab_formative_entries', entry.id);
+      batch.update(ref, {
+        date: newDate,
+        updatedAt: now,
+        dateCorrectedAt: now,
+        dateCorrectedBy: teacherId,
+        dateCorrectedByName: teacherName
+      });
+    });
+    try {
+      await batch.commit();
+      updatedCount += chunk.length;
+    } catch (err: any) {
+      console.error('[updateLOAssessmentDate] Batch commit error:', err);
+      // Individual fallback to record exact successes/failures
+      for (const entry of chunk) {
+        try {
+          await updateDoc(doc(db, 'jh_ab_formative_entries', entry.id), {
+            date: newDate,
+            updatedAt: now,
+            dateCorrectedAt: now,
+            dateCorrectedBy: teacherId,
+            dateCorrectedByName: teacherName
+          });
+          updatedCount++;
+        } catch (indErr: any) {
+          failedCount++;
+          if (!firstError) firstError = indErr.message || String(indErr);
+        }
+      }
+    }
+  }
+
+  // 3. Update any shared tasks for this LO if their date is different
+  try {
+    const tasks = await getSharedFormativeTasks(scope);
+    const tasksForLO = tasks.filter(t => t.loId === loId && t.date !== newDate);
+    for (const task of tasksForLO) {
+      try {
+        await updateDoc(doc(db, 'jh_ab_shared_tasks', task.id), {
+          date: newDate,
+          updatedAt: now
+        });
+      } catch (taskErr) {
+        console.warn('[updateLOAssessmentDate] Task update warning:', taskErr);
+      }
+    }
+  } catch (err) {
+    console.warn('[updateLOAssessmentDate] Shared tasks query warning:', err);
+  }
+
+  if (failedCount > 0) {
+    return {
+      success: false,
+      loId,
+      newDate,
+      oldDate,
+      updatedEntriesCount: updatedCount,
+      failedEntriesCount: failedCount,
+      error: `Sebagian entri gagal diperbarui (${failedCount} gagal dari ${entriesToUpdate.length}): ${firstError}`
+    };
+  }
+
+  return {
+    success: true,
+    loId,
+    newDate,
+    oldDate,
+    updatedEntriesCount: updatedCount,
+    failedEntriesCount: 0
+  };
+}
+
+export async function saveLO(params: { id?: string; lgId: string; classId: string; subjectId: string; academicYear: string; semester: string; code: string; title: string; order: number; assessmentDate?: string; teacherId: string; teacherName?: string } & JHAssessmentUAContext): Promise<string> {
   if (!clean(params.subjectId)) throw new Error('Mata pelajaran tidak boleh kosong.');
   const now = Date.now();
-  if (params.id) { await updateDoc(doc(db, 'jh_ab_los', params.id), { code: params.code, title: params.title, order: params.order, updatedAt: now }); return params.id; }
+  if (params.id) {
+    const payload: any = { code: params.code, title: params.title, order: params.order, updatedAt: now };
+    if (params.assessmentDate) payload.assessmentDate = params.assessmentDate;
+    await updateDoc(doc(db, 'jh_ab_los', params.id), payload);
+    return params.id;
+  }
   const parsed = verifiedUAContext(params);
   if (params.classId.startsWith('JUNIOR_HIGH_UA_') && !parsed) throw new Error('Kelompok UA belum memakai identitas lengkap.');
   const context = parsed ? sharedUAContext(parsed.unitActivityCategory!, parsed.unitActivityName!) : null;
   const ref = doc(collection(db, 'jh_ab_los'));
-  await setDoc(ref, { id: ref.id, lgId: params.lgId, classId: context?.assessmentGroupId || params.classId, subjectId: params.subjectId, academicYear: params.academicYear, semester: params.semester, code: params.code, title: params.title, order: params.order, isActive: true, teacherId: params.teacherId, teacherName: params.teacherName || '', createdAt: now, updatedAt: now, ...(context || {}) });
+  await setDoc(ref, {
+    id: ref.id,
+    lgId: params.lgId,
+    classId: context?.assessmentGroupId || params.classId,
+    subjectId: params.subjectId,
+    academicYear: params.academicYear,
+    semester: params.semester,
+    code: params.code,
+    title: params.title,
+    order: params.order,
+    isActive: true,
+    assessmentDate: params.assessmentDate || getTodayWIB(),
+    teacherId: params.teacherId,
+    teacherName: params.teacherName || '',
+    createdAt: now,
+    updatedAt: now,
+    ...(context || {})
+  });
   return ref.id;
 }
 export async function softDeleteLO(loId: string): Promise<void> { await updateDoc(doc(db, 'jh_ab_los', loId), { isActive: false, updatedAt: Date.now() }); }

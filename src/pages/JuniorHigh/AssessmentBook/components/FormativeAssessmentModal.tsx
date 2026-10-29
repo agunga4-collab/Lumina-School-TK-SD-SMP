@@ -44,43 +44,37 @@ export function FormativeAssessmentModal(props: Props) {
     onSaved
   } = props;
 
-  const targetDate = initialDate || getTodayWIB();
+  const targetDate = initialDate || lo.assessmentDate || getTodayWIB();
   const assigned = getAssignedFormativeTask(lo, student.id, targetDate) || getAssignedFormativeTask(lo, student.id);
   
-  const existingOnDate = React.useMemo(() => {
-    return historyEntries.find(item => item.studentId === student.id && item.loId === lo.id && item.date === targetDate);
+  const existingEntry = React.useMemo(() => {
+    const list = historyEntries.filter(item => item.studentId === student.id && item.loId === lo.id);
+    if (!list.length) return undefined;
+    const onDate = list.find(item => item.date === targetDate);
+    if (onDate) return onDate;
+    return [...list].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id))[list.length - 1];
   }, [historyEntries, student.id, lo.id, targetDate]);
 
-  const latestEntry = React.useMemo(() => {
-    const sorted = [...historyEntries]
-      .filter(item => item.studentId === student.id && item.loId === lo.id)
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.id.localeCompare(b.id));
-    return sorted[sorted.length - 1];
-  }, [historyEntries, student.id, lo.id]);
-
-  const activeInitial = existingOnDate || latestEntry;
-
-  const [date, setDate] = React.useState(() => existingOnDate ? existingOnDate.date : targetDate);
-  const [task, setTask] = React.useState(() => existingOnDate?.formativeTask || assigned?.formativeTask || activeInitial?.formativeTask || '');
-  const [level, setLevel] = React.useState<JHFormativeLevel | ''>(() => existingOnDate ? existingOnDate.comprehensionLevel : '');
-  const [action, setAction] = React.useState(() => existingOnDate?.nextAction || activeInitial?.nextAction || '');
-  const [notes, setNotes] = React.useState(() => existingOnDate?.notes || activeInitial?.notes || '');
+  const [date, setDate] = React.useState(() => existingEntry ? (targetDate || existingEntry.date) : targetDate);
+  const [task, setTask] = React.useState(() => existingEntry?.formativeTask || assigned?.formativeTask || '');
+  const [level, setLevel] = React.useState<JHFormativeLevel | ''>(() => existingEntry ? existingEntry.comprehensionLevel : '');
+  const [action, setAction] = React.useState(() => existingEntry?.nextAction || '');
+  const [notes, setNotes] = React.useState(() => existingEntry?.notes || '');
   const [reason, setReason] = React.useState('');
-  const [correction, setCorrection] = React.useState<string | null>(() => existingOnDate ? existingOnDate.id : null);
+  const [correction, setCorrection] = React.useState<string | null>(() => existingEntry ? existingEntry.id : null);
   const [actionOpen, setActionOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const lock = React.useRef(false);
 
   React.useEffect(() => {
     if (isOpen) {
-      const match = historyEntries.find(item => item.studentId === student.id && item.loId === lo.id && item.date === targetDate);
-      if (match) {
-        setCorrection(match.id);
-        setDate(match.date);
-        setTask(match.formativeTask || '');
-        setLevel(match.comprehensionLevel);
-        setAction(match.nextAction || '');
-        setNotes(match.notes || '');
+      if (existingEntry) {
+        setCorrection(existingEntry.id);
+        setDate(targetDate || existingEntry.date);
+        setTask(existingEntry.formativeTask || assigned?.formativeTask || '');
+        setLevel(existingEntry.comprehensionLevel);
+        setAction(existingEntry.nextAction || '');
+        setNotes(existingEntry.notes || '');
       } else {
         setCorrection(null);
         setDate(targetDate);
@@ -92,7 +86,7 @@ export function FormativeAssessmentModal(props: Props) {
       setReason('');
       setActionOpen(false);
     }
-  }, [isOpen, student.id, lo.id, targetDate, historyEntries]);
+  }, [isOpen, existingEntry, targetDate, assigned?.formativeTask]);
 
   if (!isOpen) return null;
 

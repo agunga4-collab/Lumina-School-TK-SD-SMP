@@ -590,6 +590,21 @@ export async function executeSheetSync(params: ExecuteSheetSyncParams): Promise<
     entryMap.set(e.studentId, list);
   });
 
+  // Sync LO assessmentDate if different
+  if (assessmentDate && targetLO.assessmentDate !== assessmentDate) {
+    try {
+      await updateDoc(doc(db, 'jh_ab_los', targetLO.id), {
+        assessmentDate,
+        dateUpdatedAt: Date.now(),
+        dateUpdatedBy: teacherId,
+        dateUpdatedByName: teacherName,
+        updatedAt: Date.now()
+      });
+    } catch (loErr) {
+      console.warn('Gagal menyinkronkan assessmentDate pada LO:', loErr);
+    }
+  }
+
   const details: JHSheetSyncLog['details'] = [];
   let createdCount = 0;
   let updatedCount = 0;
@@ -656,22 +671,23 @@ export async function executeSheetSync(params: ExecuteSheetSyncParams): Promise<
       ? row.rawNextAction.trim() 
       : (level === 'Achieved' ? defaultNextActionAchieved : defaultNextActionNotAchieved);
 
-    // Look for existing entry on the exact same date
+    // Look for existing entry for this student on this LO
     const studentEntries = entryMap.get(studentId) || [];
-    const sameDateEntry = studentEntries.find(e => e.date === rowDate);
+    const existingEntry = studentEntries[0];
 
     try {
-      if (sameDateEntry) {
-        // Check if value changed
+      if (existingEntry) {
+        // Check if value or date changed
         const isChanged = 
-          sameDateEntry.comprehensionLevel !== level ||
-          (effectiveTask && sameDateEntry.formativeTask !== effectiveTask) ||
-          (effectiveNextAction && sameDateEntry.nextAction !== effectiveNextAction);
+          existingEntry.comprehensionLevel !== level ||
+          existingEntry.date !== rowDate ||
+          (effectiveTask && existingEntry.formativeTask !== effectiveTask) ||
+          (effectiveNextAction && existingEntry.nextAction !== effectiveNextAction);
 
         if (isChanged) {
           // Idempotent update / correction flow
           await correctFormativeEntry({
-            entryId: sameDateEntry.id,
+            entryId: existingEntry.id,
             comprehensionLevel: level,
             formativeTask: effectiveTask,
             nextAction: effectiveNextAction,
@@ -685,7 +701,7 @@ export async function executeSheetSync(params: ExecuteSheetSyncParams): Promise<
             studentId,
             studentName,
             action: 'UPDATED',
-            previousLevel: sameDateEntry.comprehensionLevel,
+            previousLevel: existingEntry.comprehensionLevel,
             newLevel: level,
             reason: 'Diperbarui via koreksi nilai Sheet'
           });
@@ -696,7 +712,7 @@ export async function executeSheetSync(params: ExecuteSheetSyncParams): Promise<
             studentId,
             studentName,
             action: 'UNCHANGED',
-            previousLevel: sameDateEntry.comprehensionLevel,
+            previousLevel: existingEntry.comprehensionLevel,
             newLevel: level,
             reason: 'Nilai dan task identik pada tanggal ini'
           });

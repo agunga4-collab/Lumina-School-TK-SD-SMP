@@ -1801,7 +1801,14 @@ service cloud.firestore {
             && incoming().targetGrade == 'ALL' && incoming().classId == incoming().assessmentGroupId
             && incoming().assessmentGroupId is string && incoming().assessmentGroupId.matches('JUNIOR_HIGH_UA_V2_.*~ALL'))
         );
-      allow update, delete: if false;
+      allow update: if isActive() && (
+        isAdmin() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher())
+      ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'date', 'updatedAt'
+      ]);
+      allow delete: if isActive() && isAdmin();
     }
 
     // Junior High Assessment Book Rules (Fase 1)
@@ -1810,15 +1817,24 @@ service cloud.firestore {
       allow create: if isActive() && (
         isAdmin() ||
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
-        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(request.resource.data.classId))
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && (
+          isJuniorHighClassId(request.resource.data.classId) ||
+          request.resource.data.assessmentMode == 'UNIT_ACTIVITY' ||
+          request.resource.data.classId.matches('JUNIOR_HIGH_UA_.*')
+        ))
       );
       allow update: if isActive() && (
         isAdmin() ||
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
-        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(resource.data.classId))
+        (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && (
+          isJuniorHighClassId(resource.data.classId) ||
+          resource.data.assessmentMode == 'UNIT_ACTIVITY' ||
+          resource.data.classId.matches('JUNIOR_HIGH_UA_.*')
+        ))
       ) &&
       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'title', 'code', 'order', 'isActive', 'updatedAt'
+        'title', 'code', 'order', 'isActive', 'updatedAt',
+        'assessmentDate', 'dateUpdatedAt', 'dateUpdatedBy', 'dateUpdatedByName'
       ]);
       allow delete: if isActive() && isAdmin();
     }
@@ -1830,7 +1846,11 @@ service cloud.firestore {
         (
           isAdmin() ||
           (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
-          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && isJuniorHighClassId(request.resource.data.classId))
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && (
+            isJuniorHighClassId(request.resource.data.classId) ||
+            request.resource.data.assessmentMode == 'UNIT_ACTIVITY' ||
+            request.resource.data.classId.matches('JUNIOR_HIGH_UA_.*')
+          ))
         ) &&
         request.resource.data.comprehensionLevel in ['Achieved', 'Not Achieved', 'B', 'D', 'A'];
       allow update: if isActive() &&
@@ -1838,11 +1858,13 @@ service cloud.firestore {
         (
           resource.data.teacherId == request.auth.uid ||
           isAdmin() ||
-          (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized())
+          (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
+          (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher())
         ) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'comprehensionLevel', 'formativeTask', 'nextAction', 'notes',
-          'date', 'updatedAt', 'correctedAt', 'correctedBy', 'correctedByName', 'correctionReason'
+          'date', 'updatedAt', 'correctedAt', 'correctedBy', 'correctedByName', 'correctionReason',
+          'dateCorrectedAt', 'dateCorrectedBy', 'dateCorrectedByName'
         ]);
       allow delete: if isActive() && isAdmin();
     }

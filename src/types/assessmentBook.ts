@@ -39,6 +39,10 @@ export interface JHAssessmentLO extends JHAssessmentUAContext {
   title: string;
   order: number;
   isActive: boolean;
+  assessmentDate?: string;
+  dateUpdatedAt?: number;
+  dateUpdatedBy?: string;
+  dateUpdatedByName?: string;
   teacherId: string;
   teacherName: string;
   createdAt: number;
@@ -68,6 +72,9 @@ export interface JHFormativeEntry extends JHAssessmentUAContext {
   correctedBy?: string;
   correctedByName?: string;
   correctionReason?: string;
+  dateCorrectedAt?: number;
+  dateCorrectedBy?: string;
+  dateCorrectedByName?: string;
 }
 export interface JHSummativeEntry extends JHAssessmentUAContext {
   id: string;
