@@ -22,7 +22,8 @@ import {
 } from '../../../../types';
 import {
   bulkAddFormativeEntries,
-  getTodayWIB
+  getTodayWIB,
+  formatDateWIB
 } from '../../../../services/juniorHighAssessmentBookService';
 import { toast } from 'sonner';
 
@@ -46,6 +47,7 @@ interface Props {
   options: AssessmentBookOptions;
   teacherId: string;
   teacherName: string;
+  initialDate?: string;
   onSuccess: () => void;
   mode?: 'SUBJECT' | 'UNIT_ACTIVITY';
   showClassColumn?: boolean;
@@ -67,6 +69,7 @@ export function BulkFormativeModal({
   options,
   teacherId,
   teacherName,
+  initialDate,
   onSuccess,
   mode = 'SUBJECT',
   showClassColumn = false,
@@ -78,7 +81,7 @@ export function BulkFormativeModal({
   const isUAMode = mode === 'UNIT_ACTIVITY' || showClassColumn;
 
   // Session-wide fields (filled once for the whole class session)
-  const [date, setDate] = useState<string>(() => getTodayWIB());
+  const [date, setDate] = useState<string>(() => initialDate || getTodayWIB());
   const [taskChoice, setTaskChoice] = useState<string>(() => options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
   const [customTaskText, setCustomTaskText] = useState<string>('');
   const [sessionId] = useState<string>(() => `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`);
@@ -528,7 +531,10 @@ export function BulkFormativeModal({
               {/* Tanggal Asesmen */}
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Tanggal Asesmen (WIB) <span className="text-red-500">*</span>
+                  <span className="flex items-center justify-between">
+                    <span>Tanggal Asesmen (WIB) <span className="text-red-500">*</span></span>
+                    <span className="text-[11px] text-purple-700 font-semibold">{formatDateWIB(date)}</span>
+                  </span>
                 </label>
                 <div className="relative">
                   <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />

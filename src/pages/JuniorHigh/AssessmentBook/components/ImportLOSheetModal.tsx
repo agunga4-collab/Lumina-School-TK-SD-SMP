@@ -63,6 +63,7 @@ interface Props {
   options: AssessmentBookOptions;
   teacherId: string;
   teacherName: string;
+  initialDate?: string;
   onSuccess: () => void;
 }
 
@@ -81,6 +82,7 @@ export function ImportLOSheetModal(props: Props) {
     options,
     teacherId,
     teacherName,
+    initialDate,
     onSuccess
   } = props;
 
@@ -117,7 +119,7 @@ export function ImportLOSheetModal(props: Props) {
   const [excludedNames, setExcludedNames] = React.useState<string[]>([]);
 
   // Session options
-  const [assessmentDate, setAssessmentDate] = React.useState(getTodayWIB());
+  const [assessmentDate, setAssessmentDate] = React.useState(() => initialDate || getTodayWIB());
   const [defaultTask, setDefaultTask] = React.useState(options.formativeTasks[0] || 'Latihan Mandiri');
   const [defaultNextActionAchieved, setDefaultNextActionAchieved] = React.useState(options.nextActions[0] || 'Lanjut ke LO Berikutnya');
   const [defaultNextActionNotAchieved, setDefaultNextActionNotAchieved] = React.useState(options.nextActions[3] || 'Bimbingan Personal Guru');
@@ -147,11 +149,11 @@ export function ImportLOSheetModal(props: Props) {
     setRawSheetRows([]);
     setParsedRows([]);
     setSelectedSourceId('');
-    setAssessmentDate(getTodayWIB());
+    setAssessmentDate(initialDate || getTodayWIB());
 
     loadSavedSources();
     loadExistingEntries();
-  }, [isOpen, lo.id, classId, subjectId, academicYear, semester]);
+  }, [isOpen, lo.id, classId, subjectId, academicYear, semester, initialDate]);
 
   const loadSavedSources = async () => {
     setLoadingSavedSources(true);

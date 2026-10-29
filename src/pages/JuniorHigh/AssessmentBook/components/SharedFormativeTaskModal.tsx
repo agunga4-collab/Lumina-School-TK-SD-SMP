@@ -2,7 +2,7 @@ import * as React from 'react';
 import { X, Loader2, CheckCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { AssessmentBookOptions, JHAssessmentLO, Student } from '../../../../types';
-import { getTodayWIB, saveSharedFormativeTask } from '../../../../services/juniorHighAssessmentBookService';
+import { getTodayWIB, formatDateWIB, saveSharedFormativeTask } from '../../../../services/juniorHighAssessmentBookService';
 
 interface Props {
   lo: JHAssessmentLO;
@@ -14,14 +14,15 @@ interface Props {
   options: AssessmentBookOptions;
   teacherId: string;
   teacherName: string;
+  initialDate?: string;
   onClose: () => void;
   onSaved: () => void;
 }
 
 export function SharedFormativeTaskModal(props: Props) {
-  const { lo, students, classId, subjectId, academicYear, semester, options, teacherId, teacherName, onClose, onSaved } = props;
+  const { lo, students, classId, subjectId, academicYear, semester, options, teacherId, teacherName, initialDate, onClose, onSaved } = props;
   const [draftId] = React.useState(() => `${teacherId}_${lo.id}_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-  const [date, setDate] = React.useState(getTodayWIB);
+  const [date, setDate] = React.useState(() => initialDate || getTodayWIB());
   const [task, setTask] = React.useState('');
   const [selected, setSelected] = React.useState(() => new Set(students.map(item => item.id)));
   const [saving, setSaving] = React.useState(false);
@@ -93,7 +94,10 @@ export function SharedFormativeTaskModal(props: Props) {
 
           <div className="grid sm:grid-cols-2 gap-4">
             <label className="block text-xs font-semibold text-slate-700">
-              Tanggal asesmen (WIB)
+              <span className="flex items-center justify-between mb-1">
+                <span>Tanggal asesmen (WIB)</span>
+                <span className="text-[11px] text-purple-700 font-semibold">{formatDateWIB(date)}</span>
+              </span>
               <input
                 required
                 type="date"

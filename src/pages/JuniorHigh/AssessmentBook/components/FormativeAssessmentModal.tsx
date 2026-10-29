@@ -17,6 +17,7 @@ interface Props extends JHAssessmentUAContext {
   historyEntries: JHFormativeEntry[];
   teacherId: string;
   teacherName: string;
+  initialDate?: string;
   isSuperAdmin?: boolean;
   isReadOnly?: boolean;
   isUAMode?: boolean;
@@ -37,12 +38,19 @@ export function FormativeAssessmentModal(props: Props) {
     historyEntries,
     teacherId,
     teacherName,
+    initialDate,
     isSuperAdmin = false,
     isReadOnly = false,
     onSaved
   } = props;
 
-  const assigned = getAssignedFormativeTask(lo, student.id);
+  const targetDate = initialDate || getTodayWIB();
+  const assigned = getAssignedFormativeTask(lo, student.id, targetDate) || getAssignedFormativeTask(lo, student.id);
+  
+  const existingOnDate = React.useMemo(() => {
+    return historyEntries.find(item => item.studentId === student.id && item.loId === lo.id && item.date === targetDate);
+  }, [historyEntries, student.id, lo.id, targetDate]);
+
   const latestEntry = React.useMemo(() => {
     const sorted = [...historyEntries]
       .filter(item => item.studentId === student.id && item.loId === lo.id)
@@ -50,29 +58,41 @@ export function FormativeAssessmentModal(props: Props) {
     return sorted[sorted.length - 1];
   }, [historyEntries, student.id, lo.id]);
 
-  const [date, setDate] = React.useState(() => latestEntry?.date || assigned?.date || getTodayWIB());
-  const [task, setTask] = React.useState(() => latestEntry?.formativeTask || assigned?.formativeTask || '');
-  const [level, setLevel] = React.useState<JHFormativeLevel | ''>(() => latestEntry?.comprehensionLevel || '');
-  const [action, setAction] = React.useState(() => latestEntry?.nextAction || '');
-  const [notes, setNotes] = React.useState(() => latestEntry?.notes || '');
+  const activeInitial = existingOnDate || latestEntry;
+
+  const [date, setDate] = React.useState(() => existingOnDate ? existingOnDate.date : targetDate);
+  const [task, setTask] = React.useState(() => existingOnDate?.formativeTask || assigned?.formativeTask || activeInitial?.formativeTask || '');
+  const [level, setLevel] = React.useState<JHFormativeLevel | ''>(() => existingOnDate ? existingOnDate.comprehensionLevel : '');
+  const [action, setAction] = React.useState(() => existingOnDate?.nextAction || activeInitial?.nextAction || '');
+  const [notes, setNotes] = React.useState(() => existingOnDate?.notes || activeInitial?.notes || '');
   const [reason, setReason] = React.useState('');
-  const [correction, setCorrection] = React.useState<string | null>(null);
+  const [correction, setCorrection] = React.useState<string | null>(() => existingOnDate ? existingOnDate.id : null);
   const [actionOpen, setActionOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const lock = React.useRef(false);
 
   React.useEffect(() => {
     if (isOpen) {
-      setDate(latestEntry?.date || assigned?.date || getTodayWIB());
-      setTask(latestEntry?.formativeTask || assigned?.formativeTask || '');
-      setLevel(latestEntry?.comprehensionLevel || '');
-      setAction(latestEntry?.nextAction || '');
-      setNotes(latestEntry?.notes || '');
+      const match = historyEntries.find(item => item.studentId === student.id && item.loId === lo.id && item.date === targetDate);
+      if (match) {
+        setCorrection(match.id);
+        setDate(match.date);
+        setTask(match.formativeTask || '');
+        setLevel(match.comprehensionLevel);
+        setAction(match.nextAction || '');
+        setNotes(match.notes || '');
+      } else {
+        setCorrection(null);
+        setDate(targetDate);
+        setTask(assigned?.formativeTask || '');
+        setLevel('');
+        setAction('');
+        setNotes('');
+      }
       setReason('');
-      setCorrection(null);
       setActionOpen(false);
     }
-  }, [isOpen, student.id, lo.id, latestEntry?.id, assigned?.id]);
+  }, [isOpen, student.id, lo.id, targetDate, historyEntries]);
 
   if (!isOpen) return null;
 
@@ -223,7 +243,10 @@ export function FormativeAssessmentModal(props: Props) {
             )}
             <div className="grid sm:grid-cols-2 gap-4">
               <label className="text-xs font-semibold text-slate-700">
-                Tanggal asesmen (WIB)
+                <span className="flex items-center justify-between mb-1">
+                  <span>Tanggal asesmen (WIB)</span>
+                  <span className="text-[11px] text-purple-700 font-semibold">{formatDateWIB(date)}</span>
+                </span>
                 <input
                   required
                   type="date"

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { toast } from 'sonner';
-import { Check, X, Search, Award, Loader2, FileSpreadsheet } from 'lucide-react';
+import { Check, X, Search, Award, Loader2, FileSpreadsheet, Calendar } from 'lucide-react';
 import { AssessmentBookOptions, JHAssessmentLO, JHFormativeEntry, JHSummativeEntry, LearningGoal, Student, isLegacyScore } from '../../../../types';
 import { addFormativeEntry, correctFormativeEntry, formatDateWIB, getAssignedFormativeTask, getTodayWIB } from '../../../../services/juniorHighAssessmentBookService';
 
@@ -18,6 +18,8 @@ interface Props {
   teacherId: string;
   teacherName: string;
   isReadOnly?: boolean;
+  loDates?: Record<string, string>;
+  onSetLODate?: (loId: string, date: string) => void;
   onOpenFormativeModal: (student: Student, lo: JHAssessmentLO) => void;
   onOpenSummativeModal: (student: Student) => void;
   onOpenManageLOModal: () => void;
@@ -41,6 +43,8 @@ export function FormativeMatrixGrid(props: Props) {
     teacherId,
     teacherName,
     isReadOnly = false,
+    loDates,
+    onSetLODate,
     onOpenFormativeModal,
     onOpenSummativeModal,
     onOpenManageLOModal,
@@ -68,21 +72,52 @@ export function FormativeMatrixGrid(props: Props) {
 
   const quick = async (student: Student, lo: JHAssessmentLO, level: 'Achieved' | 'Not Achieved') => {
     if (isReadOnly || lock.current) return;
+    const loDate = loDates?.[lo.id] || getTodayWIB();
+    const assigned = getAssignedFormativeTask(lo, student.id);
+    const dateEntries = formativeEntries.filter(
+      item => item.studentId === student.id && item.loId === lo.id && item.date === loDate
+    );
+
+    if (dateEntries.length > 1) {
+      toast.info(`Terdapat ${dateEntries.length} entri pada tanggal ${formatDateWIB(loDate)}. Silakan pilih entri melalui formulir.`);
+      onOpenFormativeModal(student, lo);
+      return;
+    }
+
     lock.current = true;
     setSaving(`${student.id}|${lo.id}`);
-    const assigned = getAssignedFormativeTask(lo, student.id);
-    const date = assigned?.date || getTodayWIB();
-    const old = [...formativeEntries].reverse().find(
-      item => item.studentId === student.id && item.loId === lo.id && item.teacherId === teacherId && item.date === date && (!assigned || item.formativeTask === assigned.formativeTask)
-    );
+    const old = dateEntries[0];
     const nextAction = old?.nextAction || (level === 'Achieved' ? 'Lanjut ke LO Berikutnya' : 'Bimbingan Personal Guru');
     try {
       if (old) {
-        await correctFormativeEntry({ entryId: old.id, comprehensionLevel: level, nextAction, correctedBy: teacherId, correctedByName: teacherName, correctionReason: 'Klik cepat kelas' });
+        await correctFormativeEntry({
+          entryId: old.id,
+          comprehensionLevel: level,
+          nextAction,
+          correctedBy: teacherId,
+          correctedByName: teacherName,
+          correctionReason: 'Klik cepat kelas'
+        });
       } else {
-        await addFormativeEntry({ loId: lo.id, lgId: lo.lgId, classId, subjectId, academicYear, semester, studentId: student.id, studentName: student.name, date, formativeTask: assigned?.formativeTask || '', comprehensionLevel: level, nextAction, notes: '', teacherId, teacherName });
+        await addFormativeEntry({
+          loId: lo.id,
+          lgId: lo.lgId,
+          classId,
+          subjectId,
+          academicYear,
+          semester,
+          studentId: student.id,
+          studentName: student.name,
+          date: loDate,
+          formativeTask: assigned?.formativeTask || '',
+          comprehensionLevel: level,
+          nextAction,
+          notes: '',
+          teacherId,
+          teacherName
+        });
       }
-      toast.success('Capaian siswa tersimpan.');
+      toast.success(`Capaian ${formatDateWIB(loDate)} tersimpan.`);
       onRefreshData();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
@@ -136,20 +171,57 @@ export function FormativeMatrixGrid(props: Props) {
   Nama Siswa
 </th>
               {los.map(lo => {
-                const count = students.filter(item => latest[`${item.id}|${lo.id}`]).length;
+                const loDate = loDates?.[lo.id] || getTodayWIB();
+                const countOnDate = students.filter(item =>
+                  formativeEntries.some(e => e.studentId === item.id && e.loId === lo.id && e.date === loDate)
+                ).length;
                 return (
-                  <th key={lo.id} className="p-3 min-w-[260px] border-l border-slate-200 align-top bg-white">
+                  <th key={lo.id} className="p-3 min-w-[270px] border-l border-slate-200 align-top bg-white">
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <span className="text-purple-800 font-bold text-xs px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 inline-block">
                         {lo.code}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-medium">
-                        {count}/{students.length} dinilai
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        {countOnDate}/{students.length} dinilai
                       </span>
                     </div>
                     <p className="font-semibold text-slate-800 text-xs leading-snug break-words">{lo.title}</p>
+                    
+                    {/* Pemilih Tanggal Asesmen per LO */}
+                    <div className="mt-2.5 p-2 bg-slate-50/90 rounded-xl border border-slate-200 text-left">
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <label className="text-[10px] font-bold text-slate-600 flex items-center gap-1">
+                          <Calendar size={12} className="text-purple-600 shrink-0" />
+                          <span>Tanggal Asesmen</span>
+                        </label>
+                        {loDate !== getTodayWIB() && !isReadOnly && (
+                          <button
+                            type="button"
+                            onClick={() => onSetLODate?.(lo.id, getTodayWIB())}
+                            className="text-[9px] text-purple-700 hover:text-purple-900 font-semibold cursor-pointer underline"
+                            title="Kembalikan ke hari ini (WIB)"
+                          >
+                            Hari ini
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="date"
+                        value={loDate}
+                        disabled={isReadOnly}
+                        onChange={event => {
+                          const val = event.target.value;
+                          if (val) onSetLODate?.(lo.id, val);
+                        }}
+                        className="w-full text-[11px] font-medium py-1 px-2 border border-slate-300 rounded-lg bg-white hover:border-slate-400 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-500 transition-colors"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1 font-medium truncate" title={formatDateWIB(loDate)}>
+                        {formatDateWIB(loDate)}
+                      </p>
+                    </div>
+
                     {!isReadOnly && (
-                      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
                           className="py-1.5 px-3 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold shadow-xs inline-flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-purple-500 whitespace-nowrap"
@@ -209,9 +281,15 @@ export function FormativeMatrixGrid(props: Props) {
   </span>
 </td>
                 {los.map(lo => {
-                  const entry = latest[`${student.id}|${lo.id}`];
+                  const loDate = loDates?.[lo.id] || getTodayWIB();
+                  const entryOnDate = formativeEntries.find(
+                    item => item.studentId === student.id && item.loId === lo.id && item.date === loDate
+                  );
+                  const latestEntry = latest[`${student.id}|${lo.id}`];
+                  const studentLoHistory = formativeEntries.filter(
+                    item => item.studentId === student.id && item.loId === lo.id
+                  );
                   const assigned = getAssignedFormativeTask(lo, student.id);
-                  const isCurrentSaving = saving === `${student.id}|${lo.id}`;
                   return (
                     <td key={lo.id} className="p-3 border-l border-slate-100 align-top">
                       <button
@@ -226,34 +304,52 @@ export function FormativeMatrixGrid(props: Props) {
                             <span className="block text-[10px] text-blue-600/80 mt-0.5">{formatDateWIB(assigned.date)}</span>
                           </div>
                         )}
-                        {entry ? (
+                        {entryOnDate ? (
                           <>
                             <div className="flex items-center gap-1.5">
                               <span
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                  entry.comprehensionLevel === 'Achieved'
+                                  entryOnDate.comprehensionLevel === 'Achieved'
                                     ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                                    : entry.comprehensionLevel === 'Not Achieved'
+                                    : entryOnDate.comprehensionLevel === 'Not Achieved'
                                     ? 'bg-rose-50 text-rose-800 border-rose-300'
                                     : 'bg-amber-50 text-amber-800 border-amber-300'
                                 }`}
                               >
-                                {entry.comprehensionLevel === 'Achieved' ? (
+                                {entryOnDate.comprehensionLevel === 'Achieved' ? (
                                   <Check size={12} />
-                                ) : entry.comprehensionLevel === 'Not Achieved' ? (
+                                ) : entryOnDate.comprehensionLevel === 'Not Achieved' ? (
                                   <X size={12} />
                                 ) : null}
-                                {entry.comprehensionLevel}
-                                {isLegacyScore(entry.comprehensionLevel) ? ' (lama)' : ''}
+                                {entryOnDate.comprehensionLevel}
+                                {isLegacyScore(entryOnDate.comprehensionLevel) ? ' (lama)' : ''}
                               </span>
                             </div>
-                            <p className="text-slate-700 font-medium text-xs break-words">{entry.formativeTask || 'Asesmen Cepat'}</p>
-                            <p className="text-[10px] text-slate-400 font-normal">{formatDateWIB(entry.date)}</p>
+                            <p className="text-slate-700 font-medium text-xs break-words">{entryOnDate.formativeTask || 'Asesmen Cepat'}</p>
+                            <p className="text-[10px] text-slate-400 font-normal">
+                              {formatDateWIB(entryOnDate.date)}
+                              {studentLoHistory.length > 1 && ` · ${studentLoHistory.length} entri`}
+                            </p>
                             <div className="p-2 bg-purple-50/70 border border-purple-100 rounded-lg text-[11px] text-purple-950">
                               <span className="text-[9px] uppercase font-bold text-purple-700 block">Next Action</span>
-                              <p className="mt-0.5 whitespace-pre-wrap break-words">{entry.nextAction || 'Belum diisi'}</p>
+                              <p className="mt-0.5 whitespace-pre-wrap break-words">{entryOnDate.nextAction || 'Belum diisi'}</p>
                             </div>
                           </>
+                        ) : latestEntry ? (
+                          <div className="space-y-1.5">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                              Belum dinilai tgl {formatDateWIB(loDate)}
+                            </span>
+                            <p className="text-[10px] text-slate-500">
+                              Terakhir: <span className="font-semibold text-slate-700">{formatDateWIB(latestEntry.date)}</span> ({latestEntry.comprehensionLevel})
+                            </p>
+                            {latestEntry.nextAction && (
+                              <p className="text-[10px] text-slate-400 truncate">Next: {latestEntry.nextAction}</p>
+                            )}
+                            <p className="text-[9px] text-slate-400 font-mono">
+                              Total riwayat: {studentLoHistory.length}
+                            </p>
+                          </div>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-50 text-slate-500 border border-slate-200">
                             Belum dinilai
@@ -269,7 +365,12 @@ export function FormativeMatrixGrid(props: Props) {
                               e.stopPropagation();
                               void quick(student, lo, 'Achieved');
                             }}
-                            className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400 active:scale-95 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-emerald-500 shadow-2xs"
+                            className={`flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-emerald-500 shadow-2xs ${
+                              entryOnDate?.comprehensionLevel === 'Achieved'
+                                ? 'bg-emerald-600 text-white ring-2 ring-emerald-400'
+                                : 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400'
+                            }`}
+                            title={`Nilai Achieved untuk ${formatDateWIB(loDate)}`}
                           >
                             <Check size={12} /> Achieved
                           </button>
@@ -280,7 +381,12 @@ export function FormativeMatrixGrid(props: Props) {
                               e.stopPropagation();
                               void quick(student, lo, 'Not Achieved');
                             }}
-                            className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5 bg-rose-50 text-rose-800 border border-rose-300 hover:bg-rose-100 hover:border-rose-400 active:scale-95 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-500 shadow-2xs"
+                            className={`flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold rounded-lg px-2.5 py-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-500 shadow-2xs ${
+                              entryOnDate?.comprehensionLevel === 'Not Achieved'
+                                ? 'bg-rose-600 text-white ring-2 ring-rose-400'
+                                : 'bg-rose-50 text-rose-800 border border-rose-300 hover:bg-rose-100 hover:border-rose-400'
+                            }`}
+                            title={`Nilai Not Achieved untuk ${formatDateWIB(loDate)}`}
                           >
                             <X size={12} /> Not Achieved
                           </button>
