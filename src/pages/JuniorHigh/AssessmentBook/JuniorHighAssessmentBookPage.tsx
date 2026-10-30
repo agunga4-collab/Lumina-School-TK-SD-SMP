@@ -14,6 +14,7 @@ import { FormativeAssessmentModal } from './components/FormativeAssessmentModal'
 import { SummativeModal } from './components/SummativeModal';
 import { SharedFormativeTaskModal } from './components/SharedFormativeTaskModal';
 import { ManageLOModal } from './components/ManageLOModal';
+import { LearningGoalVisibilityPanel } from './components/LearningGoalVisibilityPanel';
 import { ProposeLGModal } from './components/ProposeLGModal';
 import { BulkFormativeModal } from './components/BulkFormativeModal';
 import { ImportLOSheetModal } from './components/ImportLOSheetModal';
@@ -272,7 +273,7 @@ export default function JuniorHighAssessmentBookPage() {
   const visibleFormative = isUA ? formative.filter(entry => visibleIds.has(entry.studentId)) : formative;
   const visibleSummative = isUA ? summative.filter(entry => visibleIds.has(entry.studentId)) : summative;
   const refresh = () => setReload(value => value + 1);
-  const closeAssessmentModals = () => { setSharedTaskLO(null); setBulkLO(null); setIndividual(null); setSumStudent(null); setManageOpen(false); setProposal({ open: false }); };
+  const closeAssessmentModals = () => { setSheetSyncLO(null); setSharedTaskLO(null); setBulkLO(null); setIndividual(null); setSumStudent(null); setManageOpen(false); setProposal({ open: false }); };
   const resetLG = () => { setLGId(''); setGoals([]); setLOs([]); setFormative([]); setSummative([]); closeAssessmentModals(); };
   const selectMode = (next: 'SUBJECT' | 'UNIT_ACTIVITY') => {
     if (quickLock.current) return;
@@ -999,19 +1000,15 @@ export default function JuniorHighAssessmentBookPage() {
             <p className="text-xs text-slate-400">Memuat Learning Goals...</p>
           ) : (
             <>
-              <select
-                className={control}
-                value={lgId}
-                disabled={!goals.length}
-                onChange={event => { closeAssessmentModals(); setLGId(event.target.value); }}
-              >
-                {!goals.length && <option value="">Belum ada LG yang sesuai — tidak mengambil LG aktivitas lain</option>}
-                {goals.map(goal => (
-                  <option key={goal.id} value={goal.id}>
-                    [{goal.code || 'LG'}] {isUA ? `[Asal master: ${goal.grade || 'tanpa grade'}] ` : ''}{goal.goalText?.slice(0, 140)}
-                  </option>
-                ))}
-              </select>
+              <LearningGoalVisibilityPanel
+                goals={goals}
+                selectedId={lgId}
+                onSelect={id => { closeAssessmentModals(); setSheetSyncLO(null); setLGId(id); }}
+                scopeKey={goalScope}
+                userId={teacherId}
+                readOnly={isReadOnly}
+                isUAMode={isUA}
+              />
               {activeLG && (
                 <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-100 text-xs leading-relaxed text-blue-950">
                   <span className="font-bold text-blue-800">{activeLG.code} · </span>
@@ -1186,6 +1183,8 @@ export default function JuniorHighAssessmentBookPage() {
         onRefresh={loadAssessmentData}
         classes={classes}
         isUAMode={isUA}
+        availableGoals={goals}
+        onMoved={targetId => { setManageOpen(false); setLGId(targetId); refresh(); }}
       />
     )}
     {bulkLO && !isReadOnly && (isUA ? <UASessionModal key={`${scopeKey}|${bulkLO.id}`} students={students as UAStudent[]} lo={bulkLO} scope={{ classId: effectiveClassId, subjectId: effectiveSubject, academicYear: year, semester }} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLOEffectiveDate(bulkLO)} onClose={() => setBulkLO(null)} onSaved={loadAssessmentData} /> : <BulkFormativeModal isOpen onClose={() => setBulkLO(null)} lo={bulkLO} students={students} classId={classId} subjectId={subject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLOEffectiveDate(bulkLO)} onSuccess={loadAssessmentData} />)}

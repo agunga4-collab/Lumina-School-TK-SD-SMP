@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, writeBatch, documentId } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, writeBatch, documentId, runTransaction, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db, getActiveStudents } from '../lib/firebase';
 import { AssessmentBookOptions, DEFAULT_ASSESSMENT_BOOK_OPTIONS, JHAssessmentLO, JHFormativeEntry, JHSummativeEntry, JHFormativeLevel, JHAssessmentUAContext, LearningGoal, ReportConfig } from '../types';
 import { isSameJHSubject, getJHSubjectLegacyValue, JH_SUBJECT_CATALOG, findCatalogEntry, normalizeSubjectName } from '../constants/juniorHighSubjectCatalog';
@@ -1392,4 +1392,180 @@ export async function getJuniorHighDailyRecap(params: {
     enrollmentSet: enrollmentCategories,
     enrollmentActivities
   };
+}
+
+
+// Correct an LO's parent without recreating assessments or changing master goals.
+export interface LOParentMoveRequest {
+  loId: string;
+  targetLgId: string;
+  scope: AssessmentScope;
+  actorUid: string;
+  actorName: string;
+}
+export interface LOParentMovePreview {
+  loId: string;
+  fromLgId: string;
+  toLgId: string;
+  fromLabel: string;
+  toLabel: string;
+  loTitle: string;
+  targetCode: string;
+  targetOrder: number;
+  formativeCount: number;
+  taskCount: number;
+  sheetSourceCount: number;
+  sourceSummativeCount: number;
+  targetSummativeCount: number;
+  signature: string;
+}
+function moveStable(value: any): any {
+  if (Array.isArray(value)) return value.map(moveStable);
+  if (value && typeof value === 'object') {
+    if (typeof value.toMillis === 'function') return { milliseconds: value.toMillis() };
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, moveStable(value[key])]));
+  }
+  return value;
+}
+function moveSnapshotSignature(data: any): string {
+  const result = { ...data };
+  delete result.moveLockId;
+  delete result.moveLockBy;
+  delete result.moveLockAt;
+  return JSON.stringify(moveStable(result));
+}
+async function collectLOParentMove(request: LOParentMoveRequest, ownLockId = '') {
+  const { scope, loId, targetLgId, actorUid } = request;
+  if (!actorUid || !loId || !targetLgId || scope.lgId === targetLgId) {
+    throw new Error('Pilih LO dan LG tujuan yang berbeda.');
+  }
+  const loRef = doc(db, 'jh_ab_los', loId);
+  const fromRef = doc(db, 'learning_goals', scope.lgId);
+  const toRef = doc(db, 'learning_goals', targetLgId);
+  const [loSnap, fromSnap, toSnap] = await Promise.all([getDoc(loRef), getDoc(fromRef), getDoc(toRef)]);
+  if (!loSnap.exists() || !fromSnap.exists() || !toSnap.exists()) throw new Error('LO/LG tidak ditemukan.');
+  const lo = { ...loSnap.data(), id: loId } as JHAssessmentLO & Record<string, any>;
+  const from = { ...fromSnap.data(), id: fromSnap.id } as LearningGoal;
+  const to = { ...toSnap.data(), id: toSnap.id } as LearningGoal;
+  const context = uaContext(scope);
+  if (lo.lgId !== scope.lgId || lo.academicYear !== scope.academicYear || String(lo.semester) !== String(scope.semester) || lo.isActive === false) {
+    throw new Error('Konteks LO berubah atau LO sudah tidak aktif. Muat ulang.');
+  }
+  if (lo.moveLockId && lo.moveLockId !== ownLockId) throw new Error('LO sedang dipindahkan. Tunggu proses selesai; jika proses terputus, hubungi admin.');
+  if (context ? !sameContext(lo, context) : lo.classId !== scope.classId || !isSameJHSubject(lo.subjectId, scope.subjectId)) {
+    throw new Error('Kelas/pelajaran/aktivitas LO tidak sesuai.');
+  }
+  if (!context && lo.assessmentMode === 'UNIT_ACTIVITY') throw new Error('LO UA tidak dapat dipindah ke pelajaran reguler.');
+  if ((from as any).unitId !== 'JUNIOR_HIGH' || (to as any).unitId !== 'JUNIOR_HIGH') throw new Error('LG harus milik Junior High.');
+  if (to.isActive === false || to.status === 'ARCHIVED' || (to.academicYear && to.academicYear !== scope.academicYear)) throw new Error('LG tujuan tidak aktif atau berbeda tahun ajaran.');
+  let eligible: LearningGoal[];
+  if (context) {
+    eligible = await getJuniorHighUALGs({ category: context.unitActivityCategory!, unitActivityName: context.unitActivityName!, academicYear: scope.academicYear });
+  } else {
+    const classSnap = await getDoc(doc(db, 'classes', scope.classId));
+    if (!classSnap.exists() || classSnap.data().unitId !== 'JUNIOR_HIGH' || classSnap.data().academicYear !== scope.academicYear) throw new Error('Kelas Junior High tidak valid.');
+    const cls = classSnap.data();
+    const grade = [cls.gradeLevel, cls.grade, cls.name].map(value => String(value || '').trim().match(/^(?:(?:grade|kelas)\s*)?([789])(?:\s|$)/i)?.[1]).find(Boolean);
+    if (!grade) throw new Error('Grade kelas tidak dapat diverifikasi.');
+    eligible = await getJuniorHighLGs(grade, scope.subjectId, scope.academicYear);
+  }
+  if (!eligible.some(goal => goal.id === targetLgId)) throw new Error('LG tujuan tidak sesuai grade/pelajaran/aktivitas ini.');
+  const collections = ['jh_ab_formative_entries', 'jh_ab_shared_tasks', 'jh_ab_sheet_sources'];
+  const related = await Promise.all(collections.map(name => getDocs(query(collection(db, name), where('loId', '==', loId)))));
+  const rows = related.flatMap((snap, index) => snap.docs.map(item => ({ name: collections[index], snap: item, data: item.data() })));
+  for (const row of rows) {
+    const d = row.data;
+    if (d.academicYear !== scope.academicYear || String(d.semester) !== String(scope.semester) || (d.lgId && d.lgId !== scope.lgId)) {
+      throw new Error(`Relasi tidak konsisten pada ${row.name}/${row.snap.id}; periksa sebelum memindah.`);
+    }
+    if (row.name === 'jh_ab_sheet_sources') {
+      if (d.classId !== scope.classId || (context ? d.isUAMode !== true : !!d.isUAMode)) throw new Error('Sumber Sheet berbeda konteks LO.');
+    } else if (context ? !sameContext(d, context) : d.classId !== scope.classId || d.assessmentMode === 'UNIT_ACTIVITY') {
+      throw new Error('Ditemukan nilai/task lintas konteks; pemindahan dibatalkan.');
+    }
+  }
+  if (rows.length > 350) throw new Error('Lebih dari 350 dokumen terkait. Gunakan migrasi admin terkontrol; tidak ada nilai yang dipindah sebagian.');
+  const targetScope = { ...scope, lgId: targetLgId };
+  const [targetLOs, sourceSum, targetSum] = await Promise.all([getLOsForLG(targetScope), getSummativeEntries(scope), getSummativeEntries(targetScope)]);
+  if (targetLOs.some(item => lower(item.title) === lower(lo.title))) throw new Error('LG tujuan sudah memiliki LO dengan deskripsi sama. Tidak digabung otomatis.');
+  const targetOrder = targetLOs.reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) + 1;
+  let targetCode = clean(lo.code) || `LO ${targetOrder}`;
+  if (targetLOs.some(item => lower(item.code) === lower(targetCode))) targetCode = `${targetCode} (${loId})`;
+  const signature = JSON.stringify(moveStable({
+    lo: moveSnapshotSignature(loSnap.data()),
+    from: fromSnap.data(), to: toSnap.data(),
+    targets: targetLOs.map(item => [item.id, item.code, item.order, item.title]),
+    sums: [sourceSum, targetSum],
+    related: rows.map(row => [row.snap.ref.path, moveSnapshotSignature(row.data)]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+  }));
+  const preview: LOParentMovePreview = {
+    loId, fromLgId: scope.lgId, toLgId: targetLgId,
+    fromLabel: `${from.code || 'LG'} — ${from.goalText || ''}`,
+    toLabel: `${to.code || 'LG'} — ${to.goalText || ''}`,
+    loTitle: lo.title, targetCode, targetOrder,
+    formativeCount: related[0].size, taskCount: related[1].size, sheetSourceCount: related[2].size,
+    sourceSummativeCount: sourceSum.length, targetSummativeCount: targetSum.length, signature
+  };
+  return { preview, loSnap, fromSnap, toSnap, rows };
+}
+export async function previewLOParentMove(request: LOParentMoveRequest): Promise<LOParentMovePreview> {
+  return (await collectLOParentMove(request)).preview;
+}
+export async function moveLOToLearningGoal(request: LOParentMoveRequest, approved: LOParentMovePreview, reason: string): Promise<void> {
+  if (!reason.trim()) throw new Error('Alasan koreksi LG wajib diisi.');
+  if (approved.loId !== request.loId || approved.toLgId !== request.targetLgId || approved.fromLgId !== request.scope.lgId) throw new Error('Preview bukan untuk perpindahan ini.');
+  const loRef = doc(db, 'jh_ab_los', request.loId);
+  const auditRef = doc(collection(loRef, 'lg_moves'));
+  let completed = false;
+  try {
+    await runTransaction(db, async transaction => {
+      const snap = await transaction.get(loRef);
+      if (!snap.exists() || snap.data().lgId !== approved.fromLgId) throw new Error('LG induk sudah berubah. Muat ulang.');
+      if (snap.data().moveLockId) throw new Error('LO sedang dipindah oleh proses lain.');
+      transaction.update(loRef, { moveLockId: auditRef.id, moveLockBy: request.actorUid, moveLockAt: serverTimestamp() });
+    });
+    const plan = await collectLOParentMove(request, auditRef.id);
+    if (plan.preview.signature !== approved.signature) throw new Error('Data berubah sejak preview. Periksa preview baru lalu konfirmasi lagi.');
+    await runTransaction(db, async transaction => {
+      const refs = [loRef, plan.fromSnap.ref, plan.toSnap.ref, ...plan.rows.map(row => row.snap.ref)];
+      const snapshots = [];
+      for (const ref of refs) snapshots.push(await transaction.get(ref));
+      const currentLO = snapshots[0];
+      if (!currentLO.exists() || currentLO.data().moveLockId !== auditRef.id || currentLO.data().moveLockBy !== request.actorUid) throw new Error('Kunci pemindahan berubah.');
+      const expected = [plan.loSnap, plan.fromSnap, plan.toSnap, ...plan.rows.map(row => row.snap)];
+      snapshots.forEach((snap, index) => {
+        if (!snap.exists() || moveSnapshotSignature(snap.data()) !== moveSnapshotSignature(expected[index].data())) throw new Error('Data terkait berubah; tidak ada perpindahan sebagian. Ulangi preview.');
+      });
+      const now = Date.now();
+      const moveFields = { lgMoveAuditId: auditRef.id, lgMovedBy: request.actorUid, lgMovedAt: serverTimestamp() };
+      transaction.update(loRef, {
+        lgId: request.targetLgId, code: approved.targetCode, order: approved.targetOrder,
+        updatedAt: now, ...moveFields,
+        moveLockId: deleteField(), moveLockBy: deleteField(), moveLockAt: deleteField()
+      });
+      for (const row of plan.rows) transaction.update(row.snap.ref, { lgId: request.targetLgId, updatedAt: now, ...moveFields });
+      transaction.set(auditRef, {
+        loId: request.loId, fromLgId: approved.fromLgId, toLgId: approved.toLgId,
+        classId: request.scope.classId, subjectId: request.scope.subjectId,
+        academicYear: request.scope.academicYear, semester: request.scope.semester,
+        actorUid: request.actorUid, actorName: request.actorName, reason: reason.trim(),
+        movedAt: serverTimestamp(), oldCode: plan.loSnap.data().code || '', newCode: approved.targetCode,
+        formativeCount: approved.formativeCount, taskCount: approved.taskCount, sheetSourceCount: approved.sheetSourceCount,
+        sourceSummativeCount: approved.sourceSummativeCount, targetSummativeCount: approved.targetSummativeCount
+      });
+    });
+    completed = true;
+  } finally {
+    if (!completed) {
+      await runTransaction(db, async transaction => {
+        const snap = await transaction.get(loRef);
+        if (snap.exists() && snap.data().moveLockId === auditRef.id && snap.data().moveLockBy === request.actorUid) {
+          transaction.update(loRef, { moveLockId: deleteField(), moveLockBy: deleteField(), moveLockAt: deleteField() });
+        }
+      }).catch(() => { toastlessMoveWarning(); });
+    }
+  }
+}
+function toastlessMoveWarning(): void {
+  console.warn('Kunci LO belum dapat dilepas. Hubungi admin; jangan mengulang input nilai atau menghapus LO.');
 }

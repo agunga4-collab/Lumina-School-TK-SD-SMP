@@ -6,6 +6,74 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+
+    // Scoped LG visibility and guarded LO-parent correction (Junior High only).
+    function jhabCanManageLG() {
+      return isActive() && (isAdmin() || isJuniorHighTeacher() ||
+        (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()));
+    }
+    function jhabLOUnlocked(loId) {
+      return exists(/databases/$(database)/documents/jh_ab_los/$(loId)) &&
+        get(/databases/$(database)/documents/jh_ab_los/$(loId)).data.get('moveLockId', '') == '' &&
+        getAfter(/databases/$(database)/documents/jh_ab_los/$(loId)).data.get('moveLockId', '') == '';
+    }
+    function jhabCurrentParent(data) {
+      let lo = getAfter(/databases/$(database)/documents/jh_ab_los/$(data.loId)).data;
+      return jhabLOUnlocked(data.loId) && data.lgId == lo.lgId &&
+        data.academicYear == lo.academicYear && data.semester == lo.semester;
+    }
+    function jhabTargetLGValid(before, after) {
+      let target = get(/databases/$(database)/documents/learning_goals/$(after.lgId)).data;
+      let source = get(/databases/$(database)/documents/learning_goals/$(before.lgId)).data;
+      return before.lgId != after.lgId && target.unitId == 'JUNIOR_HIGH' && source.unitId == 'JUNIOR_HIGH' &&
+        target.get('isActive', true) != false && target.get('status', 'PUBLISHED') != 'ARCHIVED' &&
+        (target.get('academicYear', '') == '' || target.academicYear == before.academicYear) &&
+        (target.subject == source.subject || target.subject == before.subjectId ||
+          (before.get('assessmentMode', '') == 'UNIT_ACTIVITY' &&
+            target.get('unitActivityId', '') != '' && target.unitActivityId == before.get('unitActivityId', '')));
+    }
+    function jhabLOMoveFinish(loId) {
+      let old = resource.data;
+      let next = request.resource.data;
+      let audit = getAfter(/databases/$(database)/documents/jh_ab_los/$(loId)/lg_moves/$(next.lgMoveAuditId)).data;
+      return jhabCanManageLG() && old.get('moveLockId', '') != '' && old.moveLockBy == request.auth.uid &&
+        next.get('moveLockId', '') == '' && next.lgMoveAuditId == old.moveLockId &&
+        next.lgMovedBy == request.auth.uid && next.lgMovedAt == request.time &&
+        jhabTargetLGValid(old, next) && audit.loId == loId &&
+        audit.fromLgId == old.lgId && audit.toLgId == next.lgId && audit.actorUid == request.auth.uid && audit.movedAt == request.time &&
+        next.diff(old).affectedKeys().hasOnly(['lgId', 'code', 'order', 'updatedAt',
+          'lgMoveAuditId', 'lgMovedBy', 'lgMovedAt', 'moveLockId', 'moveLockBy', 'moveLockAt']);
+    }
+    function jhabChildMove() {
+      let old = resource.data;
+      let next = request.resource.data;
+      let loBefore = get(/databases/$(database)/documents/jh_ab_los/$(old.loId)).data;
+      let loAfter = getAfter(/databases/$(database)/documents/jh_ab_los/$(old.loId)).data;
+      let audit = getAfter(/databases/$(database)/documents/jh_ab_los/$(old.loId)/lg_moves/$(next.lgMoveAuditId)).data;
+      return jhabCanManageLG() && loBefore.get('moveLockId', '') != '' && loBefore.moveLockBy == request.auth.uid &&
+        loAfter.get('moveLockId', '') == '' && loBefore.lgId != loAfter.lgId &&
+        old.get('lgId', loBefore.lgId) == loBefore.lgId && next.lgId == loAfter.lgId &&
+        old.academicYear == loBefore.academicYear && old.semester == loBefore.semester &&
+        next.lgMoveAuditId == loBefore.moveLockId && next.lgMoveAuditId == loAfter.lgMoveAuditId &&
+        next.lgMovedBy == request.auth.uid && next.lgMovedAt == request.time &&
+        audit.actorUid == request.auth.uid && audit.fromLgId == loBefore.lgId && audit.toLgId == loAfter.lgId && audit.movedAt == request.time &&
+        next.diff(old).affectedKeys().hasOnly(['lgId', 'updatedAt', 'lgMoveAuditId', 'lgMovedBy', 'lgMovedAt']);
+    }
+    function jhabVisibilityValid(data) {
+      return data.keys().hasAll(['userId', 'scopeKey', 'hiddenLGIds', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'scopeKey', 'hiddenLGIds', 'updatedAt']) &&
+        data.userId == request.auth.uid && data.scopeKey is string && data.scopeKey.size() <= 1200 &&
+        data.hiddenLGIds is list && data.hiddenLGIds.size() <= 300 && data.updatedAt == request.time;
+    }
+    match /jh_ab_lg_visibility/{preferenceId} {
+      allow get: if isActive() && (isJuniorHighStaff() || isAdmin()) &&
+        preferenceId.matches(request.auth.uid + '__.*');
+      allow create: if jhabCanManageLG() && preferenceId.matches(request.auth.uid + '__.*') && jhabVisibilityValid(incoming());
+      allow update: if jhabCanManageLG() && resource.data.userId == request.auth.uid &&
+        jhabVisibilityValid(incoming()) && incoming().scopeKey == resource.data.scopeKey;
+      allow list, delete: if false;
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -1775,7 +1843,7 @@ service cloud.firestore {
     // Assessment Book shared tasks retained from the prior correction package.
     match /jh_ab_shared_tasks/{taskId} {
       allow read: if isActive() && isJuniorHighStaff();
-      allow create: if isActive() && (isAdmin() || isJuniorHighTeacher() || (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()))
+      allow create: if jhabCurrentParent(incoming()) && isActive() && (isAdmin() || isJuniorHighTeacher() || (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()))
         && incoming().keys().hasAll(['id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId', 'academicYear', 'semester', 'date', 'formativeTask', 'studentIds', 'teacherId', 'teacherName', 'createdAt', 'updatedAt'])
         && incoming().keys().hasOnly(['id', 'loId', 'lgId', 'classId', 'sourceLoClassId', 'subjectId', 'academicYear', 'semester', 'date', 'formativeTask', 'studentIds', 'teacherId', 'teacherName', 'createdAt', 'updatedAt', 'assessmentMode', 'unitActivityId', 'unitActivityName', 'unitActivityCategory', 'assessmentGroupId', 'targetGrade'])
         && incoming().id == taskId && incoming().loId is string && incoming().teacherId == request.auth.uid
@@ -1801,7 +1869,7 @@ service cloud.firestore {
             && incoming().targetGrade == 'ALL' && incoming().classId == incoming().assessmentGroupId
             && incoming().assessmentGroupId is string && incoming().assessmentGroupId.matches('JUNIOR_HIGH_UA_V2_.*~ALL'))
         );
-      allow update: if isActive() && (
+      allow update: if jhabCurrentParent(incoming()) && isActive() && (
         isAdmin() ||
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
         (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher())
@@ -1809,6 +1877,8 @@ service cloud.firestore {
         'date', 'updatedAt'
       ]);
       allow delete: if isActive() && isAdmin();
+    
+      allow update: if jhabChildMove();
     }
 
     // Junior High Assessment Book Rules (Fase 1)
@@ -1823,7 +1893,7 @@ service cloud.firestore {
           request.resource.data.classId.matches('JUNIOR_HIGH_UA_.*')
         ))
       );
-      allow update: if isActive() && (
+      allow update: if resource.data.get('moveLockId', '') == '' && isActive() && (
         isAdmin() ||
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
         (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher() && (
@@ -1837,11 +1907,35 @@ service cloud.firestore {
         'assessmentDate', 'dateUpdatedAt', 'dateUpdatedBy', 'dateUpdatedByName'
       ]);
       allow delete: if isActive() && isAdmin();
+    
+      allow update: if jhabCanManageLG() && (
+        (resource.data.get('moveLockId', '') == '' && incoming().moveLockBy == request.auth.uid &&
+          incoming().moveLockId is string && incoming().moveLockId.size() > 0 && incoming().moveLockAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['moveLockId', 'moveLockBy', 'moveLockAt'])) ||
+        (resource.data.get('moveLockId', '') != '' && (resource.data.moveLockBy == request.auth.uid || isAdmin()) &&
+          incoming().get('moveLockId', '') == '' && incoming().diff(existing()).affectedKeys().hasOnly(['moveLockId', 'moveLockBy', 'moveLockAt']))
+      );
+      allow update: if jhabLOMoveFinish(loId);
+      match /lg_moves/{moveId} {
+        allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
+        allow create: if jhabCanManageLG() &&
+          request.resource.data.keys().hasOnly(['loId', 'fromLgId', 'toLgId', 'classId', 'subjectId', 'academicYear', 'semester',
+            'actorUid', 'actorName', 'reason', 'movedAt', 'oldCode', 'newCode', 'formativeCount', 'taskCount', 'sheetSourceCount',
+            'sourceSummativeCount', 'targetSummativeCount']) &&
+          incoming().loId == loId && incoming().actorUid == request.auth.uid && incoming().movedAt == request.time &&
+          incoming().reason is string && incoming().reason.size() > 0 && incoming().reason.size() <= 2000 &&
+          get(/databases/$(database)/documents/jh_ab_los/$(loId)).data.moveLockId == moveId &&
+          get(/databases/$(database)/documents/jh_ab_los/$(loId)).data.lgId == incoming().fromLgId &&
+          getAfter(/databases/$(database)/documents/jh_ab_los/$(loId)).data.lgId == incoming().toLgId &&
+          getAfter(/databases/$(database)/documents/jh_ab_los/$(loId)).data.lgMoveAuditId == moveId &&
+          getAfter(/databases/$(database)/documents/jh_ab_los/$(loId)).data.lgMovedBy == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     match /jh_ab_formative_entries/{entryId} {
       allow read: if isActive() && isJuniorHighStaff();
-      allow create: if isActive() &&
+      allow create: if jhabCurrentParent(incoming()) && isActive() &&
         request.resource.data.teacherId == request.auth.uid &&
         (
           isAdmin() ||
@@ -1853,7 +1947,7 @@ service cloud.firestore {
           ))
         ) &&
         request.resource.data.comprehensionLevel in ['Achieved', 'Not Achieved', 'B', 'D', 'A'];
-      allow update: if isActive() &&
+      allow update: if jhabCurrentParent(incoming()) && isActive() &&
         request.resource.data.comprehensionLevel in ['Achieved', 'Not Achieved', 'B', 'D', 'A'] &&
         (
           resource.data.teacherId == request.auth.uid ||
@@ -1867,6 +1961,8 @@ service cloud.firestore {
           'dateCorrectedAt', 'dateCorrectedBy', 'dateCorrectedByName'
         ]);
       allow delete: if isActive() && isAdmin();
+    
+      allow update: if jhabChildMove();
     }
 
     match /jh_ab_summative_entries/{entryId} {
@@ -1893,7 +1989,9 @@ service cloud.firestore {
 
     match /jh_ab_sheet_sources/{sourceId} {
       allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
-      allow create, update: if isActive() && (
+      allow create, update: if (!('loId' in incoming()) || incoming().loId == '' ||
+        (jhabLOUnlocked(incoming().loId) && (!('lgId' in incoming()) || incoming().lgId == '' ||
+          incoming().lgId == getAfter(/databases/$(database)/documents/jh_ab_los/$(incoming().loId)).data.lgId))) && isActive() && (
         isAdmin() ||
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
         (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && isJuniorHighTeacher())
@@ -1903,6 +2001,8 @@ service cloud.firestore {
         (userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR'] && isJuniorHighStaffAuthorized()) ||
         (userRole() in ['TEACHER', 'HOMEROOM_TEACHER'] && resource.data.createdBy == request.auth.uid)
       );
+    
+      allow update: if jhabChildMove();
     }
 
     match /jh_ab_sheet_sync_logs/{logId} {
@@ -1948,6 +2048,20 @@ service cloud.firestore {
 
     match /elem_midterm_class_comments_config/{configId} {
       allow read, write: if isElementaryStaff();
+    }
+
+    match /elem_monthly_curriculum/{docId} {
+      allow read: if isActive() && isElementaryStaff();
+      allow write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_student_scores/{docId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+      allow write: if isActive() && isElementaryStaff();
     }
 
     match /elem_midterm_published_reports/{reportId} {
