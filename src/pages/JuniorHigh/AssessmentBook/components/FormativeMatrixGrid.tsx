@@ -133,7 +133,7 @@ export function FormativeMatrixGrid(props: Props) {
   }, [los, entriesByLO]);
 
   const getEffectiveDate = (loId: string): string => {
-    return loResolutions.get(loId)?.date || getTodayWIB();
+    return loResolutions.get(loId)?.date || '';
   };
 
   const getDraftDate = (loId: string): string => {
@@ -146,7 +146,7 @@ export function FormativeMatrixGrid(props: Props) {
     setConfirmModal({
       isOpen: true,
       lo,
-      oldDate: res?.isExplicit ? res.date : (isAlign ? 'Beragam' : res?.date || getTodayWIB()),
+      oldDate: res?.isExplicit ? res.date : (isAlign ? 'Beragam' : res?.date || 'Belum ditetapkan'),
       newDate,
       affectedCount,
       hasConflict: !!res?.hasConflict,
@@ -195,6 +195,12 @@ export function FormativeMatrixGrid(props: Props) {
     const effectiveDate = getEffectiveDate(lo.id);
     const assigned = getAssignedFormativeTask(lo, student.id);
     const existingEntry = latest[`${student.id}|${lo.id}`];
+    const targetDate = effectiveDate || draftDates[lo.id] || existingEntry?.date;
+
+    if (!targetDate) {
+      toast.warning('Tentukan dan simpan tanggal asesmen LO terlebih dahulu.');
+      return;
+    }
 
     lock.current = true;
     setSaving(`${student.id}|${lo.id}`);
@@ -206,7 +212,7 @@ export function FormativeMatrixGrid(props: Props) {
           entryId: existingEntry.id,
           comprehensionLevel: level,
           nextAction,
-          date: effectiveDate,
+          date: targetDate,
           correctedBy: teacherId,
           correctedByName: teacherName,
           correctionReason: 'Klik cepat kelas'
@@ -221,7 +227,7 @@ export function FormativeMatrixGrid(props: Props) {
           semester,
           studentId: student.id,
           studentName: student.name,
-          date: effectiveDate,
+          date: targetDate,
           formativeTask: assigned?.formativeTask || '',
           comprehensionLevel: level,
           nextAction,
@@ -344,8 +350,8 @@ export function FormativeMatrixGrid(props: Props) {
                       />
 
                       <div className="flex items-center justify-between gap-1 mt-1 text-[10px]">
-                        <span className="text-slate-500 truncate" title={formatDateWIB(draftDate)}>
-                          {formatDateWIB(draftDate)}
+                        <span className="text-slate-500 truncate" title={draftDate ? formatDateWIB(draftDate) : 'Belum ada tanggal'}>
+                          {draftDate ? formatDateWIB(draftDate) : 'Belum ada tanggal'}
                         </span>
                         {res.isExplicit && !isDateDirty && (
                           <span className="text-[9px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">

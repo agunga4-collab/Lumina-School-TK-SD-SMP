@@ -128,7 +128,7 @@ export function BulkFormativeModal({
   // Reset or reinitialize when modal opens
   React.useEffect(() => {
     if (isOpen) {
-      setDate(getTodayWIB());
+      setDate(initialDate || lo.assessmentDate || getTodayWIB());
       setTaskChoice(options.formativeTasks[0] || 'Lembar Kerja (LKPD)');
       setCustomTaskText('');
       setSelectedForNextAction([]);
@@ -150,7 +150,7 @@ export function BulkFormativeModal({
       }
       setStudentRows(init);
     }
-  }, [isOpen, students, options]);
+  }, [isOpen, students, options, initialDate, lo.assessmentDate]);
 
   // Filtered visible students based on in-modal search & filters
   const visibleStudents = useMemo(() => {

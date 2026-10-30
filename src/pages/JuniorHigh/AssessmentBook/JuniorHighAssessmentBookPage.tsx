@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { BookOpen, Layers, Download, Settings, RefreshCw, AlertCircle, X, Check, CheckCheck, Loader2, Calendar, FileSpreadsheet } from 'lucide-react';
+import { BookOpen, Layers, Download, Settings, RefreshCw, AlertCircle, X, Check, CheckCheck, Loader2, Calendar, FileSpreadsheet, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import { useAcademicYear } from '../../../context/AcademicYearContext';
 import { Class, Student, LearningGoal, JHAssessmentLO, JHFormativeEntry, JHSummativeEntry, JHFormativeScore, JHAssessmentUAContext, AssessmentBookOptions, DEFAULT_ASSESSMENT_BOOK_OPTIONS, isLegacyScore } from '../../../types';
 import { getClasses, getActiveStudents } from '../../../lib/firebase';
-import { getAssessmentBookOptions, getJuniorHighLGs, getJuniorHighUALGs, getJHUnitActivities, getJHUnitActivityEnrolledStudents, JH_UA_CATEGORIES_CONFIG, JHUAActivityOption, JHUAParticipant, getUAContextForLO, getAssignedFormativeTask, formatDateWIB as taskDateWIB, buildUAClassId, parseUAGroupId, getLOsForLG, getFormativeEntries, getSummativeEntries, getTodayWIB, formatDateWIB, addFormativeEntry, correctFormativeEntry, bulkAddFormativeEntries } from '../../../services/juniorHighAssessmentBookService';
+import { getAssessmentBookOptions, getJuniorHighLGs, getJuniorHighUALGs, getJHUnitActivities, getJHUnitActivityEnrolledStudents, JH_UA_CATEGORIES_CONFIG, JHUAActivityOption, JHUAParticipant, getUAContextForLO, getAssignedFormativeTask, formatDateWIB as taskDateWIB, buildUAClassId, parseUAGroupId, getLOsForLG, getFormativeEntries, getSummativeEntries, getTodayWIB, formatDateWIB, addFormativeEntry, correctFormativeEntry, bulkAddFormativeEntries, getEffectiveLODate, updateLOAssessmentDate, LODateResolution } from '../../../services/juniorHighAssessmentBookService';
 import { getJHGradeLevelNumber } from '../../../services/juniorHighMidtermService';
 import { FormativeMatrixGrid } from './components/FormativeMatrixGrid';
+import { LODateConfirmModal } from './components/LODateConfirmModal';
 import { StudentRecapView } from './components/StudentRecapView';
 import AssessmentBookReadOnlyRecap from './components/AssessmentBookReadOnlyRecap';
 import { FormativeAssessmentModal } from './components/FormativeAssessmentModal';
@@ -164,30 +165,101 @@ export default function JuniorHighAssessmentBookPage() {
   const scopeKey = JSON.stringify([mode, year, semester, effectiveClassId, effectiveSubject, lgId]);
   const currentScope = React.useRef(scopeKey); currentScope.current = scopeKey;
 
-  const [loDatesByScope, setLoDatesByScope] = React.useState<Record<string, Record<string, string>>>(() => {
+  const loadAssessmentData = React.useCallback(async () => {
+    const request = ++assessmentRequest.current;
+    const key = scopeKey;
+    setLOs([]); setFormative([]); setSummative([]); setLoadedScope(''); setLoadingData(true);
     try {
-      const saved = localStorage.getItem('jh_ab_lo_dates_cache');
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
+      if (!activeLG || !effectiveClassId || !effectiveSubject) return;
+      const params = { classId: effectiveClassId, subjectId: effectiveSubject, academicYear: year, semester, lgId: activeLG.id, isUAMode: isUA };
+      const [loList, fList, sList] = await Promise.all([getLOsForLG(params), getFormativeEntries(params), getSummativeEntries(params)]);
+      if (request !== assessmentRequest.current || key !== currentScope.current) return;
+      setLOs(loList); setFormative(fList); setSummative(sList); setLoadedScope(key);
+    } catch (issue) { if (request === assessmentRequest.current && key === currentScope.current) setError(problem(issue)); }
+    finally { if (request === assessmentRequest.current) setLoadingData(false); }
+  }, [scopeKey, activeLG?.id, effectiveClassId, effectiveSubject, year, semester, isUA, reload]);
+
+  const [uaDraftDates, setUaDraftDates] = React.useState<Record<string, string>>({});
+  const [uaConfirmModal, setUaConfirmModal] = React.useState<{
+    isOpen: boolean;
+    lo: JHAssessmentLO | null;
+    oldDate: string;
+    newDate: string;
+    affectedCount: number;
+    hasConflict: boolean;
+    distinctDates: { date: string; count: number }[];
+  }>({
+    isOpen: false,
+    lo: null,
+    oldDate: '',
+    newDate: '',
+    affectedCount: 0,
+    hasConflict: false,
+    distinctDates: []
   });
-  const currentLoDates = loDatesByScope[scopeKey] || {};
-  const getLODate = React.useCallback((loId: string): string => {
-    return currentLoDates[loId] || getTodayWIB();
-  }, [currentLoDates]);
-  const handleSetLODate = React.useCallback((loId: string, newDate: string) => {
-    setLoDatesByScope(prev => {
-      const nextScopeDates = { ...(prev[scopeKey] || {}), [loId]: newDate };
-      const updated = { ...prev, [scopeKey]: nextScopeDates };
-      try {
-        localStorage.setItem('jh_ab_lo_dates_cache', JSON.stringify(updated));
-      } catch {
-        // ignore
+
+  const getLOEffectiveDate = React.useCallback((targetLO?: JHAssessmentLO | null): string => {
+    if (!targetLO) return '';
+    const loEntries = formative.filter(e => e.loId === targetLO.id);
+    const res = getEffectiveLODate(targetLO, loEntries);
+    return res.date || '';
+  }, [formative]);
+
+  const handleUpdateLODate = React.useCallback(async (loId: string, newDate: string) => {
+    const targetLO = los.find(l => l.id === loId);
+    if (!targetLO || !activeLG) return;
+    const res = await updateLOAssessmentDate({
+      loId,
+      newDate,
+      teacherId,
+      teacherName,
+      scope: {
+        classId: effectiveClassId,
+        subjectId: effectiveSubject,
+        academicYear: year,
+        semester,
+        lgId: activeLG.id
       }
-      return updated;
     });
-  }, [scopeKey]);
+    if (!res.success) {
+      toast.error(res.error || 'Gagal memperbarui tanggal asesmen LO');
+      return;
+    }
+    toast.success(`Tanggal asesmen ${targetLO.code} berhasil diperbarui menjadi ${formatDateWIB(newDate)} (${res.updatedEntriesCount} entri diselaraskan).`);
+    await loadAssessmentData();
+  }, [los, activeLG, effectiveClassId, effectiveSubject, year, semester, teacherId, teacherName, loadAssessmentData]);
+
+  const handleConfirmUADateChange = async () => {
+    if (!uaConfirmModal.lo || !uaConfirmModal.newDate || !activeLG) return;
+    const loId = uaConfirmModal.lo.id;
+    const newDate = uaConfirmModal.newDate;
+    const targetLO = uaConfirmModal.lo;
+    const res = await updateLOAssessmentDate({
+      loId,
+      newDate,
+      teacherId,
+      teacherName,
+      scope: {
+        classId: effectiveClassId,
+        subjectId: effectiveSubject,
+        academicYear: year,
+        semester,
+        lgId: activeLG.id
+      }
+    });
+    if (!res.success) {
+      toast.error(res.error || 'Gagal memperbarui tanggal asesmen LO');
+      return;
+    }
+    toast.success(`Tanggal asesmen ${targetLO.code} berhasil diperbarui menjadi ${formatDateWIB(newDate)} (${res.updatedEntriesCount} entri diselaraskan).`);
+    setUaDraftDates(prev => {
+      const next = { ...prev };
+      delete next[loId];
+      return next;
+    });
+    setUaConfirmModal(prev => ({ ...prev, isOpen: false }));
+    await loadAssessmentData();
+  };
 
   const rosterKey = JSON.stringify([mode, year, semester, isUA ? uaId : classId]);
   const students: Student[] = React.useMemo(() => {
@@ -273,19 +345,6 @@ export default function JuniorHighAssessmentBookPage() {
   }, [goalScope, isUA, activity?.id, subject, regularGrade, year, reload]);
   React.useEffect(() => { void loadLearningGoals(); return () => { goalRequest.current++; }; }, [loadLearningGoals]);
 
-  const loadAssessmentData = React.useCallback(async () => {
-    const request = ++assessmentRequest.current;
-    const key = scopeKey;
-    setLOs([]); setFormative([]); setSummative([]); setLoadedScope(''); setLoadingData(true);
-    try {
-      if (!activeLG || !effectiveClassId || !effectiveSubject) return;
-      const params = { classId: effectiveClassId, subjectId: effectiveSubject, academicYear: year, semester, lgId: activeLG.id, isUAMode: isUA };
-      const [loList, fList, sList] = await Promise.all([getLOsForLG(params), getFormativeEntries(params), getSummativeEntries(params)]);
-      if (request !== assessmentRequest.current || key !== currentScope.current) return;
-      setLOs(loList); setFormative(fList); setSummative(sList); setLoadedScope(key);
-    } catch (issue) { if (request === assessmentRequest.current && key === currentScope.current) setError(problem(issue)); }
-    finally { if (request === assessmentRequest.current) setLoadingData(false); }
-  }, [scopeKey, activeLG?.id, effectiveClassId, effectiveSubject, year, semester, isUA, reload]);
   React.useEffect(() => { void loadAssessmentData(); return () => { assessmentRequest.current++; }; }, [loadAssessmentData]);
   React.useEffect(() => { closeAssessmentModals(); }, [scopeKey, uaGrade, uaClass, uaSearch]);
 
@@ -295,18 +354,22 @@ export default function JuniorHighAssessmentBookPage() {
   const latest = latestEntries(visibleFormative);
   const quickScore = async (student: Student, lo: JHAssessmentLO, level: JHFormativeScore) => {
     if (isReadOnly || quickLock.current) return;
-    const loDate = getLODate(lo.id);
-    const dateEntries = visibleFormative.filter(
-      entry => entry.studentId === student.id && entry.loId === lo.id && entry.date === loDate
+    const loEntries = visibleFormative.filter(e => e.loId === lo.id);
+    const res = getEffectiveLODate(lo, loEntries);
+    const targetDate = res.date || getTodayWIB();
+
+    // Check existing entry on this LO for this student regardless of date
+    const studentEntries = visibleFormative.filter(
+      entry => entry.studentId === student.id && entry.loId === lo.id
     );
-    if (dateEntries.length > 1) {
-      toast.info(`Terdapat ${dateEntries.length} entri pada tanggal ${formatDateWIB(loDate)}. Silakan pilih entri melalui formulir.`);
+    if (studentEntries.length > 1) {
+      toast.info(`Terdapat ${studentEntries.length} entri pada LO ini. Silakan periksa riwayat melalui formulir.`);
       setIndividual({ student, lo });
       return;
     }
     quickLock.current = true; setQuickKey(`${student.id}|${lo.id}`);
     const assigned = getAssignedFormativeTask(lo, student.id);
-    const old = dateEntries[0];
+    const old = studentEntries[0];
     try {
       const nextAction = old?.nextAction || (level === 'Achieved' ? 'Lanjut ke LO Berikutnya' : 'Refleksi & Remediasi Terfokus');
       if (old) {
@@ -328,7 +391,7 @@ export default function JuniorHighAssessmentBookPage() {
           semester,
           studentId: student.id,
           studentName: student.name,
-          date: loDate,
+          date: targetDate,
           formativeTask: assigned?.formativeTask || '',
           comprehensionLevel: level,
           nextAction,
@@ -337,7 +400,8 @@ export default function JuniorHighAssessmentBookPage() {
           ...getUAContextForLO(lo, effectiveClassId)
         });
       }
-      toast.success(`Capaian LO (${formatDateWIB(loDate)}) tersimpan.`); void loadAssessmentData();
+      toast.success(`Capaian LO (${formatDateWIB(old ? old.date : targetDate)}) tersimpan.`);
+      void loadAssessmentData();
     } catch (issue) { toast.error(problem(issue)); }
     finally { quickLock.current = false; setQuickKey(''); }
   };
@@ -370,15 +434,18 @@ export default function JuniorHighAssessmentBookPage() {
             <th className="p-3 min-w-[200px] font-bold">Nama Peserta</th>
             <th className="p-3 min-w-[140px] font-bold">Kelas Asal</th>
             {los.map(lo => {
-              const loDate = getLODate(lo.id);
-              const countOnDate = students.filter(item =>
-                visibleFormative.some(e => e.studentId === item.id && e.loId === lo.id && e.date === loDate)
-              ).length;
+              const loEntries = visibleFormative.filter(e => e.loId === lo.id);
+              const res = getEffectiveLODate(lo, loEntries);
+              const effectiveDate = res.date;
+              const draftDate = uaDraftDates[lo.id] !== undefined ? uaDraftDates[lo.id] : effectiveDate;
+              const isDirty = draftDate !== effectiveDate && !!draftDate;
+              const assessedStudentsCount = students.filter(item => !!latest[`${item.id}|${lo.id}`]).length;
+
               return (
                 <th key={lo.id} className="p-3 min-w-[270px] border-l border-slate-200 align-top bg-white">
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <span className="text-purple-800 font-bold text-xs px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 inline-block">{lo.code}</span>
-                    <span className="text-[10px] text-slate-500 font-medium">{countOnDate}/{students.length} dinilai</span>
+                    <span className="text-[10px] text-slate-500 font-medium">{assessedStudentsCount}/{students.length} dinilai</span>
                   </div>
                   <p className="font-semibold text-slate-800 text-xs leading-snug break-words">{lo.title}</p>
                   
@@ -389,12 +456,12 @@ export default function JuniorHighAssessmentBookPage() {
                         <Calendar size={12} className="text-purple-600 shrink-0" />
                         <span>Tanggal Asesmen</span>
                       </label>
-                      {loDate !== getTodayWIB() && !isReadOnly && (
+                      {!isReadOnly && (
                         <button
                           type="button"
-                          onClick={() => handleSetLODate(lo.id, getTodayWIB())}
+                          onClick={() => setUaDraftDates(prev => ({ ...prev, [lo.id]: getTodayWIB() }))}
                           className="text-[9px] text-purple-700 hover:text-purple-900 font-semibold cursor-pointer underline"
-                          title="Kembalikan ke hari ini (WIB)"
+                          title="Gunakan tanggal hari ini (WIB)"
                         >
                           Hari ini
                         </button>
@@ -402,17 +469,79 @@ export default function JuniorHighAssessmentBookPage() {
                     </div>
                     <input
                       type="date"
-                      value={loDate}
+                      value={draftDate}
                       disabled={isReadOnly}
                       onChange={event => {
                         const val = event.target.value;
-                        if (val) handleSetLODate(lo.id, val);
+                        setUaDraftDates(prev => ({ ...prev, [lo.id]: val }));
                       }}
-                      className="w-full text-[11px] font-medium py-1 px-2 border border-slate-300 rounded-lg bg-white hover:border-slate-400 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-500 transition-colors"
+                      className={`w-full text-[11px] font-medium py-1 px-2 border rounded-lg bg-white transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-purple-500 ${
+                        !draftDate ? 'border-amber-400 bg-amber-50/30' : isDirty ? 'border-purple-400 bg-purple-50/20' : 'border-slate-300 hover:border-slate-400'
+                      }`}
                     />
-                    <p className="text-[10px] text-slate-500 mt-1 font-medium truncate" title={formatDateWIB(loDate)}>
-                      {formatDateWIB(loDate)}
-                    </p>
+                    {draftDate ? (
+                      <p className="text-[10px] text-slate-500 mt-1 font-medium truncate" title={formatDateWIB(draftDate)}>
+                        {formatDateWIB(draftDate)}
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-amber-700 mt-1 font-semibold flex items-center gap-1">
+                        <AlertTriangle size={11} className="shrink-0" />
+                        Pilih tanggal asesmen
+                      </p>
+                    )}
+
+                    {/* Conflict notification if legacy data has differing dates */}
+                    {res.hasConflict && (
+                      <div className="mt-1.5 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-[10px] text-amber-900">
+                        <div className="flex items-center gap-1 font-bold">
+                          <AlertTriangle size={11} className="text-amber-600 shrink-0" />
+                          <span>Tanggal data berbeda ({res.distinctDates.length} tgl)</span>
+                        </div>
+                        {!isReadOnly && (
+                          <button
+                            type="button"
+                            className="mt-1 w-full py-0.5 px-1.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-bold text-[9px] transition-colors cursor-pointer"
+                            onClick={() => {
+                              const targetNewDate = draftDate || res.distinctDates[0]?.date || getTodayWIB();
+                              setUaConfirmModal({
+                                isOpen: true,
+                                lo,
+                                oldDate: 'Beragam',
+                                newDate: targetNewDate,
+                                affectedCount: loEntries.length,
+                                hasConflict: true,
+                                distinctDates: res.distinctDates
+                              });
+                            }}
+                          >
+                            Selaraskan Tanggal
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Save button if draft date differs */}
+                    {isDirty && !isReadOnly && (
+                      <div className="mt-2 pt-1.5 border-t border-purple-200">
+                        <button
+                          type="button"
+                          className="w-full py-1 px-2 rounded-lg bg-purple-700 hover:bg-purple-800 text-white text-[10px] font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                          onClick={() => {
+                            setUaConfirmModal({
+                              isOpen: true,
+                              lo,
+                              oldDate: effectiveDate || 'Belum diatur',
+                              newDate: draftDate,
+                              affectedCount: loEntries.length,
+                              hasConflict: res.hasConflict,
+                              distinctDates: res.distinctDates
+                            });
+                          }}
+                        >
+                          <Check size={11} /> Simpan Perubahan Tanggal
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {!isReadOnly && (
@@ -465,11 +594,7 @@ export default function JuniorHighAssessmentBookPage() {
                 </span>
               </td>
               {los.map(lo => {
-                const loDate = getLODate(lo.id);
-                const entryOnDate = visibleFormative.find(
-                  item => item.studentId === student.id && item.loId === lo.id && item.date === loDate
-                );
-                const latestEntry = latest[`${student.id}|${lo.id}`];
+                const entry = latest[`${student.id}|${lo.id}`];
                 const assigned = getAssignedFormativeTask(lo, student.id);
                 const studentLoHistory = visibleFormative.filter(
                   item => item.studentId === student.id && item.loId === lo.id
@@ -488,45 +613,30 @@ export default function JuniorHighAssessmentBookPage() {
                           <span className="block text-[10px] text-blue-600/80 mt-0.5">{taskDateWIB(assigned.date)}</span>
                         </div>
                       )}
-                      {entryOnDate ? (
+                      {entry ? (
                         <>
                           <div className="flex items-center gap-1.5">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 border rounded-md text-[11px] font-bold ${
-                              entryOnDate.comprehensionLevel === 'Achieved'
+                              entry.comprehensionLevel === 'Achieved'
                                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                                : entryOnDate.comprehensionLevel === 'Not Achieved'
+                                : entry.comprehensionLevel === 'Not Achieved'
                                 ? 'bg-rose-50 text-rose-800 border-rose-300'
                                 : 'bg-amber-50 text-amber-800 border-amber-300'
                             }`}>
-                              {entryOnDate.comprehensionLevel === 'Achieved' ? <Check size={12} /> : entryOnDate.comprehensionLevel === 'Not Achieved' ? <X size={12} /> : null}
-                              {scoreText(entryOnDate.comprehensionLevel)}
+                              {entry.comprehensionLevel === 'Achieved' ? <Check size={12} /> : entry.comprehensionLevel === 'Not Achieved' ? <X size={12} /> : null}
+                              {scoreText(entry.comprehensionLevel)}
                             </span>
                           </div>
-                          <p className="text-slate-700 font-medium text-xs break-words">{entryOnDate.formativeTask || 'Asesmen Cepat'}</p>
+                          <p className="text-slate-700 font-medium text-xs break-words">{entry.formativeTask || 'Asesmen Cepat'}</p>
                           <p className="text-[10px] text-slate-400 font-normal">
-                            {formatDateWIB(entryOnDate.date)}
+                            {formatDateWIB(entry.date)}
                             {studentLoHistory.length > 1 && ` · ${studentLoHistory.length} entri`}
                           </p>
                           <div className="p-2 rounded-lg bg-purple-50/70 border border-purple-100 text-[11px] text-purple-950">
                             <span className="text-[9px] uppercase font-bold text-purple-700 block">Next Action</span>
-                            <p className="mt-0.5 whitespace-pre-wrap break-words">{entryOnDate.nextAction?.trim() || 'Belum diisi'}</p>
+                            <p className="mt-0.5 whitespace-pre-wrap break-words">{entry.nextAction?.trim() || 'Belum diisi'}</p>
                           </div>
                         </>
-                      ) : latestEntry ? (
-                        <div className="space-y-1.5">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
-                            Belum dinilai tgl {formatDateWIB(loDate)}
-                          </span>
-                          <p className="text-[10px] text-slate-500">
-                            Terakhir: <span className="font-semibold text-slate-700">{formatDateWIB(latestEntry.date)}</span> ({latestEntry.comprehensionLevel})
-                          </p>
-                          {latestEntry.nextAction && (
-                            <p className="text-[10px] text-slate-400 truncate">Next: {latestEntry.nextAction}</p>
-                          )}
-                          <p className="text-[9px] text-slate-400 font-mono">
-                            Total riwayat: {studentLoHistory.length}
-                          </p>
-                        </div>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-50 text-slate-500 border border-slate-200">Belum dinilai</span>
                       )}
@@ -537,12 +647,12 @@ export default function JuniorHighAssessmentBookPage() {
                           type="button"
                           disabled={!!quickKey}
                           className={`flex-1 inline-flex items-center justify-center gap-1 text-[10px] font-bold rounded-lg px-2 py-1 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-emerald-500 ${
-                            entryOnDate?.comprehensionLevel === 'Achieved'
+                            entry?.comprehensionLevel === 'Achieved'
                               ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400'
                               : 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400'
                           }`}
                           onClick={(e) => { e.stopPropagation(); void quickScore(student, lo, 'Achieved'); }}
-                          title={`Nilai Achieved untuk ${formatDateWIB(loDate)}`}
+                          title={`Nilai Achieved`}
                         >
                           <Check size={11} /> Achieved
                         </button>
@@ -550,12 +660,12 @@ export default function JuniorHighAssessmentBookPage() {
                           type="button"
                           disabled={!!quickKey}
                           className={`flex-1 inline-flex items-center justify-center gap-1 text-[10px] font-bold rounded-lg px-2 py-1 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-rose-500 ${
-                            entryOnDate?.comprehensionLevel === 'Not Achieved'
+                            entry?.comprehensionLevel === 'Not Achieved'
                               ? 'bg-rose-600 text-white shadow-xs ring-2 ring-rose-400'
                               : 'bg-rose-50 text-rose-800 border border-rose-300 hover:bg-rose-100 hover:border-rose-400'
                           }`}
                           onClick={(e) => { e.stopPropagation(); void quickScore(student, lo, 'Not Achieved'); }}
-                          title={`Nilai Not Achieved untuk ${formatDateWIB(loDate)}`}
+                          title={`Nilai Not Achieved`}
                         >
                           <X size={11} /> Not Achieved
                         </button>
@@ -587,6 +697,20 @@ export default function JuniorHighAssessmentBookPage() {
       </table>
       {!students.length && (
         <p className="p-8 text-center text-slate-500 text-xs">Belum ada peserta terdaftar yang cocok dengan filter ini.</p>
+      )}
+      {uaConfirmModal.lo && (
+        <LODateConfirmModal
+          isOpen={uaConfirmModal.isOpen}
+          onClose={() => setUaConfirmModal(prev => ({ ...prev, isOpen: false }))}
+          lo={uaConfirmModal.lo}
+          oldDate={uaConfirmModal.oldDate}
+          newDate={uaConfirmModal.newDate}
+          affectedCount={uaConfirmModal.affectedCount}
+          hasConflict={uaConfirmModal.hasConflict}
+          distinctDates={uaConfirmModal.distinctDates}
+          isUAMode={true}
+          onConfirm={handleConfirmUADateChange}
+        />
       )}
     </div>
   );
@@ -1021,8 +1145,7 @@ export default function JuniorHighAssessmentBookPage() {
                 teacherId={teacherId}
                 teacherName={teacherName}
                 isReadOnly={isReadOnly}
-                loDates={currentLoDates}
-                onSetLODate={handleSetLODate}
+                onUpdateLODate={handleUpdateLODate}
                 onOpenFormativeModal={(student, lo) => setIndividual({ student, lo })}
                 onOpenSummativeModal={setSumStudent}
                 onOpenManageLOModal={() => setManageOpen(true)}
@@ -1065,7 +1188,7 @@ export default function JuniorHighAssessmentBookPage() {
         isUAMode={isUA}
       />
     )}
-    {bulkLO && !isReadOnly && (isUA ? <UASessionModal key={`${scopeKey}|${bulkLO.id}`} students={students as UAStudent[]} lo={bulkLO} scope={{ classId: effectiveClassId, subjectId: effectiveSubject, academicYear: year, semester }} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLODate(bulkLO.id)} onClose={() => setBulkLO(null)} onSaved={loadAssessmentData} /> : <BulkFormativeModal isOpen onClose={() => setBulkLO(null)} lo={bulkLO} students={students} classId={classId} subjectId={subject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLODate(bulkLO.id)} onSuccess={loadAssessmentData} />)}
+    {bulkLO && !isReadOnly && (isUA ? <UASessionModal key={`${scopeKey}|${bulkLO.id}`} students={students as UAStudent[]} lo={bulkLO} scope={{ classId: effectiveClassId, subjectId: effectiveSubject, academicYear: year, semester }} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLOEffectiveDate(bulkLO)} onClose={() => setBulkLO(null)} onSaved={loadAssessmentData} /> : <BulkFormativeModal isOpen onClose={() => setBulkLO(null)} lo={bulkLO} students={students} classId={classId} subjectId={subject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLOEffectiveDate(bulkLO)} onSuccess={loadAssessmentData} />)}
     {sheetSyncLO && activeLG && !isReadOnly && (
       <ImportLOSheetModal
         key={`${scopeKey}|sheet|${sheetSyncLO.id}`}
@@ -1082,12 +1205,12 @@ export default function JuniorHighAssessmentBookPage() {
         options={options}
         teacherId={teacherId}
         teacherName={teacherName}
-        initialDate={getLODate(sheetSyncLO.id)}
+        initialDate={getLOEffectiveDate(sheetSyncLO)}
         onSuccess={loadAssessmentData}
       />
     )}
-    {sharedTaskLO && !isReadOnly && <SharedFormativeTaskModal key={`${scopeKey}|task|${sharedTaskLO.id}`} lo={sharedTaskLO} students={students} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLODate(sharedTaskLO.id)} onClose={() => setSharedTaskLO(null)} onSaved={loadAssessmentData} />}
-    {individual && <FormativeAssessmentModal key={`${scopeKey}|${individual.student.id}|${individual.lo.id}`} isOpen onClose={() => setIndividual(null)} student={individual.student} lo={individual.lo} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} historyEntries={formative.filter(entry => entry.studentId === individual.student.id && entry.loId === individual.lo.id)} teacherId={teacherId} teacherName={teacherName} isSuperAdmin={isSuperAdmin} isReadOnly={isReadOnly} initialDate={getLODate(individual.lo.id)} onSaved={loadAssessmentData} {...{ ...context, isUAMode: isUA }} />}
+    {sharedTaskLO && !isReadOnly && <SharedFormativeTaskModal key={`${scopeKey}|task|${sharedTaskLO.id}`} lo={sharedTaskLO} students={students} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} initialDate={getLOEffectiveDate(sharedTaskLO)} onClose={() => setSharedTaskLO(null)} onSaved={loadAssessmentData} />}
+    {individual && <FormativeAssessmentModal key={`${scopeKey}|${individual.student.id}|${individual.lo.id}`} isOpen onClose={() => setIndividual(null)} student={individual.student} lo={individual.lo} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} historyEntries={formative.filter(entry => entry.studentId === individual.student.id && entry.loId === individual.lo.id)} teacherId={teacherId} teacherName={teacherName} isSuperAdmin={isSuperAdmin} isReadOnly={isReadOnly} initialDate={getLOEffectiveDate(individual.lo)} onSaved={loadAssessmentData} {...{ ...context, isUAMode: isUA }} />}
     {sumStudent && activeLG && <SummativeModal key={`${scopeKey}|${sumStudent.id}`} isOpen onClose={() => setSumStudent(null)} student={sumStudent} lg={activeLG} los={los} loScores={Object.fromEntries(los.map(lo => [lo.id, latestEntries(formative)[`${sumStudent.id}|${lo.id}`]?.comprehensionLevel]))} existingSummative={summative.find(entry => entry.studentId === sumStudent.id)} classId={effectiveClassId} subjectId={effectiveSubject} academicYear={year} semester={semester} options={options} teacherId={teacherId} teacherName={teacherName} isReadOnly={isReadOnly} onSaved={loadAssessmentData} {...{ ...context, isUAMode: isUA }} />}
     </div>
   );

@@ -479,9 +479,9 @@ export function getEffectiveLODate(lo: JHAssessmentLO, entriesForLO: JHFormative
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => b.count - a.count || b.date.localeCompare(a.date));
 
-  const hasConflict = distinctDates.length > 1;
-
+  // If LO has saved assessmentDate
   if (lo.assessmentDate) {
+    const hasConflict = distinctDates.some(d => d.date !== lo.assessmentDate);
     return {
       date: lo.assessmentDate,
       isExplicit: true,
@@ -491,6 +491,7 @@ export function getEffectiveLODate(lo: JHAssessmentLO, entriesForLO: JHFormative
     };
   }
 
+  // Legacy data: single uniform date among existing entries -> propose as LO date
   if (distinctDates.length === 1) {
     return {
       date: distinctDates[0].date,
@@ -501,9 +502,10 @@ export function getEffectiveLODate(lo: JHAssessmentLO, entriesForLO: JHFormative
     };
   }
 
+  // Legacy data with conflicting dates: do not guess!
   if (distinctDates.length > 1) {
     return {
-      date: distinctDates[0].date,
+      date: '',
       isExplicit: false,
       hasConflict: true,
       distinctDates,
@@ -511,8 +513,9 @@ export function getEffectiveLODate(lo: JHAssessmentLO, entriesForLO: JHFormative
     };
   }
 
+  // New LO without date and without entries: empty date
   return {
-    date: getTodayWIB(),
+    date: '',
     isExplicit: false,
     hasConflict: false,
     distinctDates: [],
@@ -691,7 +694,7 @@ export async function saveLO(params: { id?: string; lgId: string; classId: strin
     title: params.title,
     order: params.order,
     isActive: true,
-    assessmentDate: params.assessmentDate || getTodayWIB(),
+    ...(params.assessmentDate ? { assessmentDate: params.assessmentDate } : {}),
     teacherId: params.teacherId,
     teacherName: params.teacherName || '',
     createdAt: now,
