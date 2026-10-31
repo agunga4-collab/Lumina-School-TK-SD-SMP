@@ -23,6 +23,13 @@ import {
   getMonthOptionsForAcademicYear
 } from '../src/services/elementaryMonthlyUpperReportService';
 import { getGradeLevelNumber } from '../src/types/elementaryMidtermReport';
+import { generateUpperMonthlyProgressPdfBlob, generateUpperLiteracyNumeracyPdfBlob } from '../src/lib/elementaryMonthlyUpperReportPdf';
+import { UpperMonthlyProgressDocument } from '../src/pages/Elementary/MonthlyReportUpper/components/UpperMonthlyProgressDocument';
+import { UpperLiteracyNumeracyDocument } from '../src/pages/Elementary/MonthlyReportUpper/components/UpperLiteracyNumeracyDocument';
+import { UpperAttendanceConfigModal } from '../src/pages/Elementary/MonthlyReportUpper/components/UpperAttendanceConfigModal';
+import { UpperMonthlyReportPreviewModal } from '../src/pages/Elementary/MonthlyReportUpper/components/UpperMonthlyReportPreviewModal';
+import { UpperPublicationTrackingTab } from '../src/pages/Elementary/MonthlyReportUpper/components/UpperPublicationTrackingTab';
+import ElementaryMonthlyUpperReportPage from '../src/pages/Elementary/MonthlyReportUpper/ElementaryMonthlyUpperReportPage';
 
 function assert(condition: boolean, msg: string) {
   if (!condition) {
@@ -392,6 +399,18 @@ const evalLitNumMissingMath = validateUpperLiteracyNumeracyPublishEligibility({
 });
 assert(evalLitNumMissingMath.isEligible === false, 'Missing Math narrative blocks LitNum publication');
 
-console.log('\nALL 45 TESTS PASSED SUCCESSFULLY!');
+// 14. Verify Components & PDF Generators
+console.log('\n--- Test 14: Verify UI Components & PDF Generators ---');
+assert(typeof generateUpperMonthlyProgressPdfBlob === 'function', 'generateUpperMonthlyProgressPdfBlob is defined');
+assert(typeof generateUpperLiteracyNumeracyPdfBlob === 'function', 'generateUpperLiteracyNumeracyPdfBlob is defined');
+assert(typeof UpperMonthlyProgressDocument === 'function', 'UpperMonthlyProgressDocument component is defined');
+assert(typeof UpperLiteracyNumeracyDocument === 'function', 'UpperLiteracyNumeracyDocument component is defined');
+assert(typeof UpperAttendanceConfigModal === 'function', 'UpperAttendanceConfigModal component is defined');
+assert(typeof UpperMonthlyReportPreviewModal === 'function', 'UpperMonthlyReportPreviewModal component is defined');
+assert(typeof UpperPublicationTrackingTab === 'function', 'UpperPublicationTrackingTab component is defined');
+assert(typeof ElementaryMonthlyUpperReportPage === 'function', 'ElementaryMonthlyUpperReportPage container is defined');
+
+console.log('\nALL 52 TESTS PASSED SUCCESSFULLY!');
 process.exit(0);
+
 
