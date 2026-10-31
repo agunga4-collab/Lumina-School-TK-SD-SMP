@@ -5,6 +5,11 @@ import {
 import { 
   buildMonthlyCurriculumDocId, 
   buildMonthlyStudentScoreDocId,
+  buildMonthlyProjectDocId,
+  buildMonthlyStudentPhotoDocId,
+  buildMonthlyStudentNarrativeDocId,
+  computeStudentScoresHash,
+  isElementaryHeadOrSuperAdmin,
   getMonthOptionsForAcademicYear,
   formatMonthLabel
 } from '../src/services/elementaryMonthlyReportService';
@@ -145,4 +150,275 @@ assert(formatMonthLabel('2025-08') === 'Agustus 2025', '2025-08 formats as "Agus
 assert(formatMonthLabel('2026-01') === 'Januari 2026', '2026-01 formats as "Januari 2026"');
 assert(formatMonthLabel('2026-10') === 'Oktober 2026', '2026-10 formats as "Oktober 2026"');
 
-console.log('\nALL TESTS PASSED SUCCESSFULLY!');
+// 7. Test Tahap 2: Project, Photo, Narrative IDs and Stale Detection
+console.log('\n--- Test Tahap 2: Project, Photo, Narrative Doc IDs & Stale Detection ---');
+
+const projId = buildMonthlyProjectDocId('class_1a', '2025/2026', '1', '2025-08');
+assert(projId === 'class_1a_2025_2026_S1_M2025-08', 'Project docId matches format');
+
+const photoId = buildMonthlyStudentPhotoDocId('stu_1', 'class_1a', '2025/2026', '1', '2025-08');
+assert(photoId === 'stu_1_class_1a_2025_2026_S1_M2025-08', 'Student photo docId matches format');
+
+const narrativeId = buildMonthlyStudentNarrativeDocId('stu_1', 'class_1a', '2025/2026', '1', '2025-08');
+assert(narrativeId === 'stu_1_class_1a_2025_2026_S1_M2025-08', 'Student narrative docId matches format');
+
+// Test Scores Hash
+const hash1 = computeStudentScoresHash({
+  id: 'x',
+  studentId: 's1',
+  studentName: 'Student 1',
+  classId: 'c1',
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  scores: { lo1: 85, lo2: 90 },
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+});
+const hash2 = computeStudentScoresHash({
+  id: 'x',
+  studentId: 's1',
+  studentName: 'Student 1',
+  classId: 'c1',
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  scores: { lo2: 90, lo1: 85 }, // Same scores, different insertion order
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+});
+const hashChanged = computeStudentScoresHash({
+  id: 'x',
+  studentId: 's1',
+  studentName: 'Student 1',
+  classId: 'c1',
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  scores: { lo1: 85, lo2: 95 }, // Modified score
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+});
+
+assert(hash1 === hash2, 'Hash is order-independent (stable canonical representation)');
+// 8. Test Tahap 3: Attendance Calculation & Non-assumption of 100%
+console.log('\n--- Test Tahap 3: Attendance Calculation & Non-assumption of 100% ---');
+import { 
+  buildMonthlyAttendanceConfigDocId,
+  buildPublishedMonthlyReportDocId,
+  calculateStudentAttendanceSummary
+} from '../src/services/elementaryMonthlyReportService';
+import { 
+  validateElementaryMonthlyPublishEligibility,
+  ElementaryMonthlyAttendanceConfig
+} from '../src/types/elementaryMonthlyReport';
+
+const attDocId = buildMonthlyAttendanceConfigDocId('class_1a', '2025/2026', '1', '2025-08');
+assert(attDocId === 'class_1a_2025_2026_S1_M2025-08', 'Attendance config docId matches format');
+
+const pubDocId = buildPublishedMonthlyReportDocId('2025/2026', '1', '2025-08', 'class_1a', 'stu_1');
+assert(pubDocId === '2025_2026_S1_M2025-08_class_1a_stu_1', 'Published report docId matches retry-safe format');
+
+// Missing attendance config -> isAvailable: false (never assumed 100%)
+const attNull = calculateStudentAttendanceSummary(null, 'stu_1');
+assert(attNull.isAvailable === false, 'Null attendance config is NOT assumed 100%');
+assert(attNull.percentage === 0, 'Null attendance config percentage is 0');
+
+// Config exists but student has no entry -> isAvailable: false
+const mockAttConfig: ElementaryMonthlyAttendanceConfig = {
+  id: attDocId,
+  classId: 'class_1a',
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  startDate: '2025-07-25', // Cross-month support
+  endDate: '2025-08-25',
+  totalSchoolDays: 22,
+  signingDate: '31 Agustus 2025',
+  signingLocation: 'Depok',
+  studentAttendanceMap: {
+    'stu_1': { presentDays: 21, totalDays: 22 }
+  },
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+};
+
+const attStuMissing = calculateStudentAttendanceSummary(mockAttConfig, 'stu_unrecorded');
+assert(attStuMissing.isAvailable === false, 'Missing student attendance record is NOT assumed 100%');
+assert(attStuMissing.percentage === 0, 'Missing student attendance record returns percentage 0');
+
+// Student with 21 of 22 days -> 95.5%
+const attStu1 = calculateStudentAttendanceSummary(mockAttConfig, 'stu_1');
+assert(attStu1.isAvailable === true, 'Recorded student attendance is available');
+assert(attStu1.percentage === 95.5, '21 / 22 days calculates to exactly 95.5%');
+assert(attStu1.basisDescription.includes('21 dari 22 hari sekolah'), 'Basis description shows 21 dari 22 hari');
+
+// 9. Test Tahap 3: Publication Eligibility Gate
+console.log('\n--- Test Tahap 3: Publication Gate & Validation Rules ---');
+
+const mockCurriculum = {
+  id: 'c1',
+  classId: 'class_1a',
+  className: '1A',
+  gradeLevel: 1,
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  subjects: [
+    {
+      id: 'sub1',
+      name: 'Mathematics',
+      kkm: 70,
+      order: 0,
+      learningGoals: [
+        {
+          id: 'lg1',
+          code: 'LG 1',
+          title: 'Numbers to 20',
+          order: 0,
+          learningObjectives: [lo1, lo2]
+        }
+      ]
+    }
+  ],
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+};
+
+const mockSignatory = {
+  principalName: 'Dewi Masyitoh, M.Pd.',
+  principalTitle: 'Principal',
+  principalNiy: '19820512',
+  principalSignatureUrl: null,
+  homeroomTeacherName: 'Budi Santoso, S.Pd.',
+  homeroomTeacherNiy: '19900101',
+  homeroomTeacherSignatureUrl: null,
+  signingDate: '31 Agustus 2025',
+  signingLocation: 'Depok'
+};
+
+const mockProject = {
+  id: 'p1',
+  classId: 'class_1a',
+  className: '1A',
+  gradeLevel: 1,
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  projectTitle: 'Gardening & Plant Life Cycle',
+  projectOverview: 'Siswa menanam dan mengamati pertumbuhan biji kacang hijau selama 4 minggu.',
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+};
+
+const mockPhoto = {
+  id: 'ph1',
+  studentId: 'stu_1',
+  studentName: 'Student 1',
+  classId: 'class_1a',
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  identityPhotoUrl: 'https://example.com/photo.jpg',
+  snapshots: [
+    { index: 0, url: 'https://example.com/s1.jpg', caption: 'Tahap Persiapan Media Tanam' },
+    { index: 1, url: 'https://example.com/s2.jpg', caption: 'Tahap Perawatan & Penyiraman' },
+    { index: 2, url: 'https://example.com/s3.jpg', caption: 'Tahap Panen & Presentasi Kelompok' }
+  ] as any,
+  albumLink: 'https://photos.google.com/share',
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+};
+
+const mockNarrativeApproved = {
+  id: 'n1',
+  studentId: 'stu_1',
+  studentName: 'Student 1',
+  classId: 'class_1a',
+  academicYear: '2025/2026',
+  semester: '1',
+  month: '2025-08',
+  academicComment: 'Ananda memiliki pemahaman berhitung yang amat baik.',
+  selProfile: 'Ananda menunjukkan empati dan kemandirian yang tinggi di kelas.',
+  reviewStatus: 'APPROVED' as any,
+  isSourceStale: false,
+  approvedByName: 'Head Unit Elementary',
+  createdAt: 0,
+  createdBy: '',
+  updatedAt: 0,
+  updatedBy: ''
+};
+
+// Check complete valid state -> eligible!
+const validGate = validateElementaryMonthlyPublishEligibility({
+  student: { id: 'stu_1', name: 'Student 1' },
+  curriculumDoc: mockCurriculum,
+  studentScoreDoc: { scores: { lo1: 85, lo2: 90 } } as any,
+  narrativeDoc: mockNarrativeApproved,
+  projectDoc: mockProject,
+  photoDoc: mockPhoto,
+  attendanceSummary: attStu1,
+  signatory: mockSignatory
+});
+assert(validGate.isEligible === true, 'All complete requirements pass publish gate');
+assert(validGate.blockingReasons.length === 0, 'No blocking reasons when all criteria met');
+
+// Test Gate Block: Incomplete active LO
+const incompleteLoGate = validateElementaryMonthlyPublishEligibility({
+  student: { id: 'stu_1', name: 'Student 1' },
+  curriculumDoc: mockCurriculum,
+  studentScoreDoc: { scores: { lo1: 85 } } as any, // lo2 is missing!
+  narrativeDoc: mockNarrativeApproved,
+  projectDoc: mockProject,
+  photoDoc: mockPhoto,
+  attendanceSummary: attStu1,
+  signatory: mockSignatory
+});
+assert(incompleteLoGate.isEligible === false, 'Missing LO score blocks publishing');
+assert(incompleteLoGate.blockingReasons.some(r => r.includes('Nilai LO aktif belum lengkap')), 'Reason explicitly specifies missing LO');
+
+// Test Gate Block: Stale approval
+const staleNarGate = validateElementaryMonthlyPublishEligibility({
+  student: { id: 'stu_1', name: 'Student 1' },
+  curriculumDoc: mockCurriculum,
+  studentScoreDoc: { scores: { lo1: 85, lo2: 90 } } as any,
+  narrativeDoc: { ...mockNarrativeApproved, isSourceStale: true },
+  projectDoc: mockProject,
+  photoDoc: mockPhoto,
+  attendanceSummary: attStu1,
+  signatory: mockSignatory
+});
+assert(staleNarGate.isEligible === false, 'Stale approved narrative blocks publishing');
+assert(staleNarGate.blockingReasons.some(r => r.includes('stale')), 'Reason explicitly mentions stale narrative');
+
+// Test Gate Block: Missing Attendance
+const missingAttGate = validateElementaryMonthlyPublishEligibility({
+  student: { id: 'stu_1', name: 'Student 1' },
+  curriculumDoc: mockCurriculum,
+  studentScoreDoc: { scores: { lo1: 85, lo2: 90 } } as any,
+  narrativeDoc: mockNarrativeApproved,
+  projectDoc: mockProject,
+  photoDoc: mockPhoto,
+  attendanceSummary: attNull,
+  signatory: mockSignatory
+});
+assert(missingAttGate.isEligible === false, 'Missing attendance blocks publishing');
+assert(missingAttGate.blockingReasons.some(r => r.includes('Data kehadiran siswa belum tersedia')), 'Reason states attendance missing');
+
+console.log('\nALL 37 TESTS (STAGES 1, 2, AND 3) PASSED SUCCESSFULLY!');
+process.exit(0);
+

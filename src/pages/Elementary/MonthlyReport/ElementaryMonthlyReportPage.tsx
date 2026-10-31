@@ -20,6 +20,9 @@ import {
   formatMonthLabel
 } from '../../../services/elementaryMonthlyReportService';
 import { LearningGoalsScoreGrid } from './components/LearningGoalsScoreGrid';
+import { ProjectAndPhotoTab } from './components/ProjectAndPhotoTab';
+import { NarrativeAndApprovalTab } from './components/NarrativeAndApprovalTab';
+import { PublicationTrackingTab } from './components/PublicationTrackingTab';
 import { toast } from 'sonner';
 
 export default function ElementaryMonthlyReportPage() {
@@ -358,55 +361,46 @@ export default function ElementaryMonthlyReportPage() {
           <span>Learning Goals &amp; Nilai</span>
         </button>
 
-        {/* Tab 2: Proyek & Foto (Disabled) */}
+        {/* Tab 2: Proyek & Foto (ACTIVE) */}
         <button
           type="button"
           onClick={() => setActiveTab('PROJECTS')}
-          className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 border-b-2 ${
+          className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 border-b-2 ${
             activeTab === 'PROJECTS'
               ? 'border-emerald-600 text-emerald-800 bg-emerald-50/50'
-              : 'border-transparent text-slate-400 hover:text-slate-600'
+              : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <Camera size={16} />
           <span>Proyek &amp; Foto</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-bold">
-            Tahap 2
-          </span>
         </button>
 
-        {/* Tab 3: Narasi & Approval (Disabled) */}
+        {/* Tab 3: Narasi & Approval (ACTIVE) */}
         <button
           type="button"
           onClick={() => setActiveTab('NARRATIVE')}
-          className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 border-b-2 ${
+          className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 border-b-2 ${
             activeTab === 'NARRATIVE'
               ? 'border-emerald-600 text-emerald-800 bg-emerald-50/50'
-              : 'border-transparent text-slate-400 hover:text-slate-600'
+              : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <MessageSquare size={16} />
           <span>Narasi &amp; Approval</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-bold">
-            Tahap 3
-          </span>
         </button>
 
-        {/* Tab 4: Preview & Publikasi (Disabled) */}
+        {/* Tab 4: Preview & Publikasi (ACTIVE) */}
         <button
           type="button"
           onClick={() => setActiveTab('PUBLISH')}
-          className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 border-b-2 ${
+          className={`px-4 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-2 border-b-2 ${
             activeTab === 'PUBLISH'
               ? 'border-emerald-600 text-emerald-800 bg-emerald-50/50'
-              : 'border-transparent text-slate-400 hover:text-slate-600'
+              : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <Eye size={16} />
           <span>Preview &amp; Publikasi</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-600 font-bold">
-            Tahap 4
-          </span>
         </button>
       </div>
 
@@ -433,35 +427,41 @@ export default function ElementaryMonthlyReportPage() {
           />
         )
       ) : activeTab === 'PROJECTS' ? (
-        <div className="p-10 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
-          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto">
-            <Camera size={24} />
-          </div>
-          <h3 className="text-sm font-bold text-slate-900">Tab &quot;Proyek &amp; Foto&quot; Belum Tersedia</h3>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Fitur unggah dokumentasi proyek dan foto kegiatan bulanan siswa dijadwalkan pada pengembangan tahap 2.
-          </p>
-        </div>
+        <ProjectAndPhotoTab
+          selectedClass={selectedClass}
+          selectedYear={selectedYear}
+          selectedSemester={selectedSemester}
+          selectedMonth={selectedMonth}
+          monthLabel={monthLabel}
+          students={students}
+          currentUser={effectiveUser}
+        />
       ) : activeTab === 'NARRATIVE' ? (
-        <div className="p-10 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
-          <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto">
-            <MessageSquare size={24} />
-          </div>
-          <h3 className="text-sm font-bold text-slate-900">Tab &quot;Narasi &amp; Approval&quot; Belum Tersedia</h3>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Fitur penyusunan narasi guru kelas dan peninjauan serta approval Head Unit dijadwalkan pada pengembangan tahap 3.
-          </p>
-        </div>
+        <NarrativeAndApprovalTab
+          curriculumDoc={curriculumDoc}
+          studentScoresMap={studentScoresMap}
+          students={students}
+          selectedClass={selectedClass}
+          selectedYear={selectedYear}
+          selectedSemester={selectedSemester}
+          selectedMonth={selectedMonth}
+          monthLabel={monthLabel}
+          currentUser={effectiveUser}
+          onRefreshData={() => loadCurriculumAndScores(true)}
+        />
       ) : (
-        <div className="p-10 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
-          <div className="w-12 h-12 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center mx-auto">
-            <Eye size={24} />
-          </div>
-          <h3 className="text-sm font-bold text-slate-900">Tab &quot;Preview &amp; Publikasi&quot; Belum Tersedia</h3>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Fitur cetak preview PDF, tautan berbagi, dan publikasi ke portal siswa &amp; orang tua dijadwalkan pada pengembangan tahap 4.
-          </p>
-        </div>
+        <PublicationTrackingTab
+          curriculumDoc={curriculumDoc}
+          studentScoresMap={studentScoresMap}
+          students={students}
+          selectedClass={selectedClass}
+          selectedYear={selectedYear}
+          selectedSemester={selectedSemester}
+          selectedMonth={selectedMonth}
+          monthLabel={monthLabel}
+          currentUser={effectiveUser}
+          onRefreshData={() => loadCurriculumAndScores(true)}
+        />
       )}
     </div>
   );

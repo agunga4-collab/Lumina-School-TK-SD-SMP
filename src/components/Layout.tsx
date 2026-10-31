@@ -850,6 +850,7 @@ export function Layout() {
                   <NavItem to="/elementary/mtss-academic" icon={<GraduationCap size={18} />} label="MTSS Academic" />
                   <NavItem to="/elementary/ldss" icon={<ClipboardCheck size={18} />} label="LDSS" />
                   <NavItem to="/elementary/monthly-report" icon={<FileText size={18} />} label="Monthly Report (Gr 1–3)" />
+                  <NavItem to="/elementary/monthly-report-upper" icon={<FileText size={18} />} label="Monthly Report — Upper Grade (4–6)" />
                   <NavItem to="/elementary/midterm" icon={<FileText size={18} />} label="Midterm Report" />
                   <NavItem to="/elementary/midterm-sn" icon={<Shield size={18} />} label="Midterm Report SN" />
                   <NavItem to="/elementary/other-report" icon={<FileText size={18} />} label="Other Report" />

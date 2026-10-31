@@ -2064,6 +2064,127 @@ service cloud.firestore {
       allow write: if isActive() && isElementaryStaff();
     }
 
+    match /elem_monthly_project_docs/{docId} {
+      allow read: if isActive() && (isElementaryStaff() || isSignedIn());
+      allow write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_student_photos/{docId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+      allow write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_student_narratives/{docId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+      allow write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_attendance_configs/{configId} {
+      allow read, write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_published_reports/{reportId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (
+          resource != null &&
+          (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) &&
+          resource.data.status == 'PUBLISHED' &&
+          resource.data.deliveryStatus == 'SENT'
+        )
+      );
+
+      allow create, update: if isActive() && isElementaryStaff();
+
+      allow update: if isActive() && (
+        (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) &&
+        resource.data.status == 'PUBLISHED' &&
+        resource.data.deliveryStatus == 'SENT' &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount', 'openedByEmail'
+        ])
+      );
+
+      allow delete: if isActive() && (isAdmin() || isElementaryHeadUnitOrPrincipal());
+    }
+
+    // === ELEMENTARY MONTHLY REPORT (UPPER GRADE 4-6) ===
+    match /elem_monthly_upper_curricula/{docId} {
+      allow read, write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_upper_student_data/{docId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+      allow write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_upper_litnum_records/{docId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+      allow write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_upper_litnum_class_configs/{docId} {
+      allow read, write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_upper_attendance_configs/{configId} {
+      allow read, write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_upper_narratives/{docId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (resource != null && isOwnStudentData(resource.data.studentId)) ||
+        (resource != null && isLinkedStudent(resource.data.studentId))
+      );
+      allow write: if isActive() && isElementaryStaff();
+    }
+
+    match /elem_monthly_upper_published_reports/{reportId} {
+      allow read: if isActive() && (
+        isElementaryStaff() ||
+        (
+          resource != null &&
+          (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) &&
+          resource.data.status == 'PUBLISHED' &&
+          resource.data.deliveryStatus == 'SENT'
+        )
+      );
+
+      allow create, update: if isActive() && isElementaryStaff();
+
+      allow update: if isActive() && (
+        (isOwnStudentData(resource.data.studentId) || isLinkedStudent(resource.data.studentId)) &&
+        resource.data.status == 'PUBLISHED' &&
+        resource.data.deliveryStatus == 'SENT' &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'isOpened', 'firstOpenedAt', 'lastOpenedAt', 'openCount', 'openedByEmail'
+        ])
+      );
+
+      allow delete: if isActive() && (isAdmin() || isElementaryHeadUnitOrPrincipal());
+    }
+
+    match /elem_monthly_upper_delivery_tracking/{docId} {
+      allow read, write: if isActive() && isElementaryStaff();
+    }
+
     match /elem_midterm_published_reports/{reportId} {
       allow read: if isActive() && (
         isElementaryStaff() ||

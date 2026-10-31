@@ -6726,6 +6726,158 @@ app.post("/api/elementary/midterm/refine-general-comment", async (req, res) => {
   }
 });
 
+// ==========================================
+// ELEMENTARY MONTHLY REPORT AI ENDPOINTS
+// ==========================================
+
+// POST /api/elementary/monthly/generate-academic-comment
+app.post("/api/elementary/monthly/generate-academic-comment", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const { studentName, nickname, monthLabel, gradeLevel, subjectSummaries, teacherNotes } = req.body;
+    if (!studentName) {
+      return res.status(400).json({ error: "Nama siswa wajib diisi." });
+    }
+
+    const prompt = `Anda adalah seorang guru Elementary (Sekolah Dasar) Lower Grade ${gradeLevel || 1} di Sekolah LUMINA yang penuh empati dan profesional.
+Tulis narasi Komentar Akademik (Academic Comments) bulanan untuk bulan ${monthLabel || 'ini'}.
+Nama Siswa: ${studentName} (Panggilan: ${nickname || studentName})
+Jenjang: Elementary Grade ${gradeLevel || 1}
+
+Data Capaian Pembelajaran Siswa (Mata Pelajaran, Learning Goals, Nilai/Predikat):
+${subjectSummaries || '(Belum ada data nilai)'}
+
+Catatan Tambahan Guru:
+${teacherNotes || '(Tidak ada catatan khusus)'}
+
+Petunjuk Penulisan:
+1. Gunakan Bahasa Indonesia baku yang santun, hangat, mengapresiasi, dan berorientasi pada pertumbuhan (growth mindset).
+2. Sebutkan keunggulan materi pelajaran yang dipahami dengan sangat baik (terutama predikat A/D).
+3. Berikan saran konstruktif dan memotivasi untuk aspek yang memerlukan pendalaman/perbaikan (terutama predikat B).
+4. Tulisan terdiri dari 1-2 paragraf mengalir tanpa tanda bintang (**), tanpa nomor poin, dan maksimal 150 kata.
+5. Langsung mulai dari kalimat komentar.`;
+
+    const rawResult = await callGeminiAi(prompt, 0.3);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText });
+  } catch (error: any) {
+    console.error("[ElementaryMonthlyAI:academic] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan gunakan draf manual."
+    });
+  }
+});
+
+// POST /api/elementary/monthly/generate-sel-profile
+app.post("/api/elementary/monthly/generate-sel-profile", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const { studentName, nickname, monthLabel, gradeLevel, focusAreas, observations } = req.body;
+    if (!studentName) {
+      return res.status(400).json({ error: "Nama siswa wajib diisi." });
+    }
+
+    const prompt = `Anda adalah seorang guru wali kelas Elementary di Sekolah LUMINA.
+Tulis narasi Profil Sosial Emosional (SEL) siswa untuk bulan ${monthLabel || 'ini'}.
+Nama Siswa: ${studentName} (Panggilan: ${nickname || studentName})
+Kelas: Grade ${gradeLevel || 1}
+Fokus Karakter Bulanan: ${focusAreas || 'Kemandirian dan Kerja Sama'}
+
+Catatan Observasi Harian Guru:
+${observations || '(Tidak ada catatan khusus)'}
+
+Petunjuk Penulisan:
+1. Tuliskan dalam Bahasa Indonesia yang penuh kasih sayang, positif, dan memotivasi perkembangan kepribadian anak.
+2. Jelaskan bagaimana ananda berinteraksi dengan teman sebaya dan guru, kemandiriannya dalam berkegiatan, serta regulasi emosi positifnya.
+3. Terdiri dari 1 paragraf mengalir (sekitar 60-100 kata), tanpa tanda bintang (**), tanpa poin-poin.
+4. Langsung mulai dari kalimat narasi.`;
+
+    const rawResult = await callGeminiAi(prompt, 0.3);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText });
+  } catch (error: any) {
+    console.error("[ElementaryMonthlyAI:sel] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan. Silakan gunakan draf manual."
+    });
+  }
+});
+
+// POST /api/elementary/monthly/refine-narrative
+app.post("/api/elementary/monthly/refine-narrative", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing bearer token." });
+    }
+    const token = authHeader.split("Bearer ")[1];
+    
+    let decodedToken;
+    try {
+      const getAdminAuth = (await import("firebase-admin/auth")).getAuth;
+      decodedToken = await getAdminAuth().verifyIdToken(token);
+    } catch (authErr: any) {
+      return res.status(401).json({ error: `Authentication failed: ${authErr.message}` });
+    }
+
+    const { originalText, narrativeType, studentName, nickname } = req.body;
+    if (!originalText || !originalText.trim()) {
+      return res.status(400).json({ error: "Teks narasi tidak boleh kosong." });
+    }
+
+    const prompt = `Rapikan dan sempurnakan tata bahasa, pilihan kata (diksi), serta kelancaran kalimat untuk narasi rapor bulanan Elementary (${narrativeType === 'sel' ? 'Profil Sosial Emosional' : 'Komentar Akademik'}) berikut.
+Nama Siswa: ${studentName || 'Siswa'} (Panggilan: ${nickname || studentName || 'Siswa'})
+
+Teks Asli dari Guru:
+"${originalText.trim()}"
+
+Ketentuan:
+1. Pertahankan seluruh poin penting dan maksud asli dari guru.
+2. Gunakan Bahasa Indonesia baku yang hangat, profesional, dan ramah anak.
+3. Pastikan tanda baca dan ejaan sesuai PUEBI.
+4. Jangan menambahkan tanda bintang (**) atau markdown bold.
+5. Hasilkan HANYA teks narasi hasil perapian tanpa salam pengantar atau penutup.`;
+
+    const rawResult = await callGeminiAi(prompt, 0.2);
+    const sanitizedText = sanitizeJuniorHighComment(rawResult);
+
+    res.json({ text: sanitizedText });
+  } catch (error: any) {
+    console.error("[ElementaryMonthlyAI:refine] Server error:", error);
+    res.status(500).json({
+      error: "AI belum dapat digunakan."
+    });
+  }
+});
+
 // API: Generate Weekly Core Comments from Observations
 app.post("/api/kindergarten/generate-weekly-comment", async (req, res) => {
   try {

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { 
   Settings2, Users, FileSpreadsheet, Copy, Search, Plus, 
-  Check, AlertCircle, RefreshCw, ChevronRight, Layers, Sparkles, CheckCircle2 
+  Check, AlertCircle, RefreshCw, ChevronRight, Layers, Sparkles, CheckCircle2,
+  BookOpen
 } from 'lucide-react';
 import type { 
   ElementaryMonthlyCurriculumDoc, 

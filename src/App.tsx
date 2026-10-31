@@ -140,6 +140,7 @@ import ElementaryMidtermReportPage from './pages/Elementary/Midterm/ElementaryMi
 import ElementaryMidtermSnReportPage from './pages/Elementary/MidtermSN/ElementaryMidtermSnReportPage';
 import ElementaryOtherReportPage from './pages/Elementary/OtherReportPage';
 import ElementaryMonthlyReportPage from './pages/Elementary/MonthlyReport/ElementaryMonthlyReportPage';
+import ElementaryMonthlyUpperReportPage from './pages/Elementary/MonthlyReportUpper/ElementaryMonthlyUpperReportPage';
 import QuranParticipantsPage from './pages/Elementary/QuranParticipantsPage';
 import ElementarySchoolInformationPage from './pages/Elementary/ElementarySchoolInformationPage';
 import StudentQuranPage from './pages/Student/StudentQuranPage';
@@ -515,6 +516,11 @@ export default function App() {
           <Route path="elementary/monthly-report" element={
             <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_ELEM']}>
               <ElementaryMonthlyReportPage />
+            </RoleGuard>
+          } />
+          <Route path="elementary/monthly-report-upper" element={
+            <RoleGuard roles={['SUPER_ADMIN', 'HEAD_UNIT', 'HEAD_JUNIOR', 'BK_MENTOR', 'TEACHER', 'HOMEROOM_TEACHER', 'COORDINATOR', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_ELEM']}>
+              <ElementaryMonthlyUpperReportPage />
             </RoleGuard>
           } />
           <Route path="elementary/midterm" element={
