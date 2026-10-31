@@ -2,12 +2,13 @@ import * as React from 'react';
 import { 
   Camera, Upload, Trash2, Link, Save, CheckCircle2, 
   AlertCircle, RefreshCw, Users, Copy, ExternalLink, Image as ImageIcon,
-  Check, X, Eye, FileText, Sparkles, User as UserIcon
+  Check, X, Eye, FileText, Sparkles, User as UserIcon, HardDrive
 } from 'lucide-react';
 import type { 
   ElementaryMonthlyProjectDoc, 
   ElementaryMonthlyStudentPhotoDoc,
-  ElementaryMonthlyPhotoSnapshot
+  ElementaryMonthlyPhotoSnapshot,
+  ElementaryMonthlyIdentityPhoto
 } from '../../../../types/elementaryMonthlyReport';
 import type { Student, Class, User } from '../../../../types';
 import { 
@@ -16,7 +17,9 @@ import {
   fetchElementaryMonthlyStudentPhotos,
   saveElementaryMonthlyStudentPhotoDoc,
   bulkApplyElementaryMonthlyPhotos,
-  uploadMonthlyPhoto
+  uploadElementaryMonthlyPhotoToSharedDrive,
+  verifyElementaryMonthlyDriveRoot,
+  ELEMENTARY_MONTHLY_ROOT_FOLDER_ID
 } from '../../../../services/elementaryMonthlyReportService';
 import { toast } from 'sonner';
 
@@ -59,6 +62,7 @@ export const ProjectAndPhotoTab: React.FC<ProjectAndPhotoTabProps> = ({
   // Active student draft photo states
   const activeStudentPhotoDoc = activeStudent ? photosMap[activeStudent.id] : null;
   const [studentIdentityPhoto, setStudentIdentityPhoto] = React.useState<string>('');
+  const [identityPhotoMeta, setIdentityPhotoMeta] = React.useState<ElementaryMonthlyIdentityPhoto | null>(null);
   const [snapshots, setSnapshots] = React.useState<[ElementaryMonthlyPhotoSnapshot, ElementaryMonthlyPhotoSnapshot, ElementaryMonthlyPhotoSnapshot]>([
     { index: 0, url: '', caption: '' },
     { index: 1, url: '', caption: '' },
@@ -67,6 +71,12 @@ export const ProjectAndPhotoTab: React.FC<ProjectAndPhotoTabProps> = ({
   const [studentAlbumLink, setStudentAlbumLink] = React.useState<string>('');
   const [savingStudentPhotos, setSavingStudentPhotos] = React.useState<boolean>(false);
   const [uploadingSlot, setUploadingSlot] = React.useState<number | 'identity' | null>(null);
+
+  // Drive Root Verification State
+  const [driveStatus, setDriveStatus] = React.useState<{ checked: boolean; ok: boolean; folderName?: string; error?: string }>({
+    checked: false,
+    ok: true
+  });
 
   // Modals & Preview
   const [previewImageModal, setPreviewImageModal] = React.useState<{ url: string; title: string } | null>(null);
@@ -82,6 +92,24 @@ export const ProjectAndPhotoTab: React.FC<ProjectAndPhotoTabProps> = ({
   const [applyAlbumLink, setApplyAlbumLink] = React.useState<boolean>(true);
   const [selectedStudentIdsForBulk, setSelectedStudentIdsForBulk] = React.useState<string[]>([]);
   const [applyingBulk, setApplyingBulk] = React.useState<boolean>(false);
+
+  // Check Drive Root Access on mount
+  React.useEffect(() => {
+    let isMounted = true;
+    verifyElementaryMonthlyDriveRoot().then((res) => {
+      if (!isMounted) return;
+      setDriveStatus({
+        checked: true,
+        ok: res.ok,
+        folderName: res.folderName,
+        error: res.error
+      });
+      if (!res.ok) {
+        console.warn('[ProjectAndPhotoTab] Drive root check warning:', res.error);
+      }
+    });
+    return () => { isMounted = false; };
+  }, []);
 
   // Load Data
   const loadData = React.useCallback(async () => {
@@ -113,7 +141,8 @@ export const ProjectAndPhotoTab: React.FC<ProjectAndPhotoTabProps> = ({
   React.useEffect(() => {
     if (!activeStudent) return;
     const doc = photosMap[activeStudent.id];
-    setStudentIdentityPhoto(doc?.identityPhotoUrl || '');
+    setStudentIdentityPhoto(doc?.identityPhotoUrl || doc?.identityPhoto?.url || '');
+    setIdentityPhotoMeta(doc?.identityPhoto || null);
     setSnapshots([
       doc?.snapshots?.[0] || { index: 0, url: '', caption: '' },
       doc?.snapshots?.[1] || { index: 1, url: '', caption: '' },
@@ -159,27 +188,71 @@ export const ProjectAndPhotoTab: React.FC<ProjectAndPhotoTabProps> = ({
     }
   };
 
-  // Upload Photo for student
+  // Upload Photo for student directly to Google Shared Drive root
   const handleUploadPhoto = async (file: File, target: 'identity' | 0 | 1 | 2) => {
     if (!activeStudent || !selectedClass) return;
     setUploadingSlot(target);
     try {
-      const storagePath = `elementary/monthly/${selectedYear.replace(/\//g, '_')}/${selectedMonth}/${classId}/${activeStudent.id}_${target}_${Date.now()}.jpg`;
-      const url = await uploadMonthlyPhoto(file, storagePath);
+      const isIdentity = target === 'identity';
+      const slotName = isIdentity ? 'profile' : (`activity${target + 1}` as 'activity1' | 'activity2' | 'activity3');
+      const currentVer = isIdentity
+        ? (identityPhotoMeta?.version || 1)
+        : (snapshots[target]?.version || 0);
+      const nextVer = currentVer + 1;
 
-      if (target === 'identity') {
-        setStudentIdentityPhoto(url);
+      const uploaded = await uploadElementaryMonthlyPhotoToSharedDrive({
+        file,
+        academicYear: selectedYear,
+        gradeLevel: (selectedClass as any).gradeLevel || 1,
+        gradeCategory: 'Lower Grade',
+        classId,
+        className: selectedClass.name,
+        studentId: activeStudent.id,
+        studentName: activeStudent.name,
+        month: selectedMonth,
+        slot: slotName,
+        version: nextVer,
+        caption: !isIdentity ? snapshots[target]?.caption || '' : undefined,
+        user: currentUser
+      });
+
+      if (isIdentity) {
+        setStudentIdentityPhoto(uploaded.streamUrl);
+        setIdentityPhotoMeta({
+          url: uploaded.streamUrl,
+          driveFileId: uploaded.driveFileId,
+          folderId: uploaded.folderId,
+          fileName: uploaded.fileName,
+          mimeType: uploaded.mimeType,
+          fileSize: uploaded.fileSize,
+          version: uploaded.version,
+          uploadedBy: uploaded.uploadedBy,
+          uploadedByName: uploaded.uploadedByName,
+          uploadedAt: uploaded.uploadedAt
+        });
       } else {
         setSnapshots(prev => {
           const next = [...prev] as [ElementaryMonthlyPhotoSnapshot, ElementaryMonthlyPhotoSnapshot, ElementaryMonthlyPhotoSnapshot];
-          next[target] = { ...next[target], url };
+          next[target] = {
+            ...next[target],
+            url: uploaded.streamUrl,
+            driveFileId: uploaded.driveFileId,
+            folderId: uploaded.folderId,
+            fileName: uploaded.fileName,
+            mimeType: uploaded.mimeType,
+            fileSize: uploaded.fileSize,
+            version: uploaded.version,
+            uploadedBy: uploaded.uploadedBy,
+            uploadedByName: uploaded.uploadedByName,
+            uploadedAt: uploaded.uploadedAt
+          };
           return next;
         });
       }
-      toast.success('Foto berhasil dimuat.');
+      toast.success(`Foto ${isIdentity ? 'profil rapor' : `kegiatan #${target + 1}`} tersimpan di Google Shared Drive.`);
     } catch (err: any) {
       console.error('Error uploading photo:', err);
-      toast.error('Gagal mengunggah foto: ' + (err.message || ''));
+      toast.error('Gagal mengunggah foto ke Google Shared Drive: ' + (err.message || ''));
     } finally {
       setUploadingSlot(null);
     }
@@ -198,6 +271,7 @@ export const ProjectAndPhotoTab: React.FC<ProjectAndPhotoTabProps> = ({
         semester: selectedSemester,
         month: selectedMonth,
         identityPhotoUrl: studentIdentityPhoto.trim(),
+        identityPhoto: identityPhotoMeta || undefined,
         snapshots,
         albumLink: studentAlbumLink.trim()
       }, currentUser);

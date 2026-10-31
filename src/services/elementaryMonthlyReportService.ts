@@ -543,43 +543,172 @@ export async function compressImageToDataUrl(
   });
 }
 
+export const ELEMENTARY_MONTHLY_ROOT_FOLDER_ID = '18HrRf50BaVoID2zUJBkgu7Okn6huBhlP';
+
+export interface UploadSharedDrivePhotoParams {
+  file: File;
+  academicYear: string;
+  gradeLevel?: number;
+  gradeCategory?: 'Lower Grade' | 'Upper Grade';
+  classId: string;
+  className: string;
+  studentId: string;
+  studentName: string;
+  month: string;
+  slot: 'profile' | 'activity1' | 'activity2' | 'activity3';
+  version?: number;
+  caption?: string;
+  cropSettings?: any;
+  user?: User | null;
+}
+
+export interface SharedDrivePhotoUploadResult {
+  driveFileId: string;
+  folderId: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  version: number;
+  slot: string;
+  streamUrl: string;
+  caption?: string;
+  cropSettings?: any;
+  uploadedBy?: string;
+  uploadedByName?: string;
+  uploadedAt: number;
+}
+
 /**
- * Uploads an image file to Firebase Storage if available, or returns compressed base64 data URL as reliable fallback.
+ * Verifies accessibility of Google Shared Drive root folder (18HrRf50BaVoID2zUJBkgu7Okn6huBhlP).
  */
-export async function uploadMonthlyPhoto(
-  file: File,
-  storagePath: string
-): Promise<string> {
-  // Validate file size (max 10MB input before compression)
+export async function verifyElementaryMonthlyDriveRoot(): Promise<{
+  ok: boolean;
+  folderName?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/elementary-monthly/verify-root', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { ok: false, error: data.error || 'Akses Google Shared Drive ditolak.' };
+    }
+    return { ok: true, folderName: data.name };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'Gagal menghubungi backend untuk verifikasi Google Drive.' };
+  }
+}
+
+/**
+ * Uploads student photo directly to Google Shared Drive under root 18HrRf50BaVoID2zUJBkgu7Okn6huBhlP.
+ * Strictly adheres to hierarchy:
+ * [Root] -> [AcademicYear] -> [Lower/Upper Grade] -> [Class] -> "[StudentName] - [Class] - [studentId]" -> [YYYY-MM]
+ * File naming: "${studentName} - ${className} - ${slot} - v${version}_${uniqueSuffix}.${ext}"
+ */
+export async function uploadElementaryMonthlyPhotoToSharedDrive(
+  params: UploadSharedDrivePhotoParams
+): Promise<SharedDrivePhotoUploadResult> {
+  const {
+    file,
+    academicYear,
+    gradeLevel,
+    gradeCategory,
+    classId,
+    className,
+    studentId,
+    studentName,
+    month,
+    slot,
+    version = 1,
+    caption = '',
+    cropSettings = null,
+    user
+  } = params;
+
   if (file.size > 10 * 1024 * 1024) {
     throw new Error('Ukuran berkas gambar maksimal 10MB.');
   }
 
-  // Validate MIME type
   if (!file.type.startsWith('image/')) {
     throw new Error('Hanya berkas gambar (JPG, PNG, WebP) yang diperbolehkan.');
   }
 
+  // Compress image client-side before sending to server
   const compressedDataUrl = await compressImageToDataUrl(file);
 
-  try {
-    const { storage, ref, uploadBytes, getDownloadURL } = await import('../lib/firebase');
-    if (storage) {
-      // Convert data URL to Blob for storage upload
-      const res = await fetch(compressedDataUrl);
-      const blob = await res.blob();
-      const storageRef = ref(storage, storagePath);
-      const snapshot = await uploadBytes(storageRef, blob, {
-        contentType: 'image/jpeg'
-      });
-      const downloadUrl = await getDownloadURL(snapshot.ref);
-      return downloadUrl;
-    }
-  } catch (storageErr) {
-    console.warn('[uploadMonthlyPhoto] Firebase Storage upload skipped/failed, using optimized data URL:', storageErr);
+  const payload = {
+    base64: compressedDataUrl,
+    academicYear,
+    gradeLevel,
+    gradeCategory,
+    classId,
+    className,
+    studentId,
+    studentName,
+    month,
+    slot,
+    version,
+    caption,
+    cropSettings,
+    uploadedBy: user?.uid || (user as any)?.id || 'unknown',
+    uploadedByName: user?.displayName || (user as any)?.name || 'Guru'
+  };
+
+  const response = await fetch('/api/elementary-monthly/upload-photo', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errorJson = await response.json().catch(() => ({}));
+    throw new Error(errorJson.error || `Upload foto ke Google Shared Drive gagal (HTTP ${response.status}).`);
   }
 
-  return compressedDataUrl;
+  const result = await response.json();
+  if (!result.success || !result.photo) {
+    throw new Error(result.error || 'Upload foto ke Google Shared Drive tidak mengembalikan data berkas.');
+  }
+
+  return result.photo;
+}
+
+/**
+ * Converts an image URL (such as authenticated stream URL or data URL) into a base64 Data URL
+ * to be safely embedded into PDF canvases without requiring external Drive access for the PDF viewer.
+ */
+export async function convertImageUrlToBase64(url: string): Promise<string> {
+  if (!url) return '';
+  if (url.startsWith('data:image/')) return url;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn('[convertImageUrlToBase64] Could not convert URL to base64, returning original:', err);
+    return url;
+  }
+}
+
+/**
+ * Legacy upload helper retained for backward compatibility with existing components if needed.
+ */
+export async function uploadMonthlyPhoto(
+  file: File,
+  _storagePath?: string
+): Promise<string> {
+  return await compressImageToDataUrl(file);
 }
 
 /**
@@ -772,7 +901,17 @@ export async function bulkApplyElementaryMonthlyPhotos(params: {
           mergedSnapshots[s.index] = {
             index: s.index,
             url: s.url !== undefined ? s.url : mergedSnapshots[s.index].url,
-            caption: s.caption !== undefined ? s.caption : mergedSnapshots[s.index].caption
+            caption: s.caption !== undefined ? s.caption : mergedSnapshots[s.index].caption,
+            driveFileId: (s as any).driveFileId ?? mergedSnapshots[s.index].driveFileId,
+            folderId: (s as any).folderId ?? mergedSnapshots[s.index].folderId,
+            fileName: (s as any).fileName ?? mergedSnapshots[s.index].fileName,
+            mimeType: (s as any).mimeType ?? mergedSnapshots[s.index].mimeType,
+            fileSize: (s as any).fileSize ?? mergedSnapshots[s.index].fileSize,
+            version: (s as any).version ?? mergedSnapshots[s.index].version,
+            cropSettings: (s as any).cropSettings ?? mergedSnapshots[s.index].cropSettings,
+            uploadedBy: (s as any).uploadedBy ?? mergedSnapshots[s.index].uploadedBy,
+            uploadedByName: (s as any).uploadedByName ?? mergedSnapshots[s.index].uploadedByName,
+            uploadedAt: (s as any).uploadedAt ?? mergedSnapshots[s.index].uploadedAt
           };
         }
       });

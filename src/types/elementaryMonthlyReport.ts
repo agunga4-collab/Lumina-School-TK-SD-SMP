@@ -176,10 +176,41 @@ export interface ElementaryMonthlyProjectDoc {
   updatedByName?: string;
 }
 
+export interface ElementaryMonthlyCropSettings {
+  x?: number;
+  y?: number;
+  zoom?: number;
+  aspectRatio?: number;
+}
+
 export interface ElementaryMonthlyPhotoSnapshot {
   index: number; // 0, 1, 2
-  url: string; // Storage URL or compressed data URL
+  url: string; // Storage URL or authenticated streaming URL e.g. /api/elementary-monthly/photo-stream/:fileId
   caption: string;
+  driveFileId?: string;
+  folderId?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+  version?: number;
+  cropSettings?: ElementaryMonthlyCropSettings;
+  uploadedBy?: string;
+  uploadedByName?: string;
+  uploadedAt?: number;
+}
+
+export interface ElementaryMonthlyIdentityPhoto {
+  url?: string;
+  driveFileId?: string;
+  folderId?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+  version?: number;
+  cropSettings?: ElementaryMonthlyCropSettings;
+  uploadedBy?: string;
+  uploadedByName?: string;
+  uploadedAt?: number;
 }
 
 export interface ElementaryMonthlyStudentPhotoDoc {
@@ -191,6 +222,7 @@ export interface ElementaryMonthlyStudentPhotoDoc {
   semester: string;
   month: string; // 'YYYY-MM'
   identityPhotoUrl?: string; // Optional custom photo for this report
+  identityPhoto?: ElementaryMonthlyIdentityPhoto; // Shared Drive photo metadata
   snapshots: [
     ElementaryMonthlyPhotoSnapshot,
     ElementaryMonthlyPhotoSnapshot,

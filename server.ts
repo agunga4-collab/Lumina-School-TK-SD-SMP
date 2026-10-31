@@ -13,6 +13,7 @@ import crypto from "crypto";
 import { uploadPlanPhoto, getPlanPhotoBase64 } from "./src/lib/googleDrive";
 import { handleStudentLearningProgress } from "./server/studentLearningProgress.server";
 import { handleStudentLpuLevels, isStudentLpuLevelsRequest } from "./server/studentLpuLevels.server";
+import { elementaryMonthlyPhotoRouter } from "./server/elementaryMonthlyDrivePhoto.server";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -29,6 +30,8 @@ app.use((req, res, next) => {
 app.all("/api/student-learning-progress", (req, res) => {
   void handleStudentLearningProgress(req, res);
 });
+
+app.use("/api/elementary-monthly", elementaryMonthlyPhotoRouter);
 
 // --- Firebase Admin Initialization ---
 try {
