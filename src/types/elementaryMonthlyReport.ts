@@ -253,6 +253,32 @@ export type ElementaryMonthlyReviewStatus =
   | 'APPROVED' 
   | 'NEEDS_REVISION';
 
+export interface ElementaryMonthlyAcademicSource {
+  opening?: string;
+  subjectComments?: Record<string, string>; // subjectId -> comment
+  closing?: string;
+  lastAssembledText?: string;
+  isManuallyEdited?: boolean;
+}
+
+export interface ElementaryMonthlySelAspectSelection {
+  mode?: 'template' | 'custom';
+  templateId?: string;
+  selectedText?: string;
+  customText?: string;
+  teacherNote?: string;
+}
+
+export interface ElementaryMonthlySelSource {
+  gradeLevel?: number;
+  templateVersion?: string;
+  opening?: string;
+  aspects?: Record<string, ElementaryMonthlySelAspectSelection>; // aspectKey -> selection
+  closing?: string;
+  lastAssembledText?: string;
+  isManuallyEdited?: boolean;
+}
+
 export interface ElementaryMonthlyStudentNarrativeDoc {
   id: string; // `${studentId}_${classId}_${normYear}_S${semester}_M${month}`
   studentId: string;
@@ -263,12 +289,14 @@ export interface ElementaryMonthlyStudentNarrativeDoc {
   month: string; // 'YYYY-MM'
   
   // 1. Academic Comments (berdasarkan LG/LO, nilai angka, ADB, catatan guru)
-  academicComment: string;
+  academicComment: string; // Final rendered text
   academicDraft?: string;
+  academicSource?: ElementaryMonthlyAcademicSource; // Structured teacher input
   
   // 2. Social Emotional Profile (SEL, fokus bulanan & observasi)
-  selProfile: string;
+  selProfile: string; // Final rendered text
   selDraft?: string;
+  selSource?: ElementaryMonthlySelSource; // Structured teacher input
   
   // Single Review Package covering both narratives
   reviewStatus: ElementaryMonthlyReviewStatus;

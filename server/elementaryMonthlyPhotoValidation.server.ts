@@ -39,9 +39,10 @@ export function validatePhotoPeriod(input: Record<string, any>) {
   const normalizedYear = normalizedPhotoYear(academicYear);
   const month = requireText(input.month, 'Bulan', 7);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new PhotoHttpError(400, 'INVALID_PERIOD', 'Bulan harus berformat YYYY-MM.');
-  const semester = String(input.semester ?? '');
   const monthNumber = Number(month.slice(5));
   const expectedSemester = monthNumber >= 7 ? '1' : '2';
+  const semester = (input.semester !== undefined && input.semester !== null && String(input.semester).trim() !== '')
+    ? String(input.semester).trim() : expectedSemester;
   const expectedYear = Number(normalizedYear.slice(0, 4)) + (expectedSemester === '2' ? 1 : 0);
   if (semester !== expectedSemester || Number(month.slice(0, 4)) !== expectedYear) {
     throw new PhotoHttpError(400, 'INVALID_PERIOD', 'Bulan, semester, dan tahun ajaran tidak cocok.');

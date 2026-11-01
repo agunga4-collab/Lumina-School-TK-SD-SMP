@@ -356,6 +356,7 @@ const mockNarrativeApproved = {
   selProfile: 'Ananda menunjukkan empati dan kemandirian yang tinggi di kelas.',
   reviewStatus: 'APPROVED' as any,
   isSourceStale: false,
+  lastScoresHash: 'lo1:85|lo2:90',
   approvedByName: 'Head Unit Elementary',
   createdAt: 0,
   createdBy: '',
