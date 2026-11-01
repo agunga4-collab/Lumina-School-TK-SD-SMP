@@ -15,6 +15,7 @@ import type {
   LGAverageResult,
 } from '../types/elementaryMonthlyReport';
 import type { Class, ReportConfig, User } from '../types';
+import { resolveElementaryMonthlyIdentityPhoto } from './elementaryMonthlyPhoto';
 
 export { ELEMENTARY_MONTHLY_TEMPLATE_VERSION } from '../types/elementaryMonthlyReport';
 
@@ -116,7 +117,7 @@ export function buildElementaryMonthlyAttendanceSummary(
 }
 
 export interface BuildElementaryMonthlyReportSnapshotParams {
-  student: { id: string; name: string; nisn?: string; nis?: string };
+  student: { id: string; name: string; nisn?: string; nis?: string; photoUrl?: string };
   classId: string;
   className: string;
   gradeLevel: number;
@@ -160,6 +161,7 @@ export function buildElementaryMonthlyReportSnapshot(
     }
   }
   const sourceSnapshots = photoDoc?.snapshots || [];
+  const identityPhoto = resolveElementaryMonthlyIdentityPhoto(photoDoc, student.photoUrl);
   const snapshots: ElementaryMonthlyReportSnapshot['photos']['snapshots'] = [
     sourceSnapshots[0] || { index: 0, url: '', caption: '' },
     sourceSnapshots[1] || { index: 1, url: '', caption: '' },
@@ -187,8 +189,9 @@ export function buildElementaryMonthlyReportSnapshot(
       sharedAlbumLink: projectDoc?.sharedAlbumLink || '',
     },
     photos: {
-      identityPhotoUrl: photoDoc?.identityPhoto?.url || photoDoc?.identityPhotoUrl || '',
-      ...(photoDoc?.identityPhoto ? { identityPhoto: photoDoc.identityPhoto } : {}),
+      identityPhotoUrl: identityPhoto?.url || '',
+      ...(identityPhoto ? { identityPhoto } : {}),
+      identityPhotoSource: identityPhoto?.url && identityPhoto.url === student.photoUrl?.trim() ? 'master' : 'monthly',
       snapshots,
       albumLink: photoDoc?.albumLink || '',
     },

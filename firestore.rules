@@ -2070,12 +2070,30 @@ service cloud.firestore {
     }
 
     match /elem_monthly_student_photos/{docId} {
+      // Lower photo writes go through the authenticated backend so file bindings,
+      // revisions, actor identity and per-class access cannot be bypassed.
+      // Keep the existing direct-write path for actual Upper Grade classes.
+      function isMonthlyUpperPhotoClass(data) {
+        let classData = get(/databases/$(database)/documents/classes/$(data.classId)).data;
+        let grade = classData.get('grade', classData.get('gradeLevel', null));
+        let emptyGrade = grade == null || (grade is string && grade.matches('^\\s*$'));
+        return classData.unitId == 'ELEMENTARY' && (
+          grade in ['4', '5', '6', 4, 5, 6] ||
+          (emptyGrade && classData.get('name', '').lower().matches('^(?:(?:grade|class|kelas)\\s*[:.-]?\\s*)?[4-6](?:\\s|[-–—.]|[a-z]\\b|$).*'))
+        );
+      }
       allow read: if isActive() && (
         isElementaryStaff() ||
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
-      allow write: if isActive() && isElementaryStaff();
+      allow create: if isActive() && isElementaryStaff() &&
+        isMonthlyUpperPhotoClass(request.resource.data);
+      allow update: if isActive() && isElementaryStaff() &&
+        isMonthlyUpperPhotoClass(resource.data) && isMonthlyUpperPhotoClass(request.resource.data) &&
+        request.resource.data.classId == resource.data.classId &&
+        request.resource.data.studentId == resource.data.studentId;
+      allow delete: if isActive() && isElementaryStaff() && isMonthlyUpperPhotoClass(resource.data);
     }
 
     match /elem_monthly_student_narratives/{docId} {

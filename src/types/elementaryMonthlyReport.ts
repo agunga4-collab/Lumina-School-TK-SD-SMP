@@ -177,8 +177,12 @@ export interface ElementaryMonthlyProjectDoc {
 }
 
 export interface ElementaryMonthlyCropSettings {
+  /** Explicit fit marks the new, teacher-controlled crop format. */
+  fit?: 'contain' | 'cover';
+  /** Position within the frame in percent (0 to 100). */
   x?: number;
   y?: number;
+  /** Scale from 1 to 3; only used for cover. */
   zoom?: number;
   aspectRatio?: number;
 }
@@ -222,13 +226,15 @@ export interface ElementaryMonthlyStudentPhotoDoc {
   semester: string;
   month: string; // 'YYYY-MM'
   identityPhotoUrl?: string; // Optional custom photo for this report
-  identityPhoto?: ElementaryMonthlyIdentityPhoto; // Shared Drive photo metadata
+  identityPhoto?: ElementaryMonthlyIdentityPhoto | null; // null resets the monthly override
   snapshots: [
     ElementaryMonthlyPhotoSnapshot,
     ElementaryMonthlyPhotoSnapshot,
     ElementaryMonthlyPhotoSnapshot
   ];
   albumLink?: string;
+  /** Server revision; legacy documents without a revision start at zero. */
+  revision?: number;
   createdAt: number;
   createdBy: string;
   createdByName?: string;
@@ -371,6 +377,8 @@ export interface ElementaryMonthlyReportSnapshot {
   photos: {
     identityPhotoUrl?: string;
     identityPhoto?: ElementaryMonthlyIdentityPhoto;
+    /** Source is frozen for new reports so a later master-photo change cannot alter archive access. */
+    identityPhotoSource?: 'monthly' | 'master';
     snapshots: [
       ElementaryMonthlyPhotoSnapshot,
       ElementaryMonthlyPhotoSnapshot,
@@ -440,7 +448,7 @@ export interface ElementaryMonthlyPublishValidationResult {
   warnings: string[];
 }
 
-export const ELEMENTARY_MONTHLY_TEMPLATE_VERSION = 'elementary-monthly-lower-v2';
+export const ELEMENTARY_MONTHLY_TEMPLATE_VERSION = 'elementary-monthly-lower-v3-photos';
 
 /**
  * Pre-publish validation gate for Elementary Lower Grade Monthly Report.
@@ -454,7 +462,7 @@ export const ELEMENTARY_MONTHLY_TEMPLATE_VERSION = 'elementary-monthly-lower-v2'
  * 7. Titimangsa / signing date must be valid.
  */
 export function validateElementaryMonthlyPublishEligibility(params: {
-  student: { id: string; name: string };
+  student: { id: string; name: string; photoUrl?: string };
   curriculumDoc: ElementaryMonthlyCurriculumDoc | null;
   studentScoreDoc: ElementaryMonthlyStudentScoreDoc | null;
   narrativeDoc: ElementaryMonthlyStudentNarrativeDoc | null;
@@ -582,7 +590,7 @@ export function validateElementaryMonthlyPublishEligibility(params: {
   if (!photoDoc) {
     blockingReasons.push('Dokumentasi foto siswa belum diunggah.');
   } else {
-    if (!(photoDoc.identityPhoto?.url || photoDoc.identityPhotoUrl || '').trim()) {
+    if (!(photoDoc.identityPhoto?.url || photoDoc.identityPhotoUrl || params.student.photoUrl || '').trim()) {
       blockingReasons.push('Foto identitas siswa wajib tersedia.');
     }
     const snapshots = photoDoc.snapshots || [];

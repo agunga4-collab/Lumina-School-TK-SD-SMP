@@ -13,7 +13,9 @@ import {
 import type { 
   ElementaryMonthlyCurriculumDoc, 
   ElementaryMonthlyStudentScoreDoc, 
-  ElementaryMonthlySubject 
+  ElementaryMonthlySubject,
+  ElementaryMonthlyStudentPhotoDoc,
+  ElementaryMonthlyCropSettings
 } from '../types/elementaryMonthlyReport';
 import type { User, Student, Class } from '../types';
 import {
@@ -22,6 +24,9 @@ import {
   resolveElementaryMonthlyLogo,
   resolveElementaryMonthlySignatory
 } from '../lib/elementaryMonthlyReportModel';
+import { resolveElementaryMonthlyImage } from '../lib/elementaryMonthlyReportRender';
+import type { ElementaryMonthlyAssetScope } from '../lib/elementaryMonthlyReportRender';
+import { DEFAULT_ELEMENTARY_MONTHLY_CROP } from '../lib/elementaryMonthlyPhoto';
 
 type ElementaryMonthlyWriteInput<T extends {
   id: string;
@@ -523,37 +528,47 @@ export async function compressImageToDataUrl(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Gagal membaca berkas gambar.'));
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Format berkas gambar tidak valid atau rusak.'));
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
-
-        if (width > maxWidth || height > maxHeight) {
-          const ratio = Math.min(maxWidth / width, maxHeight / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          // Fallback to raw data url if canvas is not available
-          return resolve(e.target?.result as string);
-        }
-
-        ctx.drawImage(img, 0, 0, width, height);
-        const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(compressedDataUrl);
-      };
-      img.src = e.target?.result as string;
+    const img = new Image();
+    let settled = false;
+    const finish = (error?: Error, value?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reader.onload = null;
+      reader.onerror = null;
+      img.onload = null;
+      img.onerror = null;
+      if (error) reject(error);
+      else resolve(value!);
     };
-    reader.readAsDataURL(file);
+    const timer = setTimeout(() => {
+      finish(new Error('Foto belum selesai dibaca dalam 30 detik. Pilih kembali berkas gambar yang valid.'));
+      if (reader.readyState === FileReader.LOADING) reader.abort();
+    }, 30000);
+    reader.onerror = () => finish(new Error('Gagal membaca berkas gambar.'));
+    img.onerror = () => finish(new Error('Format berkas gambar tidak valid atau rusak.'));
+    reader.onload = () => { img.src = String(reader.result || ''); };
+    img.onload = () => {
+      try {
+        if (img.naturalWidth <= 0 || img.naturalHeight <= 0) throw new Error('Dimensi foto tidak valid.');
+        const ratio = Math.min(1, maxWidth / img.naturalWidth, maxHeight / img.naturalHeight);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * ratio));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * ratio));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Browser tidak menyediakan kompresi gambar. Coba browser yang mendukung canvas.');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const compressed = canvas.toDataURL('image/jpeg', quality);
+        if (!compressed.startsWith('data:image/jpeg;base64,')) throw new Error('Kompresi foto ke JPEG gagal.');
+        finish(undefined, compressed);
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error('Foto tidak dapat dikompresi.'));
+      }
+    };
+    try { reader.readAsDataURL(file); }
+    catch (error) { finish(error instanceof Error ? error : new Error('Berkas foto tidak dapat dibaca.')); }
   });
 }
 
@@ -562,6 +577,7 @@ export const ELEMENTARY_MONTHLY_ROOT_FOLDER_ID = '18HrRf50BaVoID2zUJBkgu7Okn6huB
 export interface UploadSharedDrivePhotoParams {
   file: File;
   academicYear: string;
+  semester: string;
   gradeLevel?: number;
   gradeCategory?: 'Lower Grade' | 'Upper Grade';
   classId: string;
@@ -571,8 +587,10 @@ export interface UploadSharedDrivePhotoParams {
   month: string;
   slot: 'profile' | 'activity1' | 'activity2' | 'activity3';
   version?: number;
+  operationId: string;
+  expectedRevision: number;
   caption?: string;
-  cropSettings?: any;
+  cropSettings?: ElementaryMonthlyCropSettings;
   user?: User | null;
 }
 
@@ -586,29 +604,98 @@ export interface SharedDrivePhotoUploadResult {
   slot: string;
   streamUrl: string;
   caption?: string;
-  cropSettings?: any;
+  cropSettings?: ElementaryMonthlyCropSettings;
   uploadedBy?: string;
   uploadedByName?: string;
   uploadedAt: number;
+  photoDoc: ElementaryMonthlyStudentPhotoDoc;
+}
+
+export class ElementaryMonthlyPhotoError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly status: number;
+  readonly operationId?: string;
+  readonly driveFileId?: string;
+
+  constructor(message: string, details: {
+    code?: string; retryable?: boolean; status?: number; operationId?: string; driveFileId?: string;
+  } = {}) {
+    super(message);
+    this.name = 'ElementaryMonthlyPhotoError';
+    this.code = details.code || 'PHOTO_ERROR';
+    this.retryable = details.retryable ?? false;
+    this.status = details.status || 0;
+    this.operationId = details.operationId;
+    this.driveFileId = details.driveFileId;
+  }
+}
+
+/** The verified token, never an actor ID supplied in JSON, establishes the caller. */
+async function requestElementaryMonthlyPhoto<T>(path: string, payload: unknown): Promise<T> {
+  const user = auth.currentUser;
+  if (!user) throw new ElementaryMonthlyPhotoError('Sesi login berakhir. Masuk kembali untuk menyimpan foto.', { code: 'AUTH_REQUIRED', status: 401 });
+  let token: string;
+  try {
+    token = await user.getIdToken();
+  } catch {
+    throw new ElementaryMonthlyPhotoError('Sesi login belum dapat diverifikasi. Coba lagi setelah koneksi pulih.', { code: 'AUTH_UNAVAILABLE', retryable: true });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  try {
+    const response = await fetch(`/api/elementary-monthly${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.success) {
+      throw new ElementaryMonthlyPhotoError(result?.error || `Permintaan foto gagal (HTTP ${response.status}).`, {
+        code: result?.code || (response.status === 409 ? 'PHOTO_CONFLICT' : 'PHOTO_REQUEST_FAILED'),
+        status: response.status,
+        retryable: Boolean(result?.retryable ?? (response.status >= 500 || response.status === 408 || response.status === 429)),
+        operationId: result?.operationId,
+        driveFileId: result?.driveFileId,
+      });
+    }
+    return result as T;
+  } catch (error) {
+    if (error instanceof ElementaryMonthlyPhotoError) throw error;
+    throw new ElementaryMonthlyPhotoError(
+      'Respons penyimpanan foto belum diterima. Gunakan Coba Lagi untuk melanjutkan operasi yang sama.',
+      { code: 'NETWORK_ERROR', retryable: true },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** UI uses the same authenticated asset resolver as Preview/PDF; bytes stay temporary. */
+export async function fetchElementaryMonthlyPhotoBlob(
+  url: string,
+  scope: ElementaryMonthlyAssetScope,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const dataUrl = await resolveElementaryMonthlyImage(url, scope, signal);
+  if (!dataUrl) throw new Error('Sumber foto kosong.');
+  const response = await fetch(dataUrl, { signal });
+  const blob = await response.blob();
+  if (!blob.size || !blob.type.startsWith('image/')) throw new Error('Foto tidak dapat dibaca.');
+  return blob;
 }
 
 /**
  * Verifies accessibility of Google Shared Drive root folder (18HrRf50BaVoID2zUJBkgu7Okn6huBhlP).
  */
-export async function verifyElementaryMonthlyDriveRoot(): Promise<{
+export async function verifyElementaryMonthlyDriveRoot(scope: Omit<ElementaryMonthlyAssetScope, 'studentId'>): Promise<{
   ok: boolean;
   folderName?: string;
   error?: string;
 }> {
   try {
-    const res = await fetch('/api/elementary-monthly/verify-root', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { ok: false, error: data.error || 'Akses Google Shared Drive ditolak.' };
-    }
+    const data = await requestElementaryMonthlyPhoto<{ success: true; name: string }>('/verify-root', scope);
     return { ok: true, folderName: data.name };
   } catch (err: any) {
     return { ok: false, error: err.message || 'Gagal menghubungi backend untuk verifikasi Google Drive.' };
@@ -627,6 +714,7 @@ export async function uploadElementaryMonthlyPhotoToSharedDrive(
   const {
     file,
     academicYear,
+    semester,
     gradeLevel,
     gradeCategory,
     classId,
@@ -635,26 +723,33 @@ export async function uploadElementaryMonthlyPhotoToSharedDrive(
     studentName,
     month,
     slot,
-    version = 1,
+    operationId,
+    expectedRevision,
     caption = '',
-    cropSettings = null,
-    user
+    cropSettings = { ...DEFAULT_ELEMENTARY_MONTHLY_CROP }
   } = params;
 
   if (file.size > 10 * 1024 * 1024) {
-    throw new Error('Ukuran berkas gambar maksimal 10MB.');
+    throw new ElementaryMonthlyPhotoError('Ukuran berkas gambar maksimal 10MB.', { code: 'INVALID_PHOTO_FILE' });
   }
 
   if (!file.type.startsWith('image/')) {
-    throw new Error('Hanya berkas gambar (JPG, PNG, WebP) yang diperbolehkan.');
+    throw new ElementaryMonthlyPhotoError('Hanya berkas gambar yang dapat dibaca browser yang diperbolehkan.', { code: 'INVALID_PHOTO_FILE' });
   }
+  if (!operationId || !semester) throw new ElementaryMonthlyPhotoError('Identitas operasi dan semester diperlukan.', { code: 'INVALID_PHOTO_CONTEXT' });
 
   // Compress image client-side before sending to server
-  const compressedDataUrl = await compressImageToDataUrl(file);
+  let compressedDataUrl: string;
+  try {
+    compressedDataUrl = await compressImageToDataUrl(file);
+  } catch (error) {
+    throw new ElementaryMonthlyPhotoError(error instanceof Error ? error.message : 'Kompresi foto gagal.', { code: 'PHOTO_COMPRESSION_FAILED' });
+  }
 
   const payload = {
     base64: compressedDataUrl,
     academicYear,
+    semester,
     gradeLevel,
     gradeCategory,
     classId,
@@ -663,32 +758,22 @@ export async function uploadElementaryMonthlyPhotoToSharedDrive(
     studentName,
     month,
     slot,
-    version,
+    operationId,
+    expectedRevision,
     caption,
-    cropSettings,
-    uploadedBy: user?.uid || (user as any)?.id || 'unknown',
-    uploadedByName: user?.displayName || (user as any)?.name || 'Guru'
+    cropSettings
   };
-
-  const response = await fetch('/api/elementary-monthly/upload-photo', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    const errorJson = await response.json().catch(() => ({}));
-    throw new Error(errorJson.error || `Upload foto ke Google Shared Drive gagal (HTTP ${response.status}).`);
+  const result = await requestElementaryMonthlyPhoto<{
+    photo: Omit<SharedDrivePhotoUploadResult, 'photoDoc'>;
+    photoDoc: ElementaryMonthlyStudentPhotoDoc;
+  }>('/upload-photo', payload);
+  if (!result.photo?.driveFileId || !result.photoDoc) {
+    throw new ElementaryMonthlyPhotoError('Respons upload belum memuat referensi foto siswa. Coba lagi dengan operasi yang sama.', {
+      code: 'PHOTO_METADATA_PENDING', retryable: true, operationId,
+      driveFileId: result.photo?.driveFileId,
+    });
   }
-
-  const result = await response.json();
-  if (!result.success || !result.photo) {
-    throw new Error(result.error || 'Upload foto ke Google Shared Drive tidak mengembalikan data berkas.');
-  }
-
-  return result.photo;
+  return { ...result.photo, photoDoc: result.photoDoc };
 }
 
 /**
@@ -812,7 +897,7 @@ export async function fetchElementaryMonthlyStudentPhotos(
     return map;
   } catch (err: any) {
     handleFirestoreError(err, 'list', 'elem_monthly_student_photos');
-    return {};
+    throw err;
   }
 }
 
@@ -820,139 +905,62 @@ export async function fetchElementaryMonthlyStudentPhotos(
  * Saves photo documentation for a single student.
  */
 export async function saveElementaryMonthlyStudentPhotoDoc(
-  photoDoc: ElementaryMonthlyWriteInput<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentPhotoDoc>,
-  user?: User | null
-): Promise<void> {
-  try {
-    const docId = buildMonthlyStudentPhotoDocId(
-      photoDoc.studentId,
-      photoDoc.classId,
-      photoDoc.academicYear,
-      photoDoc.semester,
-      photoDoc.month
-    );
-    const docRef = doc(db, 'elem_monthly_student_photos', docId);
+  photoDoc: ElementaryMonthlyWriteInput<ElementaryMonthlyStudentPhotoDoc>,
+  _user?: User | null,
+  expectedRevision = photoDoc.revision ?? 0,
+): Promise<ElementaryMonthlyStudentPhotoDoc> {
+  const result = await requestElementaryMonthlyPhoto<{ photoDoc: ElementaryMonthlyStudentPhotoDoc }>(
+    '/save-photos', { photoDoc, expectedRevision },
+  );
+  if (!result.photoDoc) throw new ElementaryMonthlyPhotoError('Respons penyimpanan foto tidak lengkap.', { code: 'INVALID_PHOTO_RESPONSE', retryable: true });
+  return result.photoDoc;
+}
 
-    const now = Date.now();
-    const userId = user?.uid || (user as any)?.id || 'unknown';
-    const userName = user?.displayName || (user as any)?.name || 'Guru';
-
-    const payload: import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentPhotoDoc = {
-      ...photoDoc,
-      id: docId,
-      createdAt: photoDoc.createdAt || now,
-      createdBy: photoDoc.createdBy || userId,
-      createdByName: photoDoc.createdByName || userName,
-      updatedAt: now,
-      updatedBy: userId,
-      updatedByName: userName
-    };
-
-    await setDoc(docRef, payload, { merge: true });
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', `elem_monthly_student_photos/${photoDoc.studentId}`);
-    throw err;
-  }
+export interface ElementaryMonthlyBulkPhotoResult {
+  count: number;
+  photoDocs: Record<string, ElementaryMonthlyStudentPhotoDoc>;
+  skipped: Array<{ studentId: string; index: number; reason: string }>;
 }
 
 /**
- * Bulk applies photos, captions, and/or album link to selected students.
- * Maintains individual editability per student.
+ * Source and targets are re-read in one server transaction. The default keeps
+ * populated individual slots; replacing them requires the explicit UI choice.
  */
 export async function bulkApplyElementaryMonthlyPhotos(params: {
   classId: string;
   academicYear: string;
   semester: string;
   month: string;
+  sourceStudentId: string;
+  sourceRevision: number;
+  snapshotIndices: number[];
   targetStudentIds: string[];
-  students: Student[];
-  snapshotsToApply: { index: number; url: string; caption: string }[];
-  albumLinkToApply?: string;
-  existingPhotosMap: Record<string, import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentPhotoDoc>;
+  applyAlbumLink: boolean;
+  mode: 'skip-existing' | 'replace';
+  replacementConfirmed: boolean;
+  existingPhotosMap: Record<string, ElementaryMonthlyStudentPhotoDoc>;
+  students?: Student[];
   user?: User | null;
-}): Promise<number> {
-  const {
-    classId, academicYear, semester, month,
-    targetStudentIds, students, snapshotsToApply,
-    albumLinkToApply, existingPhotosMap, user
-  } = params;
-
-  try {
-    const batch = writeBatch(db);
-    const now = Date.now();
-    const userId = user?.uid || (user as any)?.id || 'unknown';
-    const userName = user?.displayName || (user as any)?.name || 'Guru';
-    let count = 0;
-
-    for (const student of students) {
-      if (!targetStudentIds.includes(student.id)) continue;
-
-      const docId = buildMonthlyStudentPhotoDocId(student.id, classId, academicYear, semester, month);
-      const docRef = doc(db, 'elem_monthly_student_photos', docId);
-      const existing = existingPhotosMap[student.id];
-
-      // Merge snapshots: replace only the ones provided in snapshotsToApply
-      const mergedSnapshots: [
-        import('../types/elementaryMonthlyReport').ElementaryMonthlyPhotoSnapshot,
-        import('../types/elementaryMonthlyReport').ElementaryMonthlyPhotoSnapshot,
-        import('../types/elementaryMonthlyReport').ElementaryMonthlyPhotoSnapshot
-      ] = [
-        existing?.snapshots?.[0] || { index: 0, url: '', caption: '' },
-        existing?.snapshots?.[1] || { index: 1, url: '', caption: '' },
-        existing?.snapshots?.[2] || { index: 2, url: '', caption: '' }
-      ];
-
-      snapshotsToApply.forEach(s => {
-        if (s.index >= 0 && s.index < 3) {
-          mergedSnapshots[s.index] = {
-            index: s.index,
-            url: s.url !== undefined ? s.url : mergedSnapshots[s.index].url,
-            caption: s.caption !== undefined ? s.caption : mergedSnapshots[s.index].caption,
-            driveFileId: (s as any).driveFileId ?? mergedSnapshots[s.index].driveFileId,
-            folderId: (s as any).folderId ?? mergedSnapshots[s.index].folderId,
-            fileName: (s as any).fileName ?? mergedSnapshots[s.index].fileName,
-            mimeType: (s as any).mimeType ?? mergedSnapshots[s.index].mimeType,
-            fileSize: (s as any).fileSize ?? mergedSnapshots[s.index].fileSize,
-            version: (s as any).version ?? mergedSnapshots[s.index].version,
-            cropSettings: (s as any).cropSettings ?? mergedSnapshots[s.index].cropSettings,
-            uploadedBy: (s as any).uploadedBy ?? mergedSnapshots[s.index].uploadedBy,
-            uploadedByName: (s as any).uploadedByName ?? mergedSnapshots[s.index].uploadedByName,
-            uploadedAt: (s as any).uploadedAt ?? mergedSnapshots[s.index].uploadedAt
-          };
-        }
-      });
-
-      const payload: import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentPhotoDoc = {
-        id: docId,
-        studentId: student.id,
-        studentName: student.name,
-        classId,
-        academicYear,
-        semester,
-        month,
-        identityPhotoUrl: existing?.identityPhotoUrl || '',
-        snapshots: mergedSnapshots,
-        albumLink: albumLinkToApply !== undefined ? albumLinkToApply : (existing?.albumLink || ''),
-        createdAt: existing?.createdAt || now,
-        createdBy: existing?.createdBy || userId,
-        createdByName: existing?.createdByName || userName,
-        updatedAt: now,
-        updatedBy: userId,
-        updatedByName: userName
-      };
-
-      batch.set(docRef, payload, { merge: true });
-      count++;
-    }
-
-    if (count > 0) {
-      await batch.commit();
-    }
-    return count;
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', 'elem_monthly_student_photos/bulk');
-    throw err;
+}): Promise<ElementaryMonthlyBulkPhotoResult> {
+  if (params.mode === 'replace' && !params.replacementConfirmed) {
+    throw new ElementaryMonthlyPhotoError('Konfirmasi penggantian foto individual diperlukan.', { code: 'OVERWRITE_CONFIRMATION_REQUIRED' });
   }
+  const targetStudentIds = Array.from(new Set(params.targetStudentIds)).filter(id => id !== params.sourceStudentId);
+  if (!targetStudentIds.length) return { count: 0, photoDocs: {}, skipped: [] };
+  return requestElementaryMonthlyPhoto<ElementaryMonthlyBulkPhotoResult>('/bulk-photos', {
+    classId: params.classId,
+    academicYear: params.academicYear,
+    semester: params.semester,
+    month: params.month,
+    sourceStudentId: params.sourceStudentId,
+    sourceRevision: params.sourceRevision,
+    snapshotIndices: Array.from(new Set(params.snapshotIndices)),
+    targetStudentIds,
+    applyAlbumLink: params.applyAlbumLink,
+    overwriteExisting: params.mode === 'replace',
+    replacementConfirmed: params.replacementConfirmed,
+    expectedRevisions: Object.fromEntries(targetStudentIds.map(studentId => [studentId, params.existingPhotosMap[studentId]?.revision ?? 0])),
+  });
 }
 
 // ==========================================
@@ -1477,7 +1485,6 @@ import type {
   ElementaryMonthlyReportSnapshot,
   PublishedElementaryMonthlyReportDoc,
   ElementaryMonthlyProjectDoc,
-  ElementaryMonthlyStudentPhotoDoc,
   ElementaryMonthlyStudentNarrativeDoc
 } from '../types/elementaryMonthlyReport';
 

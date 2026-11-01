@@ -166,7 +166,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
     const attSummary = calculateStudentAttendanceSummary(attendanceConfig, student.id);
     const published = publishedReportsMap[student.id] || null;
     const validation = validateElementaryMonthlyPublishEligibility({
-      student: { id: student.id, name: student.name }, curriculumDoc,
+      student: { id: student.id, name: student.name, photoUrl: student.photoUrl }, curriculumDoc,
       studentScoreDoc: scoreDoc, narrativeDoc, projectDoc, photoDoc,
       attendanceSummary: attSummary, signatory, logoUrl
     });

@@ -11,6 +11,7 @@ import type {
 } from '../../../../types/elementaryMonthlyReport';
 import { calculateLGAverageAndPredicate } from '../../../../types/elementaryMonthlyReport';
 import { buildElementaryMonthlyReportSnapshot } from '../../../../lib/elementaryMonthlyReportModel';
+import { getElementaryMonthlyPhotoStyle } from '../../../../lib/elementaryMonthlyPhoto';
 import { resolveElementaryMonthlyImage, waitForElementaryMonthlyPages } from '../../../../lib/elementaryMonthlyReportRender';
 import type { Student, Class } from '../../../../types';
 
@@ -312,7 +313,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                   <img 
                     src={resolvedImages[photos.identityPhotoUrl]} 
                     alt={studentName}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    style={getElementaryMonthlyPhotoStyle(photos.identityPhoto?.cropSettings)}
                   />
                 ) : (
                   <div style={{ textAlign: 'center', padding: '4px' }}>
@@ -636,11 +637,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                           <img 
                             src={resolvedImages[snap.url]} 
                             alt={`Project Snapshot ${idx + 1}`}
-                            style={{
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'cover'
-                            }}
+                            style={getElementaryMonthlyPhotoStyle(snap.cropSettings)}
                           />
                         ) : (
                           <div style={{ textAlign: 'center', padding: '8px', color: '#94a3b8' }}>
