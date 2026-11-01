@@ -1,3 +1,6 @@
+import { SELTemplateConfigModal } from './SELTemplateConfigModal';
+import { SELRubricEditor } from './SELRubricEditor';
+import { selSourceFingerprint } from '../../../../lib/elementaryMonthlySELBank';
 import * as React from 'react';
 import { 
   MessageSquare, Sparkles, Save, Send, CheckCircle2, 
@@ -30,9 +33,6 @@ import {
 } from '../../../../services/elementaryMonthlyReportService';
 import {
   getOfficialElementaryLowerGrade,
-  ELEMENTARY_LOWER_SEL_GRADE_ASPECTS,
-  ELEMENTARY_LOWER_SEL_ASPECT_DEFINITIONS,
-  assembleDeterministicSELNarrative,
   assembleDeterministicAcademicNarrative
 } from '../../../../lib/elementaryMonthlySELBank';
 import { toast } from 'sonner';
@@ -52,7 +52,14 @@ interface NarrativeAndApprovalTabProps {
 
 type SaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error';
 
-export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = ({
+// In-memory recovery keeps unsaved drafts separated by account, class, period and student.
+// Nothing is auto-written when navigating away or stored as school data until Save succeeds.
+const pendingNarrativeDrafts = new Map<string, any>();
+export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = props => {
+  const contextKey = JSON.stringify([props.currentUser?.uid, props.selectedClass?.id, props.selectedYear, props.selectedSemester, props.selectedMonth]);
+  return <NarrativeAndApprovalTabInner key={contextKey} {...props} />;
+};
+const NarrativeAndApprovalTabInner: React.FC<NarrativeAndApprovalTabProps> = ({
   curriculumDoc,
   studentScoresMap,
   students,
@@ -63,7 +70,17 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
   monthLabel,
   currentUser
 }) => {
+  const [showSELConfig, setShowSELConfig] = React.useState(false);
   const classId = selectedClass?.id || '';
+  const contextKey = JSON.stringify([currentUser?.uid, classId, selectedYear, selectedSemester, selectedMonth]);
+  const draftKey = (studentId: string) => `${contextKey}:${studentId}`;
+  const alive = React.useRef(true);
+  React.useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const saveInFlight = React.useRef<Promise<void> | null>(null);
+  const loadGeneration = React.useRef(0);
+  const [loadError, setLoadError] = React.useState('');
+  const [selMetadata, setSelMetadata] = React.useState<ElementaryMonthlySelSource>({});
+  const [formRevision, setFormRevision] = React.useState(0);
   const canReview = isElementaryHeadOrSuperAdmin(currentUser);
 
   // Official Lower Grade: 1, 2, or 3 (strictly no silent fallback to 1)
@@ -73,11 +90,13 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
 
   // Narratives Map in Firestore
   const [narrativesMap, setNarrativesMap] = React.useState<Record<string, ElementaryMonthlyStudentNarrativeDoc>>({});
-  const [loadingNarratives, setLoadingNarratives] = React.useState<boolean>(false);
+  const [loadingNarratives, setLoadingNarratives] = React.useState<boolean>(true);
 
   // Active Selected Student
   const [activeStudentId, setActiveStudentId] = React.useState<string>(students[0]?.id || '');
-  const activeStudent = students.find(s => s.id === activeStudentId) || students[0] || null;
+  const [hydratedStudentId, setHydratedStudentId] = React.useState('');
+  const [saveErrorMessage, setSaveErrorMessage] = React.useState('');
+  const activeStudent = students.find(s => s.id === activeStudentId) || null;
 
   // Active Student Narrative Doc
   const activeNarrative = activeStudent ? narrativesMap[activeStudent.id] : null;
@@ -112,11 +131,8 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
   // ==========================================
   // SECTION 2: SEL PROFILE STATE (DETERMINISTIC)
   // ==========================================
-  const defaultSelOpening = React.useMemo(() => {
-    return `Dalam perkembangan sosial dan emosional periode ini, ${activeStudent?.name || 'siswa'} menunjukkan proses pembiasaan karakter yang positif di lingkungan sekolah.`;
-  }, [activeStudent?.name]);
-
-  const defaultSelClosing = `Semoga ananda terus menumbuhkan potensi terbaik dan nilai-nilai kebaikan dalam keseharian di sekolah.`;
+  const defaultSelOpening = '';
+  const defaultSelClosing = '';
 
   const [selOpening, setSelOpening] = React.useState<string>(defaultSelOpening);
   const [selAspects, setSelAspects] = React.useState<Record<string, ElementaryMonthlySelAspectSelection>>({});
@@ -185,7 +201,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
 
   // Keep ref of current active student form data to protect drafts on switch
   const currentStudentFormRef = React.useRef({
-    studentId: activeStudentId,
+    studentId: hydratedStudentId,
     academicOpening,
     academicSubjectComments,
     academicClosing,
@@ -198,12 +214,14 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     selProfile,
     lastAssembledSel,
     isSelManuallyEdited,
+    selMetadata,
+    formRevision,
     hasUnsavedChanges
   });
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     currentStudentFormRef.current = {
-      studentId: activeStudentId,
+      studentId: hydratedStudentId,
       academicOpening,
       academicSubjectComments,
       academicClosing,
@@ -216,10 +234,12 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       selProfile,
       lastAssembledSel,
       isSelManuallyEdited,
+      selMetadata,
+      formRevision,
       hasUnsavedChanges
     };
   }, [
-    activeStudentId,
+    hydratedStudentId,
     academicOpening,
     academicSubjectComments,
     academicClosing,
@@ -232,21 +252,36 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     selProfile,
     lastAssembledSel,
     isSelManuallyEdited,
+    selMetadata,
+    formRevision,
     hasUnsavedChanges
   ]);
+
+  React.useLayoutEffect(() => {
+    const form = currentStudentFormRef.current;
+    if (form.hasUnsavedChanges && form.studentId) pendingNarrativeDrafts.set(draftKey(form.studentId), { ...form });
+  });
+  React.useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (pendingNarrativeDrafts.size) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
 
   // Load Narratives
   const loadNarratives = React.useCallback(async () => {
     if (!classId || !selectedYear || !selectedSemester || !selectedMonth) return;
-    setLoadingNarratives(true);
+    const generation = ++loadGeneration.current;
+    setLoadingNarratives(true); setLoadError('');
     try {
       const data = await fetchElementaryMonthlyStudentNarratives(classId, selectedYear, selectedSemester, selectedMonth);
-      setNarrativesMap(data);
+      if (alive.current && generation === loadGeneration.current) setNarrativesMap(data);
     } catch (err) {
       console.error('Error loading narratives:', err);
-      toast.error('Gagal memuat narasi siswa.');
+      if (alive.current && generation === loadGeneration.current) setLoadError('Gagal memuat narasi. Coba muat ulang sebelum menyunting.');
     } finally {
-      setLoadingNarratives(false);
+      if (alive.current && generation === loadGeneration.current) setLoadingNarratives(false);
     }
   }, [classId, selectedYear, selectedSemester, selectedMonth]);
 
@@ -256,6 +291,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
 
   // Sync active student form when student changes or narratives reload
   const populateFormForStudent = React.useCallback((studentId: string, doc?: ElementaryMonthlyStudentNarrativeDoc | null) => {
+    setHydratedStudentId(studentId);
     const sDoc = doc || narrativesMap[studentId];
     const stu = students.find(s => s.id === studentId);
     const stuName = stu?.name || 'siswa';
@@ -278,22 +314,33 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
 
     // SEL
     if (sDoc?.selSource) {
-      setSelOpening(sDoc.selSource.opening ?? `Dalam perkembangan sosial dan emosional periode ini, ${stuName} menunjukkan proses pembiasaan karakter yang positif di lingkungan sekolah.`);
+      setSelOpening(sDoc.selSource.opening ?? '');
       setSelAspects(sDoc.selSource.aspects || {});
       setSelClosing(sDoc.selSource.closing ?? defaultSelClosing);
       setLastAssembledSel(sDoc.selSource.lastAssembledText || '');
       setIsSelManuallyEdited(sDoc.selSource.isManuallyEdited ?? (sDoc.selProfile !== sDoc.selSource.lastAssembledText));
     } else {
-      setSelOpening(`Dalam perkembangan sosial dan emosional periode ini, ${stuName} menunjukkan proses pembiasaan karakter yang positif di lingkungan sekolah.`);
+      setSelOpening('');
       setSelAspects({});
       setSelClosing(defaultSelClosing);
       setLastAssembledSel('');
-      setIsSelManuallyEdited(false);
+      setIsSelManuallyEdited(!!sDoc?.selProfile?.trim());
     }
     setSelProfile(sDoc?.selProfile || '');
 
-    setSaveStatus('saved');
-    setHasUnsavedChanges(false);
+    setSelMetadata(sDoc?.selSource || {});
+    setFormRevision(sDoc?.revision || 0);
+    const cached = pendingNarrativeDrafts.get(draftKey(studentId));
+    if (cached) {
+      setAcademicOpening(cached.academicOpening); setAcademicSubjectComments(cached.academicSubjectComments);
+      setAcademicClosing(cached.academicClosing); setAcademicComment(cached.academicComment);
+      setLastAssembledAcademic(cached.lastAssembledAcademic); setIsAcademicManuallyEdited(cached.isAcademicManuallyEdited);
+      setSelOpening(cached.selOpening); setSelAspects(cached.selAspects); setSelClosing(cached.selClosing);
+      setSelProfile(cached.selProfile); setLastAssembledSel(cached.lastAssembledSel); setIsSelManuallyEdited(cached.isSelManuallyEdited);
+      setSelMetadata(cached.selMetadata || {}); setFormRevision(cached.formRevision || 0);
+    }
+    setSaveStatus(cached ? 'unsaved' : sDoc ? 'saved' : 'idle');
+    setHasUnsavedChanges(!!cached);
     setIsAcademicAiOpen(false);
     setAcademicAiRefinedDraft('');
   }, [narrativesMap, students, monthLabel, defaultAcademicClosing, defaultSelClosing]);
@@ -307,9 +354,9 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
 
   // Populate on student change
   React.useEffect(() => {
-    if (!activeStudentId) return;
+    if (!activeStudentId || loadingNarratives || loadError) return;
     populateFormForStudent(activeStudentId);
-  }, [activeStudentId, populateFormForStudent]);
+  }, [activeStudentId, loadingNarratives]);
 
   // Source change detection for Academic
   const candidateAssembledAcademic = React.useMemo(() => {
@@ -329,22 +376,12 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     return candidateAssembledAcademic !== lastAssembledAcademic;
   }, [isAcademicManuallyEdited, lastAssembledAcademic, candidateAssembledAcademic]);
 
-  // Source change detection for SEL
-  const candidateAssembledSel = React.useMemo(() => {
-    if (!activeStudent || !officialGrade) return '';
-    return assembleDeterministicSELNarrative({
-      studentName: activeStudent.name,
-      gradeLevel: officialGrade,
-      opening: selOpening,
-      closing: selClosing,
-      aspects: selAspects
-    });
-  }, [activeStudent, officialGrade, selOpening, selClosing, selAspects]);
-
-  const isSelSourceModified = React.useMemo(() => {
-    if (!isSelManuallyEdited || !lastAssembledSel) return false;
-    return candidateAssembledSel !== lastAssembledSel;
-  }, [isSelManuallyEdited, lastAssembledSel, candidateAssembledSel]);
+  const currentSelSource: ElementaryMonthlySelSource = {
+    ...selMetadata, opening: selOpening, closing: selClosing, aspects: selAspects,
+    lastAssembledText: lastAssembledSel, isManuallyEdited: isSelManuallyEdited
+  };
+  const isSelSourceModified = selMetadata.schemaVersion === 2 &&
+    selMetadata.assembledFingerprint !== selSourceFingerprint(currentSelSource);
 
   // ==========================================
   // SAVE & PROTECT DRAFT
@@ -364,9 +401,12 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       selProfile: string;
       lastAssembledSel: string;
       isSelManuallyEdited: boolean;
+      selMetadata: ElementaryMonthlySelSource;
+      formRevision: number;
     }
   ) => {
-    if (!targetStudent || !classId) return;
+    if (!targetStudent || targetStudent.id !== hydratedStudentId || !classId || loadingNarratives || loadError) throw new Error('Konteks narasi belum berhasil dimuat.');
+    if (saveInFlight.current) return saveInFlight.current;
     
     // Explicit student binding
     const sId = targetStudent.id;
@@ -382,23 +422,17 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     };
 
     const selSource: ElementaryMonthlySelSource = {
-      gradeLevel: officialGrade || undefined,
-      templateVersion: 'v1',
-      opening: data.selOpening.trim(),
+      ...data.selMetadata,
+      ...(officialGrade ? { gradeLevel: officialGrade } : {}),
+      opening: data.selMetadata.schemaVersion === 2 ? data.selOpening : data.selOpening.trim(),
       aspects: data.selAspects,
-      closing: data.selClosing.trim(),
+      closing: data.selMetadata.schemaVersion === 2 ? data.selClosing : data.selClosing.trim(),
       lastAssembledText: data.lastAssembledSel,
       isManuallyEdited: data.isSelManuallyEdited
     };
 
-    const payload: Partial<ElementaryMonthlyStudentNarrativeDoc> & {
-      studentId: string;
-      studentName: string;
-      classId: string;
-      academicYear: string;
-      semester: string;
-      month: string;
-    } = {
+    const payload: Parameters<typeof saveElementaryMonthlyStudentNarrativeDoc>[0] = {
+      revision: data.formRevision,
       studentId: sId,
       studentName: sName,
       classId,
@@ -414,8 +448,14 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       isSourceStale: false
     };
 
+    setSaveErrorMessage('');
+    const draftAtSave = JSON.stringify(pendingNarrativeDrafts.get(draftKey(sId)));
     try {
-      await saveElementaryMonthlyStudentNarrativeDoc(payload, currentUser);
+      const saving = saveElementaryMonthlyStudentNarrativeDoc(payload, currentUser);
+      saveInFlight.current = saving;
+      await saving;
+      if (JSON.stringify(pendingNarrativeDrafts.get(draftKey(sId))) === draftAtSave) pendingNarrativeDrafts.delete(draftKey(sId));
+      if (!alive.current) return;
       
       // Update local state map
       setNarrativesMap(prev => ({
@@ -429,6 +469,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       }));
 
       if (currentStudentFormRef.current.studentId === sId) {
+        setFormRevision(payload.revision || 0);
         setSaveStatus('saved');
         setHasUnsavedChanges(false);
       }
@@ -436,10 +477,11 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       console.error(`Error saving draft for ${sName}:`, err);
       if (currentStudentFormRef.current.studentId === sId) {
         setSaveStatus('error');
+        setSaveErrorMessage(err.message || 'Gagal menyimpan.');
       }
       throw err;
-    }
-  }, [classId, selectedYear, selectedSemester, selectedMonth, officialGrade, currentScoresHash, currentUser, narrativesMap]);
+    } finally { saveInFlight.current = null; }
+  }, [hydratedStudentId, loadingNarratives, loadError, classId, selectedYear, selectedSemester, selectedMonth, officialGrade, currentScoresHash, currentUser, narrativesMap]);
 
   // Explicit Save Draft Button Click
   const handleSaveDraft = async () => {
@@ -458,7 +500,9 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
         selClosing,
         selProfile,
         lastAssembledSel,
-        isSelManuallyEdited
+        isSelManuallyEdited,
+        selMetadata,
+        formRevision
       });
       toast.success(`Draf narasi ${activeStudent.name} berhasil disimpan.`);
     } catch (err: any) {
@@ -473,8 +517,8 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     // Check if current student has unsaved edits
     const prevForm = currentStudentFormRef.current;
     if (prevForm.hasUnsavedChanges && activeStudent && !isLocked) {
-      // Auto-save previous student in background
-      executeSaveDraft(activeStudent, {
+      setSaveStatus('saving');
+      try { await executeSaveDraft(activeStudent, {
         academicOpening: prevForm.academicOpening,
         academicSubjectComments: prevForm.academicSubjectComments,
         academicClosing: prevForm.academicClosing,
@@ -486,10 +530,10 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
         selClosing: prevForm.selClosing,
         selProfile: prevForm.selProfile,
         lastAssembledSel: prevForm.lastAssembledSel,
-        isSelManuallyEdited: prevForm.isSelManuallyEdited
-      }).catch(err => {
-        console.error('Auto-save on switch failed:', err);
-      });
+        isSelManuallyEdited: prevForm.isSelManuallyEdited,
+        selMetadata: prevForm.selMetadata,
+        formRevision: prevForm.formRevision
+      }); } catch (e) { toast.error('Gagal menyimpan; tetap pada siswa ini. Draf dipertahankan.'); return; }
     }
 
     setActiveStudentId(newStudentId);
@@ -533,43 +577,14 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     toast.success('Narasi akademik berhasil disusun dari komentar per mata pelajaran.');
   };
 
-  const handleTriggerAssembleSEL = () => {
-    if (!activeStudent) return;
-    if (!officialGrade) {
-      toast.error('Tingkat kelas belum terkonfigurasi. Tidak dapat menyusun SEL.');
-      return;
-    }
-
-    const newText = assembleDeterministicSELNarrative({
-      studentName: activeStudent.name,
-      gradeLevel: officialGrade,
-      opening: selOpening,
-      closing: selClosing,
-      aspects: selAspects
-    });
-
-    if (!newText.trim()) {
-      toast.warning('Pilih atau tulis observasi minimal untuk satu aspek karakter sebelum menyusun narasi SEL.');
-      return;
-    }
-
-    // Protection: If final text was manually edited, ask for confirmation
+  const handleRubricAssemble = (newText: string) => {
     if (isSelManuallyEdited && selProfile.trim() && selProfile.trim() !== newText) {
-      setOverwriteConfirm({
-        isOpen: true,
-        type: 'sel',
-        newText
-      });
+      setOverwriteConfirm({ isOpen: true, type: 'sel', newText });
       return;
     }
-
-    // Apply directly
-    setSelProfile(newText);
-    setLastAssembledSel(newText);
-    setIsSelManuallyEdited(false);
-    setSaveStatus('unsaved');
-    setHasUnsavedChanges(true);
-    toast.success('Narasi SEL berhasil dirangkai dari observasi.');
+    setSelProfile(newText); setLastAssembledSel(newText); setIsSelManuallyEdited(false);
+    setSelMetadata(prev => ({ ...prev, assembledFingerprint: selSourceFingerprint(currentSelSource) }));
+    setSaveStatus('unsaved'); setHasUnsavedChanges(true);
   };
 
   const handleConfirmOverwrite = () => {
@@ -582,6 +597,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       setHasUnsavedChanges(true);
       toast.success('Narasi final akademik berhasil diperbarui dari susunan sumber.');
     } else {
+      setSelMetadata(prev => ({ ...prev, assembledFingerprint: selSourceFingerprint(currentSelSource) }));
       setSelProfile(overwriteConfirm.newText);
       setLastAssembledSel(overwriteConfirm.newText);
       setIsSelManuallyEdited(false);
@@ -599,6 +615,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       toast.warning('Tulis atau susun narasi akademik terlebih dahulu sebelum merapikan bahasa.');
       return;
     }
+    const requestedStudent = activeStudentId;
     setRefiningAcademicAi(true);
     try {
       const refined = await refineElementaryMonthlyNarrativeAI({
@@ -607,6 +624,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
         studentName: activeStudent?.name || '',
         nickname: (activeStudent as any)?.nickname || ''
       });
+      if (!alive.current || currentStudentFormRef.current.studentId !== requestedStudent) return;
       setAcademicAiRefinedDraft(refined);
       toast.success('Bahasa berhasil dirapikan. Periksa pratinjau sebelum menerapkan.');
     } catch (err: any) {
@@ -645,7 +663,9 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
         selClosing,
         selProfile,
         lastAssembledSel,
-        isSelManuallyEdited
+        isSelManuallyEdited,
+        selMetadata,
+        formRevision
       });
 
       // 2. Submit for review
@@ -671,6 +691,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
 
   // Bulk Submit
   const handleBulkSubmitClass = async () => {
+    if (hasUnsavedChanges) { toast.error('Simpan draf aktif sebelum pengajuan massal.'); return; }
     const readyStudents = students.filter(s => {
       const doc = narrativesMap[s.id];
       const hasAcademic = (doc?.academicComment?.trim().length || 0) >= 15;
@@ -706,8 +727,9 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     } catch (err: any) {
       console.error('Error bulk submitting:', err);
       toast.error('Gagal mengajukan massal: ' + (err.message || ''));
+      await loadNarratives();
     } finally {
-      setSaveStatus('saved');
+      setSaveStatus(hasUnsavedChanges ? 'unsaved' : 'idle');
     }
   };
 
@@ -735,7 +757,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       console.error('Error unlocking narrative:', err);
       toast.error('Gagal membuka kunci: ' + (err.message || ''));
     } finally {
-      setSaveStatus('saved');
+      setSaveStatus(hasUnsavedChanges ? 'unsaved' : 'idle');
     }
   };
 
@@ -830,6 +852,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     } catch (err: any) {
       console.error('Error bulk approving:', err);
       toast.error('Gagal menyetujui massal: ' + (err.message || ''));
+      await loadNarratives();
     } finally {
       setProcessingReview(false);
     }
@@ -842,6 +865,8 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
       return;
     }
 
+    if (hasUnsavedChanges) { toast.error('Simpan draf aktif sebelum impor.'); return; }
+    try {
     const lines = importRawText.split('\n').map(l => l.trim()).filter(Boolean);
     let matchedCount = 0;
 
@@ -856,12 +881,15 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
         );
 
         if (matched) {
-          matchedCount++;
+
           const academicPart = parts[1]?.trim() || '';
           const selPart = parts[2]?.trim() || '';
 
           const existingDoc = narrativesMap[matched.id];
+          if (existingDoc && ['SUBMITTED', 'APPROVED'].includes(existingDoc.reviewStatus)) throw new Error(`${matched.name}: narasi terkunci; buka kunci terlebih dahulu.`);
           const payload = {
+            revision: existingDoc?.revision || 0,
+            ...(existingDoc?.selSource ? { selSource: { ...existingDoc.selSource, isManuallyEdited: true } } : {}),
             studentId: matched.id,
             studentName: matched.name,
             classId,
@@ -874,6 +902,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
           };
 
           await saveElementaryMonthlyStudentNarrativeDoc(payload, currentUser);
+          matchedCount++;
         }
       }
     }
@@ -886,6 +915,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     } else {
       toast.error('Tidak ada nama siswa yang cocok. Pastikan format: "Nama Siswa [TAB/PIPE] Narasi Akademik [TAB/PIPE] Narasi SEL"');
     }
+    } catch (e) { toast.error('Impor berhenti: ' + (e as Error).message + ' Muat ulang status sebelum melanjutkan.'); await loadNarratives(); }
   };
 
   // Filtered students list
@@ -907,14 +937,12 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
     });
   }, [students, searchStudent, statusFilter, narrativesMap]);
 
-  // SEL Aspects for current grade
-  const currentGradeAspectKeys = React.useMemo(() => {
-    if (!officialGrade) return [];
-    return ELEMENTARY_LOWER_SEL_GRADE_ASPECTS[officialGrade] || [];
-  }, [officialGrade]);
-
   return (
     <div className="space-y-6">
+      {loadError && <p role="alert" className="text-red-700">{loadError} <button onClick={loadNarratives}>Coba muat ulang</button></p>}
+      {hasUnsavedChanges && <p className="text-amber-800">Draf belum tersimpan. Draf dipertahankan per siswa/kelas/periode selama sesi ini; jangan tutup browser sebelum simpan berhasil.</p>}
+      {saveErrorMessage && <div className="p-3 border border-red-300 rounded-xl text-sm space-y-2"><p className="text-red-800">{saveErrorMessage}</p><button onClick={loadNarratives}>Muat ulang status tersimpan (draf lokal tetap dipertahankan)</button><details><summary>Bandingkan narasi tersimpan terakhir yang dimuat</summary><p>Akademik: {activeNarrative?.academicComment || '(kosong)'}</p><p>SEL: {activeNarrative?.selProfile || '(kosong)'}</p><p>Revisi tersimpan: {activeNarrative?.revision || 0}; revisi dasar draf lokal: {formRevision}</p></details>{activeNarrative && !isLocked && activeNarrative.revision !== formRevision && <button onClick={() => { if (confirm('Gunakan draf lokal di atas revisi tersimpan ini? Bandingkan kedua versi terlebih dahulu. Isi sekolah baru diganti setelah Anda klik Simpan Draf.')) { setFormRevision(activeNarrative.revision || 0); setSaveErrorMessage(''); setSaveStatus('unsaved'); setHasUnsavedChanges(true); } }}>Gunakan draf lokal di atas revisi terbaru yang dimuat</button>}</div>}
+      <fieldset disabled={loadingNarratives || hydratedStudentId !== activeStudentId || !!loadError || saveStatus === 'saving' || processingReview || refiningAcademicAi} className="space-y-6 min-w-0">
       {/* Top Action Bar */}
       <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -932,6 +960,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
         </div>
 
         <div className="flex items-center flex-wrap gap-2">
+          {canReview && officialGrade && <button className="px-3 py-2 text-xs border rounded-xl" onClick={() => setShowSELConfig(true)}>Pengaturan Rubrik SEL</button>}
           <button
             type="button"
             onClick={() => setIsImportModalOpen(true)}
@@ -1099,12 +1128,12 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
                         <AlertCircle size={12} />
                         <span>Gagal simpan</span>
                       </span>
-                    ) : (
+                    ) : saveStatus === 'saved' ? (
                       <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200">
                         <CheckCircle2 size={12} />
                         <span>Tersimpan</span>
                       </span>
-                    )}
+                    ) : <span className="text-xs text-slate-500">{activeNarrative ? 'Data dimuat' : 'Draf baru'}</span>}
 
                     {/* Lock / Unlock indicator */}
                     {isLocked ? (
@@ -1450,7 +1479,7 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
                         2. Social Emotional Profile (SEL Lower Grade 1–3)
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        Observasi karakter resmi berbasis template &amp; catatan guru, disusun deterministik tanpa AI.
+                        Capaian per aspek berdasarkan rubrik admin, disusun deterministik tanpa AI.
                       </p>
                     </div>
                   </div>
@@ -1462,261 +1491,21 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
                   )}
                 </div>
 
-                {/* Structured SEL Form: Pembuka, Grade-specific Aspects Bank, Penutup */}
-                <div className="space-y-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
-                  {/* Pembuka SEL */}
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                      Kalimat Pembuka SEL:
-                    </label>
-                    <input
-                      type="text"
-                      value={selOpening}
-                      onChange={(e) => {
-                        setSelOpening(e.target.value);
-                        setSaveStatus('unsaved');
-                        setHasUnsavedChanges(true);
-                      }}
-                      disabled={isLocked}
-                      placeholder="Dalam perkembangan sosial dan emosional periode ini, ananda menunjukkan..."
-                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-rose-500 disabled:bg-slate-100"
-                    />
-                  </div>
-
-                  {/* Aspects Selection List for Current Grade */}
-                  <div className="space-y-3.5 pt-1">
-                    <div className="flex items-center justify-between">
-                      <label className="block text-[11px] font-bold text-slate-800">
-                        Fokus Aspek Observasi Karakter:
-                      </label>
-                      <span className="text-[10px] text-slate-500 italic">
-                        Tidak ada capaian otomatis; pilih observasi atau tulis sendiri untuk siswa ini.
-                      </span>
-                    </div>
-
-                    {currentGradeAspectKeys.length === 0 ? (
-                      <div className="p-3 text-center bg-rose-50 border border-dashed border-rose-200 rounded-lg text-xs text-rose-800">
-                        Tingkat kelas belum terdeteksi secara resmi. Harap konfigurasikan tingkat kelas pada master kelas.
-                      </div>
-                    ) : (
-                      currentGradeAspectKeys.map((key) => {
-                        const def = ELEMENTARY_LOWER_SEL_ASPECT_DEFINITIONS[key];
-                        if (!def) return null;
-
-                        const currentSel = selAspects[key] || {
-                          mode: 'template',
-                          selectedText: '',
-                          customText: '',
-                          teacherNote: ''
-                        };
-                        const mode = currentSel.mode || 'template';
-
-                        return (
-                          <div key={key} className="p-3.5 rounded-xl border border-rose-100 bg-rose-50/30 space-y-2.5">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-rose-100 pb-2">
-                              <div>
-                                <span className="text-xs font-bold text-rose-950 block">{def.title}</span>
-                                <span className="text-[11px] text-slate-600">{def.description}</span>
-                              </div>
-
-                              {/* Mode Selector */}
-                              {!isLocked && (
-                                <div className="flex items-center gap-1 self-start sm:self-auto bg-white p-0.5 rounded-lg border border-slate-200">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelAspects(prev => ({
-                                        ...prev,
-                                        [key]: { ...currentSel, mode: 'template' }
-                                      }));
-                                      setSaveStatus('unsaved');
-                                      setHasUnsavedChanges(true);
-                                    }}
-                                    className={`text-[10px] px-2 py-0.5 rounded-md font-semibold cursor-pointer ${
-                                      mode === 'template' ? 'bg-rose-600 text-white' : 'text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    Bank Template
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelAspects(prev => ({
-                                        ...prev,
-                                        [key]: { ...currentSel, mode: 'custom' }
-                                      }));
-                                      setSaveStatus('unsaved');
-                                      setHasUnsavedChanges(true);
-                                    }}
-                                    className={`text-[10px] px-2 py-0.5 rounded-md font-semibold cursor-pointer ${
-                                      mode === 'custom' ? 'bg-rose-600 text-white' : 'text-slate-600 hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    Tulis Sendiri
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Mode A: Bank Template */}
-                            {mode === 'template' ? (
-                              <div className="space-y-2">
-                                <span className="text-[10px] font-semibold text-slate-700 block">
-                                  Pilih Deskripsi Observasi dari Bank Template:
-                                </span>
-
-                                <div className="space-y-1.5">
-                                  {/* Option to clear / unselect */}
-                                  <label className="flex items-start gap-2 p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 cursor-pointer">
-                                    <input
-                                      type="radio"
-                                      name={`aspect_tpl_${key}`}
-                                      checked={!currentSel.selectedText}
-                                      disabled={isLocked}
-                                      onChange={() => {
-                                        setSelAspects(prev => ({
-                                          ...prev,
-                                          [key]: {
-                                            ...currentSel,
-                                            templateId: undefined,
-                                            selectedText: ''
-                                          }
-                                        }));
-                                        setSaveStatus('unsaved');
-                                        setHasUnsavedChanges(true);
-                                      }}
-                                      className="mt-0.5 text-rose-600"
-                                    />
-                                    <span className="text-xs text-slate-500 italic">
-                                      Belum diobservasi / lewati aspek ini
-                                    </span>
-                                  </label>
-
-                                  {def.templates.map(tpl => {
-                                    const isChosen = currentSel.selectedText === tpl.text;
-                                    return (
-                                      <label
-                                        key={tpl.id}
-                                        className={`flex items-start gap-2 p-2.5 rounded-lg border transition-all cursor-pointer ${
-                                          isChosen
-                                            ? 'bg-rose-50 border-rose-300 text-rose-950 font-medium shadow-2xs'
-                                            : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-800'
-                                        }`}
-                                      >
-                                        <input
-                                          type="radio"
-                                          name={`aspect_tpl_${key}`}
-                                          checked={isChosen}
-                                          disabled={isLocked}
-                                          onChange={() => {
-                                            setSelAspects(prev => ({
-                                              ...prev,
-                                              [key]: {
-                                                ...currentSel,
-                                                templateId: tpl.id,
-                                                selectedText: tpl.text
-                                              }
-                                            }));
-                                            setSaveStatus('unsaved');
-                                            setHasUnsavedChanges(true);
-                                          }}
-                                          className="mt-0.5 text-rose-600"
-                                        />
-                                        <span className="text-xs leading-relaxed">{tpl.text}</span>
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ) : (
-                              /* Mode B: Tulis Sendiri */
-                              <div className="space-y-1">
-                                <label className="block text-[10px] font-semibold text-slate-700">
-                                  Tulis Deskripsi Observasi Khusus:
-                                </label>
-                                <textarea
-                                  rows={2}
-                                  value={currentSel.customText || ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setSelAspects(prev => ({
-                                      ...prev,
-                                      [key]: { ...currentSel, customText: val }
-                                    }));
-                                    setSaveStatus('unsaved');
-                                    setHasUnsavedChanges(true);
-                                  }}
-                                  disabled={isLocked}
-                                  placeholder={`Deskripsikan perkembangan ${def.title.toLowerCase()} siswa secara konkret...`}
-                                  className="w-full text-xs p-2.5 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-rose-500 disabled:bg-slate-100 resize-y"
-                                />
-                              </div>
-                            )}
-
-                            {/* Additional Optional Teacher Note for this Student */}
-                            <div className="pt-1">
-                              <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">
-                                Catatan Tambahan Individual untuk Siswa Ini (Opsional):
-                              </label>
-                              <input
-                                type="text"
-                                value={currentSel.teacherNote || ''}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setSelAspects(prev => ({
-                                    ...prev,
-                                    [key]: { ...currentSel, teacherNote: val }
-                                  }));
-                                  setSaveStatus('unsaved');
-                                  setHasUnsavedChanges(true);
-                                }}
-                                disabled={isLocked}
-                                placeholder="Misal: Sangat kooperatif saat membantu merapikan ruang kelas..."
-                                className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-rose-500 disabled:bg-slate-100"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-
-                  {/* Penutup SEL */}
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                      Kalimat Penutup SEL:
-                    </label>
-                    <input
-                      type="text"
-                      value={selClosing}
-                      onChange={(e) => {
-                        setSelClosing(e.target.value);
-                        setSaveStatus('unsaved');
-                        setHasUnsavedChanges(true);
-                      }}
-                      disabled={isLocked}
-                      placeholder="Semoga ananda terus menumbuhkan karakter baik..."
-                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-rose-500 disabled:bg-slate-100"
-                    />
-                  </div>
-
-                  {/* Assembly Action Button */}
-                  {!isLocked && (
-                    <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-slate-100">
-                      <span className="text-[11px] text-slate-500">
-                        Rangkai pembuka, observasi terpilih, dan penutup tanpa AI.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleTriggerAssembleSEL}
-                        className="px-4 py-1.5 text-xs font-bold rounded-xl bg-rose-700 text-white hover:bg-rose-800 flex items-center gap-1.5 cursor-pointer shadow-xs"
-                      >
-                        <Heart size={13} />
-                        <span>Susun Narasi SEL</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <SELRubricEditor
+                  key={activeStudent.id}
+                  context={{ classId, academicYear: selectedYear, semester: selectedSemester, month: selectedMonth }}
+                  gradeLevel={officialGrade || 0} studentName={activeStudent.name}
+                  nickname={(activeStudent as any).nickname || (activeStudent as any).nickName || activeStudent.name}
+                  className={selectedClass?.name || ''} monthLabel={monthLabel}
+                  source={currentSelSource} locked={isLocked} finalText={selProfile}
+                  onChange={source => {
+                    setSelMetadata(source); setSelOpening(source.opening || ''); setSelClosing(source.closing || '');
+                    setSelAspects(source.aspects || {});
+                    if (source.lastAssembledText !== undefined) setLastAssembledSel(source.lastAssembledText);
+                    if (source.isManuallyEdited !== undefined) setIsSelManuallyEdited(source.isManuallyEdited);
+                    setSaveStatus('unsaved'); setHasUnsavedChanges(true);
+                  }} onAssemble={handleRubricAssemble}
+                />
 
                 {/* Final Narasi SEL Textarea */}
                 <div className="space-y-1.5">
@@ -1828,6 +1617,8 @@ export const NarrativeAndApprovalTab: React.FC<NarrativeAndApprovalTabProps> = (
         </div>
       </div>
 
+      </fieldset>
+      {showSELConfig && <SELTemplateConfigModal academicYear={selectedYear} semester={selectedSemester} month={selectedMonth} gradeLevel={officialGrade || 1} onClose={() => setShowSELConfig(false)} onApplied={() => { toast.success('Rubrik diterapkan. Pada form siswa, muat ulang rubrik untuk melihat versi aktif.'); }} />}
       {/* MODAL: Overwrite Confirmation Modal */}
       {overwriteConfirm && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">

@@ -12,7 +12,7 @@ import {
   isElementaryHeadOrSuperAdmin,
   getMonthOptionsForAcademicYear,
   formatMonthLabel
-} from '../src/services/elementaryMonthlyReportService';
+} from '../src/lib/elementaryMonthlyReportCore';
 import { getGradeLevelNumber } from '../src/types/elementaryMidtermReport';
 
 function assert(condition: boolean, msg: string) {
@@ -213,7 +213,7 @@ import {
   buildMonthlyAttendanceConfigDocId,
   buildPublishedMonthlyReportDocId,
   calculateStudentAttendanceSummary
-} from '../src/services/elementaryMonthlyReportService';
+} from '../src/lib/elementaryMonthlyReportCore';
 import { 
   validateElementaryMonthlyPublishEligibility,
   ElementaryMonthlyAttendanceConfig
@@ -299,10 +299,11 @@ const mockSignatory = {
   principalName: 'Dewi Masyitoh, M.Pd.',
   principalTitle: 'Principal',
   principalNiy: '19820512',
-  principalSignatureUrl: null,
+  principalSignatureUrl: 'https://example.com/principal.png',
   homeroomTeacherName: 'Budi Santoso, S.Pd.',
+  homeroomTeacherId: 'teacher1',
   homeroomTeacherNiy: '19900101',
-  homeroomTeacherSignatureUrl: null,
+  homeroomTeacherSignatureUrl: 'https://example.com/teacher.png',
   signingDate: '31 Agustus 2025',
   signingLocation: 'Depok'
 };
@@ -373,6 +374,7 @@ const validGate = validateElementaryMonthlyPublishEligibility({
   projectDoc: mockProject,
   photoDoc: mockPhoto,
   attendanceSummary: attStu1,
+  logoUrl: 'https://example.com/logo.png',
   signatory: mockSignatory
 });
 assert(validGate.isEligible === true, 'All complete requirements pass publish gate');
@@ -387,6 +389,7 @@ const incompleteLoGate = validateElementaryMonthlyPublishEligibility({
   projectDoc: mockProject,
   photoDoc: mockPhoto,
   attendanceSummary: attStu1,
+  logoUrl: 'https://example.com/logo.png',
   signatory: mockSignatory
 });
 assert(incompleteLoGate.isEligible === false, 'Missing LO score blocks publishing');
@@ -401,6 +404,7 @@ const staleNarGate = validateElementaryMonthlyPublishEligibility({
   projectDoc: mockProject,
   photoDoc: mockPhoto,
   attendanceSummary: attStu1,
+  logoUrl: 'https://example.com/logo.png',
   signatory: mockSignatory
 });
 assert(staleNarGate.isEligible === false, 'Stale approved narrative blocks publishing');
@@ -415,11 +419,12 @@ const missingAttGate = validateElementaryMonthlyPublishEligibility({
   projectDoc: mockProject,
   photoDoc: mockPhoto,
   attendanceSummary: attNull,
+  logoUrl: 'https://example.com/logo.png',
   signatory: mockSignatory
 });
 assert(missingAttGate.isEligible === false, 'Missing attendance blocks publishing');
 assert(missingAttGate.blockingReasons.some(r => r.includes('Data kehadiran siswa belum tersedia')), 'Reason states attendance missing');
 
-console.log('\nALL 37 TESTS (STAGES 1, 2, AND 3) PASSED SUCCESSFULLY!');
-process.exit(0);
+console.log('\nAll Lower Grade score, context, attendance and publication gate assertions passed.');
+
 

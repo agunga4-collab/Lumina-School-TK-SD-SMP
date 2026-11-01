@@ -1,3 +1,6 @@
+import { normalizeAcademicYear, buildMonthlyCurriculumDocId, buildMonthlyStudentScoreDocId, formatMonthLabel, getMonthOptionsForAcademicYear, buildMonthlyProjectDocId, buildMonthlyStudentPhotoDocId, buildMonthlyStudentNarrativeDocId, isElementaryHeadOrSuperAdmin, computeStudentScoresHash, buildMonthlyAttendanceConfigDocId, buildPublishedMonthlyReportDocId, calculateStudentAttendanceSummary } from '../lib/elementaryMonthlyReportCore';
+export { normalizeAcademicYear, buildMonthlyCurriculumDocId, buildMonthlyStudentScoreDocId, formatMonthLabel, getMonthOptionsForAcademicYear, buildMonthlyProjectDocId, buildMonthlyStudentPhotoDocId, buildMonthlyStudentNarrativeDocId, isElementaryHeadOrSuperAdmin, computeStudentScoresHash, buildMonthlyAttendanceConfigDocId, buildPublishedMonthlyReportDocId, calculateStudentAttendanceSummary } from '../lib/elementaryMonthlyReportCore';
+import { mutateMonthlyNarrative } from './elementaryMonthlySELService';
 import { auth, db, handleFirestoreError } from '../lib/firebase';
 import { 
   doc, 
@@ -39,77 +42,21 @@ type ElementaryMonthlyWriteInput<T extends {
 }> = Omit<T, 'id' | 'createdAt' | 'createdBy' | 'createdByName' | 'updatedAt' | 'updatedBy' | 'updatedByName'> &
   Partial<Pick<T, 'id' | 'createdAt' | 'createdBy' | 'createdByName'>>;
 
-export function normalizeAcademicYear(academicYear: string): string {
-  return academicYear ? academicYear.replace(/\//g, '_') : '2025_2026';
-}
 
-export function buildMonthlyCurriculumDocId(
-  classId: string,
-  academicYear: string,
-  semester: string,
-  month: string
-): string {
-  const normYear = normalizeAcademicYear(academicYear);
-  return `${classId}_${normYear}_S${semester}_M${month}`;
-}
 
-export function buildMonthlyStudentScoreDocId(
-  studentId: string,
-  classId: string,
-  academicYear: string,
-  semester: string,
-  month: string
-): string {
-  const normYear = normalizeAcademicYear(academicYear);
-  return `${studentId}_${classId}_${normYear}_S${semester}_M${month}`;
-}
 
-const MONTH_NAMES_ID = [
-  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-];
 
-export function formatMonthLabel(monthStr: string): string {
-  if (!monthStr || !monthStr.includes('-')) return monthStr;
-  const [yearStr, mStr] = monthStr.split('-');
-  const mIndex = parseInt(mStr, 10) - 1;
-  if (mIndex >= 0 && mIndex < 12) {
-    return `${MONTH_NAMES_ID[mIndex]} ${yearStr}`;
-  }
-  return monthStr;
-}
+
+
+
+
+
 
 /**
  * Returns sensible months for Semester 1 (July - Dec) or Semester 2 (Jan - June)
  * based on academic year, e.g. "2025/2026".
  */
-export function getMonthOptionsForAcademicYear(academicYear: string, semester: string): Array<{ value: string; label: string }> {
-  const parts = academicYear.split('/');
-  const startYear = parseInt(parts[0], 10) || 2025;
-  const endYear = parseInt(parts[1], 10) || (startYear + 1);
 
-  if (semester === '1') {
-    // July to Dec of startYear
-    return [
-      { value: `${startYear}-07`, label: `Juli ${startYear}` },
-      { value: `${startYear}-08`, label: `Agustus ${startYear}` },
-      { value: `${startYear}-09`, label: `September ${startYear}` },
-      { value: `${startYear}-10`, label: `Oktober ${startYear}` },
-      { value: `${startYear}-11`, label: `November ${startYear}` },
-      { value: `${startYear}-12`, label: `Desember ${startYear}` },
-    ];
-  } else {
-    // January to June of endYear
-    return [
-      { value: `${endYear}-01`, label: `Januari ${endYear}` },
-      { value: `${endYear}-02`, label: `Februari ${endYear}` },
-      { value: `${endYear}-03`, label: `Maret ${endYear}` },
-      { value: `${endYear}-04`, label: `April ${endYear}` },
-      { value: `${endYear}-05`, label: `Mei ${endYear}` },
-      { value: `${endYear}-06`, label: `Juni ${endYear}` },
-    ];
-  }
-}
 
 /**
  * Fetches the curriculum document for a specific class, year, semester, and month.
@@ -485,37 +432,11 @@ export async function copyElementaryMonthlyCurriculum(params: {
 // TAHAP 2: PROYEK & FOTO SERVICES
 // ==========================================
 
-export function buildMonthlyProjectDocId(
-  classId: string,
-  academicYear: string,
-  semester: string,
-  month: string
-): string {
-  const normYear = normalizeAcademicYear(academicYear);
-  return `${classId}_${normYear}_S${semester}_M${month}`;
-}
 
-export function buildMonthlyStudentPhotoDocId(
-  studentId: string,
-  classId: string,
-  academicYear: string,
-  semester: string,
-  month: string
-): string {
-  const normYear = normalizeAcademicYear(academicYear);
-  return `${studentId}_${classId}_${normYear}_S${semester}_M${month}`;
-}
 
-export function buildMonthlyStudentNarrativeDocId(
-  studentId: string,
-  classId: string,
-  academicYear: string,
-  semester: string,
-  month: string
-): string {
-  const normYear = normalizeAcademicYear(academicYear);
-  return `${studentId}_${classId}_${normYear}_S${semester}_M${month}`;
-}
+
+
+
 
 /**
  * Compresses an image client-side to ensure fast uploads and storage efficiency without distortion.
@@ -967,25 +888,12 @@ export async function bulkApplyElementaryMonthlyPhotos(params: {
 // TAHAP 2: NARASI & APPROVAL SERVICES
 // ==========================================
 
-export function isElementaryHeadOrSuperAdmin(user: User | null | undefined): boolean {
-  if (!user) return false;
-  const role = (user.role || (user as any).roleId || '').toUpperCase();
-  if (['SUPER_ADMIN', 'ADMIN'].includes(role)) return true;
-  if (['HEAD_UNIT', 'HEAD_ELEMENTARY', 'PRINCIPAL'].includes(role)) {
-    const unit = ((user as any).unitId || (user as any).unit || '').toUpperCase();
-    return !unit || unit === 'ELEMENTARY' || unit === 'ALL';
-  }
-  return false;
-}
+
 
 /**
  * Computes a hash or fingerprint of student scores to detect changes after narrative submission/approval.
  */
-export function computeStudentScoresHash(scoresDoc: ElementaryMonthlyStudentScoreDoc | null): string {
-  if (!scoresDoc || !scoresDoc.scores) return '';
-  const entries = Object.entries(scoresDoc.scores).sort((a, b) => a[0].localeCompare(b[0]));
-  return entries.map(([loId, val]) => `${loId}:${val}`).join('|');
-}
+
 
 /**
  * Fetches all student narratives for a class and month.
@@ -1026,37 +934,12 @@ export async function saveElementaryMonthlyStudentNarrativeDoc(
   narrativeDoc: ElementaryMonthlyWriteInput<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentNarrativeDoc>,
   user?: User | null
 ): Promise<void> {
-  try {
-    const docId = buildMonthlyStudentNarrativeDocId(
-      narrativeDoc.studentId,
-      narrativeDoc.classId,
-      narrativeDoc.academicYear,
-      narrativeDoc.semester,
-      narrativeDoc.month
-    );
-    const docRef = doc(db, 'elem_monthly_student_narratives', docId);
-
-    const now = Date.now();
-    const userId = user?.uid || (user as any)?.id || 'unknown';
-    const userName = user?.displayName || (user as any)?.name || 'Guru';
-
-    const payload: import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentNarrativeDoc = {
-      ...narrativeDoc,
-      id: docId,
-      reviewStatus: narrativeDoc.reviewStatus || 'DRAFT',
-      createdAt: narrativeDoc.createdAt || now,
-      createdBy: narrativeDoc.createdBy || userId,
-      createdByName: narrativeDoc.createdByName || userName,
-      updatedAt: now,
-      updatedBy: userId,
-      updatedByName: userName
-    };
-
-    await setDoc(docRef, payload, { merge: true });
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', `elem_monthly_student_narratives/${narrativeDoc.studentId}`);
-    throw err;
-  }
+  const result = await mutateMonthlyNarrative({
+    classId: narrativeDoc.classId, studentId: narrativeDoc.studentId,
+    academicYear: narrativeDoc.academicYear, semester: narrativeDoc.semester, month: narrativeDoc.month,
+    action: 'save', narrativeDoc, expectedRevision: narrativeDoc.revision ?? 0
+  });
+  Object.assign(narrativeDoc, result.narrativeDoc);
 }
 
 /**
@@ -1072,32 +955,7 @@ export async function submitElementaryMonthlyNarrativeForReview(params: {
   currentScoresHash?: string;
   user?: User | null;
 }): Promise<void> {
-  const { studentId, studentName, classId, academicYear, semester, month, currentScoresHash, user } = params;
-  try {
-    const docId = buildMonthlyStudentNarrativeDocId(studentId, classId, academicYear, semester, month);
-    const docRef = doc(db, 'elem_monthly_student_narratives', docId);
-
-    const now = Date.now();
-    const userId = user?.uid || (user as any)?.id || 'unknown';
-    const userName = user?.displayName || (user as any)?.name || 'Guru';
-
-    const updateData: Partial<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentNarrativeDoc> = {
-      reviewStatus: 'SUBMITTED',
-      submittedAt: now,
-      submittedBy: userId,
-      submittedByName: userName,
-      lastScoresHash: currentScoresHash || '',
-      isSourceStale: false,
-      updatedAt: now,
-      updatedBy: userId,
-      updatedByName: userName
-    };
-
-    await setDoc(docRef, updateData, { merge: true });
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', `elem_monthly_student_narratives/${studentId}/submit`);
-    throw err;
-  }
+  await mutateMonthlyNarrative({ ...params, action: 'submit' });
 }
 
 /**
@@ -1112,42 +970,14 @@ export async function bulkSubmitElementaryMonthlyNarratives(params: {
   scoresMap: Record<string, ElementaryMonthlyStudentScoreDoc>;
   user?: User | null;
 }): Promise<number> {
-  const { classId, academicYear, semester, month, studentIds, scoresMap, user } = params;
-  try {
-    const batch = writeBatch(db);
-    const now = Date.now();
-    const userId = user?.uid || (user as any)?.id || 'unknown';
-    const userName = user?.displayName || (user as any)?.name || 'Guru';
-    let count = 0;
-
-    for (const studentId of studentIds) {
-      const docId = buildMonthlyStudentNarrativeDocId(studentId, classId, academicYear, semester, month);
-      const docRef = doc(db, 'elem_monthly_student_narratives', docId);
-      const scoresHash = computeStudentScoresHash(scoresMap[studentId] || null);
-
-      batch.set(docRef, {
-        reviewStatus: 'SUBMITTED',
-        submittedAt: now,
-        submittedBy: userId,
-        submittedByName: userName,
-        lastScoresHash: scoresHash,
-        isSourceStale: false,
-        updatedAt: now,
-        updatedBy: userId,
-        updatedByName: userName
-      }, { merge: true });
-
-      count++;
-    }
-
-    if (count > 0) {
-      await batch.commit();
-    }
-    return count;
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', 'elem_monthly_student_narratives/bulkSubmit');
-    throw err;
+  let count = 0;
+  const failures: string[] = [];
+  for (const studentId of [...new Set(params.studentIds)]) {
+    try { await mutateMonthlyNarrative({ ...params, studentId, action: 'submit' }); count++; }
+    catch (e) { failures.push(`${studentId}: ${e instanceof Error ? e.message : String(e)}`); }
   }
+  if (failures.length) throw new Error(`Berhasil: ${count}. Gagal: ${failures.length}. Muat ulang status; ulangi hanya siswa yang belum diajukan.\n${failures.join('\n')}`);
+  return count;
 }
 
 /**
@@ -1164,42 +994,7 @@ export async function reviewElementaryMonthlyNarrative(params: {
   reviewNotes?: string;
   reviewer: User | null;
 }): Promise<void> {
-  const { studentId, classId, academicYear, semester, month, action, reviewNotes, reviewer } = params;
-
-  if (!isElementaryHeadOrSuperAdmin(reviewer)) {
-    throw new Error('Hanya Head of Unit Elementary atau Super Admin yang berwenang meninjau atau menyetujui narasi.');
-  }
-
-  if (action === 'REQUEST_REVISION' && (!reviewNotes || !reviewNotes.trim())) {
-    throw new Error('Catatan revisi wajib diisi saat meminta revisi narasi.');
-  }
-
-  try {
-    const docId = buildMonthlyStudentNarrativeDocId(studentId, classId, academicYear, semester, month);
-    const docRef = doc(db, 'elem_monthly_student_narratives', docId);
-
-    const now = Date.now();
-    const reviewerId = reviewer?.uid || (reviewer as any)?.id || 'unknown';
-    const reviewerName = reviewer?.displayName || (reviewer as any)?.name || 'Head Unit';
-    const reviewerRole = (reviewer?.role || (reviewer as any)?.roleId || 'HEAD_UNIT').toUpperCase();
-
-    const updateData: Partial<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentNarrativeDoc> = {
-      reviewStatus: action === 'APPROVE' ? 'APPROVED' : 'NEEDS_REVISION',
-      reviewNotes: action === 'REQUEST_REVISION' ? reviewNotes!.trim() : (reviewNotes || ''),
-      reviewedAt: now,
-      reviewedBy: reviewerId,
-      reviewedByName: reviewerName,
-      reviewedRole: reviewerRole,
-      updatedAt: now,
-      updatedBy: reviewerId,
-      updatedByName: reviewerName
-    };
-
-    await setDoc(docRef, updateData, { merge: true });
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', `elem_monthly_student_narratives/${studentId}/review`);
-    throw err;
-  }
+  await mutateMonthlyNarrative({ ...params, action: params.action === 'APPROVE' ? 'approve' : 'revision' });
 }
 
 /**
@@ -1213,46 +1008,14 @@ export async function bulkApproveElementaryMonthlyNarratives(params: {
   studentIds: string[];
   reviewer: User | null;
 }): Promise<number> {
-  const { classId, academicYear, semester, month, studentIds, reviewer } = params;
-
-  if (!isElementaryHeadOrSuperAdmin(reviewer)) {
-    throw new Error('Hanya Head of Unit Elementary atau Super Admin yang berwenang menyetujui narasi.');
+  let count = 0;
+  const failures: string[] = [];
+  for (const studentId of [...new Set(params.studentIds)]) {
+    try { await mutateMonthlyNarrative({ ...params, studentId, action: 'approve' }); count++; }
+    catch (e) { failures.push(`${studentId}: ${e instanceof Error ? e.message : String(e)}`); }
   }
-
-  try {
-    const batch = writeBatch(db);
-    const now = Date.now();
-    const reviewerId = reviewer?.uid || (reviewer as any)?.id || 'unknown';
-    const reviewerName = reviewer?.displayName || (reviewer as any)?.name || 'Head Unit';
-    const reviewerRole = (reviewer?.role || (reviewer as any)?.roleId || 'HEAD_UNIT').toUpperCase();
-    let count = 0;
-
-    for (const studentId of studentIds) {
-      const docId = buildMonthlyStudentNarrativeDocId(studentId, classId, academicYear, semester, month);
-      const docRef = doc(db, 'elem_monthly_student_narratives', docId);
-
-      batch.set(docRef, {
-        reviewStatus: 'APPROVED',
-        reviewedAt: now,
-        reviewedBy: reviewerId,
-        reviewedByName: reviewerName,
-        reviewedRole: reviewerRole,
-        updatedAt: now,
-        updatedBy: reviewerId,
-        updatedByName: reviewerName
-      }, { merge: true });
-
-      count++;
-    }
-
-    if (count > 0) {
-      await batch.commit();
-    }
-    return count;
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', 'elem_monthly_student_narratives/bulkApprove');
-    throw err;
-  }
+  if (failures.length) throw new Error(`Berhasil: ${count}. Gagal: ${failures.length}. Muat ulang status; ulangi hanya siswa yang masih diajukan.\n${failures.join('\n')}`);
+  return count;
 }
 
 /**
@@ -1267,25 +1030,7 @@ export async function unlockElementaryMonthlyNarrativeForEdit(params: {
   month: string;
   user: User | null;
 }): Promise<void> {
-  const { studentId, classId, academicYear, semester, month, user } = params;
-  try {
-    const docId = buildMonthlyStudentNarrativeDocId(studentId, classId, academicYear, semester, month);
-    const docRef = doc(db, 'elem_monthly_student_narratives', docId);
-
-    const now = Date.now();
-    const userId = user?.uid || (user as any)?.id || 'unknown';
-    const userName = user?.displayName || (user as any)?.name || 'Guru';
-
-    await setDoc(docRef, {
-      reviewStatus: 'DRAFT',
-      updatedAt: now,
-      updatedBy: userId,
-      updatedByName: userName
-    }, { merge: true });
-  } catch (err: any) {
-    handleFirestoreError(err, 'write', `elem_monthly_student_narratives/${studentId}/unlock`);
-    throw err;
-  }
+  await mutateMonthlyNarrative({ ...params, action: 'unlock' });
 }
 
 // ==========================================
@@ -1488,26 +1233,9 @@ import type {
   ElementaryMonthlyStudentNarrativeDoc
 } from '../types/elementaryMonthlyReport';
 
-export function buildMonthlyAttendanceConfigDocId(
-  classId: string,
-  academicYear: string,
-  semester: string,
-  month: string
-): string {
-  const normYear = normalizeAcademicYear(academicYear);
-  return `${classId}_${normYear}_S${semester}_M${month}`;
-}
 
-export function buildPublishedMonthlyReportDocId(
-  academicYear: string,
-  semester: string,
-  month: string,
-  classId: string,
-  studentId: string
-): string {
-  const normYear = normalizeAcademicYear(academicYear);
-  return `${normYear}_S${semester}_M${month}_${classId}_${studentId}`;
-}
+
+
 
 export async function fetchElementaryMonthlyAttendanceConfig(
   classId: string,
@@ -1593,12 +1321,7 @@ export async function saveElementaryMonthlyAttendanceConfig(
  * Calculates student attendance percentage strictly.
  * Missing data is NOT assumed 100%. Returns isAvailable: false if data is missing.
  */
-export function calculateStudentAttendanceSummary(
-  config: ElementaryMonthlyAttendanceConfig | null,
-  studentId: string
-): ElementaryMonthlyAttendanceSummary {
-  return buildElementaryMonthlyAttendanceSummary(config, studentId);
-}
+
 
 export async function fetchPublishedElementaryMonthlyReports(
   classId: string,

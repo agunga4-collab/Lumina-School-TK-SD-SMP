@@ -2102,7 +2102,16 @@ service cloud.firestore {
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
-      allow write: if isActive() && isElementaryStaff();
+      // All narrative mutations require the authenticated backend.
+      allow write: if false;
+    }
+
+    // Rubrics/bindings are accessed through the SEL backend only.
+    match /elem_monthly_sel_rubrics/{id} {
+      allow read, write: if false;
+    }
+    match /elem_monthly_sel_bindings/{id} {
+      allow read, write: if false;
     }
 
     match /elem_monthly_attendance_configs/{configId} {

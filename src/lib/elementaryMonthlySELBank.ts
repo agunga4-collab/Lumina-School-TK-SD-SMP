@@ -25,128 +25,11 @@ export const ELEMENTARY_LOWER_SEL_GRADE_ASPECTS: Record<number, string[]> = {
   3: ['empati', 'motivasi_diri', 'komunikasi']
 };
 
-export const ELEMENTARY_LOWER_SEL_ASPECT_DEFINITIONS: Record<string, SELAspectDefinition> = {
-  disiplin_diri: {
-    key: 'disiplin_diri',
-    title: 'Disiplin Diri',
-    description: 'Kemampuan mengikuti tata tertib, rutinitas kelas, dan kemandirian menjaga perlengkapan belajar.',
-    isBankConfigured: true,
-    templates: [
-      {
-        id: 'dd_1',
-        text: 'Mampu mematuhi rutinitas dan instruksi kelas secara mandiri serta teratur menjaga kerapian perlengkapan belajarnya.'
-      },
-      {
-        id: 'dd_2',
-        text: 'Menunjukkan kesadaran yang baik terhadap aturan kelas dan mulai konsisten menyelesaikan tugas tepat waktu.'
-      },
-      {
-        id: 'dd_3',
-        text: 'Sedang berproses membangun fokus saat pembelajaran mandiri serta bersikap kooperatif saat diingatkan guru.'
-      }
-    ]
-  },
-  keterlibatan_sosial: {
-    key: 'keterlibatan_sosial',
-    title: 'Keterlibatan Sosial',
-    description: 'Interaksi positif dengan rekan sebaya, sikap santun, dan partisipasi aktif di lingkungan sekolah.',
-    isBankConfigured: true,
-    templates: [
-      {
-        id: 'ks_1',
-        text: 'Aktif berinteraksi positif dengan teman sebaya dan senang berpartisipasi dalam setiap kegiatan bersama di kelas.'
-      },
-      {
-        id: 'ks_2',
-        text: 'Menunjukkan sikap ramah, senang berbagi, serta menyapa guru dan teman dengan santun setiap hari.'
-      },
-      {
-        id: 'ks_3',
-        text: 'Mulai mengembangkan rasa percaya diri dalam pergaulan di sekolah dan terbuka ketika diajak berinteraksi oleh teman.'
-      }
-    ]
-  },
-  komunikasi: {
-    key: 'komunikasi',
-    title: 'Komunikasi',
-    description: 'Keterampilan menyampaikan pendapat secara santun dan menyimak teman maupun guru secara aktif.',
-    isBankConfigured: true,
-    templates: [
-      {
-        id: 'km_1',
-        text: 'Mampu menyampaikan gagasan, perasaan, dan pertanyaan dengan sopan, teratur, serta menggunakan intonasi yang jelas.'
-      },
-      {
-        id: 'km_2',
-        text: 'Menyimak dengan penuh perhatian saat orang lain berbicara dan mampu memberikan tanggapan yang relevan.'
-      },
-      {
-        id: 'km_3',
-        text: 'Mulai berani mengutarakan pendapat dalam forum kelas dengan dorongan positif serta pendampingan guru.'
-      }
-    ]
-  },
-  kerja_sama_tim: {
-    key: 'kerja_sama_tim',
-    title: 'Kerja Sama Tim',
-    description: 'Semangat kolaborasi, kesediaan berbagi tugas, dan menghargai peran rekan satu kelompok.',
-    isBankConfigured: true,
-    templates: [
-      {
-        id: 'kt_1',
-        text: 'Menunjukkan semangat kolaborasi yang solid, bersedia berbagi tugas, dan saling menyemangati rekan satu kelompok.'
-      },
-      {
-        id: 'kt_2',
-        text: 'Dapat bekerja sama secara positif dalam tugas kelompok serta menghormati kesepakatan bersama.'
-      },
-      {
-        id: 'kt_3',
-        text: 'Sedang membiasakan diri untuk berbagi tanggung jawab dan mendengarkan masukan teman saat bekerja kelompok.'
-      }
-    ]
-  },
-  empati: {
-    key: 'empati',
-    title: 'Empati',
-    description: 'Kepekaan terhadap perasaan orang lain, sikap tenggang rasa, dan kepedulian sosial.',
-    isBankConfigured: true,
-    templates: [
-      {
-        id: 'em_1',
-        text: 'Menunjukkan kepedulian yang tulus terhadap perasaan orang lain dan tanggap memberikan bantuan kepada teman yang membutuhkan.'
-      },
-      {
-        id: 'em_2',
-        text: 'Bersikap tenggang rasa, menghormati perbedaan, dan senantiasa menjaga kerukunan dalam pergaulan di sekolah.'
-      },
-      {
-        id: 'em_3',
-        text: 'Mulai belajar memahami situasi teman sebaya dan merespons kondisi sekitar dengan sikap santun dan peduli.'
-      }
-    ]
-  },
-  motivasi_diri: {
-    key: 'motivasi_diri',
-    title: 'Motivasi Diri',
-    description: 'Inisiatif belajar mandiri, kegigihan dalam menghadapi tantangan, dan semangat bertumbuh.',
-    isBankConfigured: true,
-    templates: [
-      {
-        id: 'md_1',
-        text: 'Memiliki inisiatif belajar mandiri yang kuat, antusias mencoba tantangan baru, dan gigih menyelesaikan tugas hingga tuntas.'
-      },
-      {
-        id: 'md_2',
-        text: 'Menunjukkan tekad yang konsisten untuk terus berkembang dan menyelesaikan setiap kegiatan pembelajaran dengan sungguh-sungguh.'
-      },
-      {
-        id: 'md_3',
-        text: 'Menunjukkan kemauan belajar yang terus bertumbuh dan semakin termotivasi ketika mendapatkan apresiasi serta arahan terarah.'
-      }
-    ]
-  }
-};
+export const ELEMENTARY_LOWER_SEL_ASPECT_DEFINITIONS: Record<string, SELAspectDefinition> = Object.fromEntries([
+  ['disiplin_diri', 'Disiplin Diri'], ['keterlibatan_sosial', 'Keterlibatan Sosial'],
+  ['komunikasi', 'Komunikasi'], ['kerja_sama_tim', 'Kerja Sama Tim'],
+  ['empati', 'Empati'], ['motivasi_diri', 'Motivasi Diri']
+].map(([key, title]) => [key, { key, title, description: '', isBankConfigured: false, templates: [] }]));
 
 /**
  * Extracts official elementary lower grade number (1, 2, or 3) from Class data.
@@ -193,7 +76,7 @@ export function assembleDeterministicSELNarrative(params: {
   
   const effectiveOpening = (opening && opening.trim()) 
     ? opening.trim() 
-    : `Dalam perkembangan sosial dan emosional periode ini, ${studentName} menunjukkan proses adaptasi karakter yang positif di lingkungan sekolah.`;
+    : '';
 
   let hasAspectContent = false;
   const aspectSentences: string[] = [];
@@ -230,7 +113,7 @@ export function assembleDeterministicSELNarrative(params: {
 
   const effectiveClosing = (closing && closing.trim())
     ? closing.trim()
-    : `Semoga ananda terus menumbuhkan potensi terbaik dan nilai-nilai kebaikan dalam keseharian di sekolah.`;
+    : '';
   sentences.push(effectiveClosing);
 
   return sentences.join(' ');
@@ -288,4 +171,82 @@ export function assembleDeterministicAcademicNarrative(params: {
   sentences.push(effectiveClosing);
 
   return sentences.join(' ');
+}
+
+import type { SELRubric, SELAchievement, ElementaryMonthlySelSource } from '../types/elementaryMonthlyReport';
+
+export const SEL_LEVELS: SELAchievement[] = ['MB', 'SB', 'BSH', 'SAB'];
+export const SEL_LABELS: Record<SELAchievement, string> = {
+  MB: 'Masih Berkembang', SB: 'Sedang Berkembang',
+  BSH: 'Berkembang Sesuai Harapan', SAB: 'Sangat Berkembang'
+};
+export function normalizeSELAchievement(value: unknown): SELAchievement | '' {
+  const normalized = value === 'SD' ? 'SB' : value;
+  return SEL_LEVELS.includes(normalized as SELAchievement) ? normalized as SELAchievement : '';
+}
+export function renderSELText(text: string, values: Record<string, string>): string {
+  return text.replace(/\{(namaPanggilan|namaSiswa|bulan|kelas)\}/g, (_, key) => values[key] || '').trim();
+}
+export function selSourceFingerprint(source: ElementaryMonthlySelSource): string {
+  // Canonical content signature, independent of object insertion order and final manual edits.
+  return JSON.stringify([
+    source.rubricId, source.rubricVersion, source.classId, source.academicYear, source.semester, source.month,
+    source.opening || '', source.closing || '',
+    ...Object.keys(source.aspects || {}).sort().map(key => {
+      const a = source.aspects![key];
+      return [key, normalizeSELAchievement(a.achievement), a.variantId || '', a.selectedText || '', a.teacherNote || ''];
+    })
+  ]);
+}
+export function createBlankSELRubric(context: Pick<SELRubric, 'academicYear' | 'semester' | 'month' | 'gradeLevel'>): SELRubric {
+  return {
+    ...context, id: '', version: 1, revision: 0, name: '', classIds: [], opening: '', closing: '',
+    status: 'DRAFT', createdAt: 0, createdBy: '', updatedAt: 0, updatedBy: '',
+    aspects: (ELEMENTARY_LOWER_SEL_GRADE_ASPECTS[context.gradeLevel] || []).map(key => ({
+      key, title: ELEMENTARY_LOWER_SEL_ASPECT_DEFINITIONS[key].title,
+      levels: Object.fromEntries(SEL_LEVELS.map(level => [level, [{ id: 'v1', text: '' }]])) as any
+    }))
+  };
+}
+export function validateSELRubric(rubric: SELRubric): string[] {
+  const errors: string[] = [];
+  if (!rubric.name.trim()) errors.push('Nama rubrik wajib diisi.');
+  if (!rubric.classIds.length) errors.push('Pilih minimal satu kelas penerima.');
+  if (!rubric.opening.trim() || !rubric.closing.trim()) errors.push('Pembuka dan penutup wajib diisi.');
+  if (!rubric.aspects.length) errors.push('Minimal satu aspek wajib diisi.');
+  if (new Set(rubric.aspects.map(a => a.key)).size !== rubric.aspects.length) errors.push('ID aspek ganda.');
+  for (const aspect of rubric.aspects) {
+    if (!aspect.title.trim()) errors.push('Nama aspek wajib diisi.');
+    for (const level of SEL_LEVELS) {
+      const variants = aspect.levels[level] || [];
+      if (!variants.length || variants.some(v => !v.text.trim())) errors.push(`${aspect.title}: redaksi ${level} belum lengkap.`);
+      if (new Set(variants.map(v => v.id)).size !== variants.length) errors.push(`${aspect.title}: ID varian ${level} ganda.`);
+    }
+  }
+  const texts = [rubric.opening, rubric.closing, ...rubric.aspects.flatMap(a => SEL_LEVELS.flatMap(l => (a.levels[l] || []).map(v => v.text)))];
+  if (texts.some(t => /\{[^{}]+\}/g.test(t.replace(/\{(namaPanggilan|namaSiswa|bulan|kelas)\}/g, '')))) errors.push('Placeholder tidak dikenal.');
+  return errors;
+}
+export function validateSELSource(source: ElementaryMonthlySelSource | undefined, rubric: SELRubric | null): string[] {
+  if (source?.schemaVersion !== 2) return []; // Legacy text is never reverse-inferred or force-migrated.
+  if (!rubric || rubric.status !== 'APPLIED' || source.rubricId !== rubric.id || source.rubricVersion !== rubric.version) return ['ID/versi rubrik sumber tidak sesuai.'];
+  const errors: string[] = [];
+  if (!source.placeholders || ['namaSiswa','namaPanggilan','bulan','kelas'].some(k => typeof source.placeholders![k] !== 'string' || !source.placeholders![k].trim())) errors.push('Konteks placeholder siswa belum lengkap.');
+  if (source.academicYear !== rubric.academicYear || source.semester !== rubric.semester || source.month !== rubric.month || !rubric.classIds.includes(source.classId || '')) errors.push('Konteks rubrik tidak sesuai.');
+  if (source.opening !== rubric.opening || source.closing !== rubric.closing) errors.push('Pembuka/penutup sumber tidak sesuai rubrik.');
+  if (Object.keys(source.aspects || {}).length !== rubric.aspects.length) errors.push('Jumlah aspek sumber tidak sesuai.');
+  for (const aspect of rubric.aspects) {
+    const selected = source.aspects?.[aspect.key];
+    const level = normalizeSELAchievement(selected?.achievement);
+    const variant = level && aspect.levels[level].find(v => v.id === selected?.variantId);
+    if (!variant || !selected?.selectedText?.trim()) errors.push(`${aspect.title}: belum dinilai atau varian kosong.`);
+    else if (selected.selectedText !== renderSELText(variant.text, source.placeholders || {})) errors.push(`${aspect.title}: snapshot redaksi tidak sesuai.`);
+  }
+  return errors;
+}
+export function assembleRubricSEL(source: ElementaryMonthlySelSource, rubric: SELRubric | null): string {
+  if (validateSELSource(source, rubric).length || !rubric) return '';
+  return [renderSELText(source.opening || '', source.placeholders || {}),
+    ...rubric.aspects.flatMap(a => [source.aspects?.[a.key]?.selectedText || '', source.aspects?.[a.key]?.teacherNote?.trim() || '']),
+    renderSELText(source.closing || '', source.placeholders || {})].filter(Boolean).join(' ');
 }

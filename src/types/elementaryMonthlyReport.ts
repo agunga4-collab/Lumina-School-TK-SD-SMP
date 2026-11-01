@@ -261,7 +261,42 @@ export interface ElementaryMonthlyAcademicSource {
   isManuallyEdited?: boolean;
 }
 
+export type SELAchievement = 'MB' | 'SB' | 'BSH' | 'SAB';
+export interface SELRubricAspect {
+  key: string;
+  title: string;
+  levels: Record<SELAchievement, { id: string; text: string }[]>;
+}
+export interface SELRubric {
+  id: string;
+  version: number;
+  previousId?: string;
+  revision: number;
+  name: string;
+  academicYear: string;
+  semester: string;
+  month: string;
+  gradeLevel: number;
+  classIds: string[];
+  opening: string;
+  closing: string;
+  aspects: SELRubricAspect[];
+  status: 'DRAFT' | 'APPLIED';
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+export interface SELRubricBinding {
+  rubricId: string;
+  version: number;
+  revision: number;
+  classId: string;
+}
+
 export interface ElementaryMonthlySelAspectSelection {
+  achievement?: SELAchievement | 'SD' | '';
+  variantId?: string;
   mode?: 'template' | 'custom';
   templateId?: string;
   selectedText?: string;
@@ -270,6 +305,15 @@ export interface ElementaryMonthlySelAspectSelection {
 }
 
 export interface ElementaryMonthlySelSource {
+  schemaVersion?: 2;
+  rubricId?: string;
+  rubricVersion?: number;
+  classId?: string;
+  academicYear?: string;
+  semester?: string;
+  month?: string;
+  placeholders?: Record<'namaPanggilan' | 'namaSiswa' | 'bulan' | 'kelas', string>;
+  assembledFingerprint?: string;
   gradeLevel?: number;
   templateVersion?: string;
   opening?: string;
@@ -296,6 +340,7 @@ export interface ElementaryMonthlyStudentNarrativeDoc {
   // 2. Social Emotional Profile (SEL, fokus bulanan & observasi)
   selProfile: string; // Final rendered text
   selDraft?: string;
+  revision?: number;
   selSource?: ElementaryMonthlySelSource; // Structured teacher input
   
   // Single Review Package covering both narratives
