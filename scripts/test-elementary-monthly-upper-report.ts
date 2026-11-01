@@ -8,7 +8,12 @@ import {
   buildUpperAttendanceConfigDocId,
   normalizeUpperReportFilename,
   validateUpperMonthlyProgressPublishEligibility,
-  validateUpperLiteracyNumeracyPublishEligibility
+  validateUpperLiteracyNumeracyPublishEligibility,
+  calculateUpperLitNumPredicate,
+  validateLitNumThresholds,
+  compileLitNumNarrative,
+  DEFAULT_LITNUM_TEMPLATES,
+  getJakartaDateInfo
 } from '../src/types/elementaryMonthlyUpperReport';
 import { 
   buildUpperCurriculumDocId,
@@ -401,6 +406,8 @@ assert(evalLitNumMissingMath.isEligible === false, 'Missing Math narrative block
 
 // 14. Verify Components & PDF Generators
 console.log('\n--- Test 14: Verify UI Components & PDF Generators ---');
+// 14. Verify Components & PDF Generators
+console.log('\n--- Test 14: Verify UI Components & PDF Generators ---');
 assert(typeof generateUpperMonthlyProgressPdfBlob === 'function', 'generateUpperMonthlyProgressPdfBlob is defined');
 assert(typeof generateUpperLiteracyNumeracyPdfBlob === 'function', 'generateUpperLiteracyNumeracyPdfBlob is defined');
 assert(typeof UpperMonthlyProgressDocument === 'function', 'UpperMonthlyProgressDocument component is defined');
@@ -410,7 +417,90 @@ assert(typeof UpperMonthlyReportPreviewModal === 'function', 'UpperMonthlyReport
 assert(typeof UpperPublicationTrackingTab === 'function', 'UpperPublicationTrackingTab component is defined');
 assert(typeof ElementaryMonthlyUpperReportPage === 'function', 'ElementaryMonthlyUpperReportPage container is defined');
 
-console.log('\nALL 52 TESTS PASSED SUCCESSFULLY!');
+// 15. Test Jakarta Default Month Logic (Asia/Jakarta, Day 1-10 prev month, Day 11+ current month)
+console.log('\n--- Test 15: Jakarta Default Month Rules (Asia/Jakarta) ---');
+// 1 Nov 2026 -> Oct 2026 (2026-10, Sem 1, 2026/2027)
+const dNov1 = new Date('2026-11-01T09:00:00+07:00');
+const resNov1 = getJakartaDateInfo(dNov1);
+assert(resNov1.defaultYm === '2026-10', '1 Nov 2026 defaults to 2026-10 (previous month)');
+assert(resNov1.semester === '1', '2026-10 is Semester 1');
+assert(resNov1.academicYear === '2026/2027', '2026-10 is Academic Year 2026/2027');
+
+// 10 Nov 2026 -> Oct 2026 (2026-10)
+const dNov10 = new Date('2026-11-10T23:59:59+07:00');
+const resNov10 = getJakartaDateInfo(dNov10);
+assert(resNov10.defaultYm === '2026-10', '10 Nov 2026 defaults to 2026-10 (previous month)');
+
+// 11 Nov 2026 -> Nov 2026 (2026-11)
+const dNov11 = new Date('2026-11-11T00:00:01+07:00');
+const resNov11 = getJakartaDateInfo(dNov11);
+assert(resNov11.defaultYm === '2026-11', '11 Nov 2026 defaults to 2026-11 (current month)');
+assert(resNov11.semester === '1', '2026-11 is Semester 1');
+
+// 1 Jan 2027 -> Dec 2026 (2026-12)
+const dJan1 = new Date('2027-01-01T08:00:00+07:00');
+const resJan1 = getJakartaDateInfo(dJan1);
+assert(resJan1.defaultYm === '2026-12', '1 Jan 2027 defaults to 2026-12 (previous month & rollover year)');
+assert(resJan1.semester === '1', '2026-12 is Semester 1');
+assert(resJan1.academicYear === '2026/2027', '2026-12 belongs to Academic Year 2026/2027');
+
+// 11 Jan 2027 -> Jan 2027 (2027-01)
+const dJan11 = new Date('2027-01-11T10:00:00+07:00');
+const resJan11 = getJakartaDateInfo(dJan11);
+assert(resJan11.defaultYm === '2027-01', '11 Jan 2027 defaults to 2027-01 (current month)');
+assert(resJan11.semester === '2', '2027-01 is Semester 2');
+assert(resJan11.academicYear === '2026/2027', '2027-01 belongs to Academic Year 2026/2027');
+
+// 16. Test LitNum Predicate Classification (A / D / B, Kosong != 0, unrounded cutoff)
+console.log('\n--- Test 16: LitNum Predicate Classification (A/D/B) ---');
+const testTh = { minA: 85, minD: 70 };
+
+assert(calculateUpperLitNumPredicate(null, testTh) === null, 'null score produces null predicate');
+assert(calculateUpperLitNumPredicate(undefined, testTh) === null, 'undefined score produces null predicate');
+assert(calculateUpperLitNumPredicate(NaN, testTh) === null, 'NaN score produces null predicate');
+
+assert(calculateUpperLitNumPredicate(0, testTh) === 'B', 'Explicit 0 score is counted and produces B');
+assert(calculateUpperLitNumPredicate(69.9, testTh) === 'B', '69.9 < 70 produces B');
+assert(calculateUpperLitNumPredicate(70, testTh) === 'D', '70 >= minD produces D');
+assert(calculateUpperLitNumPredicate(84.99, testTh) === 'D', '84.99 < 85 produces D before rounding (no premature rounding)');
+assert(calculateUpperLitNumPredicate(85, testTh) === 'A', '85 >= minA produces A');
+assert(calculateUpperLitNumPredicate(100, testTh) === 'A', '100 produces A');
+
+// English thresholds (minA: 78, minD: 55)
+const engTh = { minA: 78, minD: 55 };
+assert(calculateUpperLitNumPredicate(54.5, engTh) === 'B', '54.5 < 55 produces B for English');
+assert(calculateUpperLitNumPredicate(55, engTh) === 'D', '55 produces D for English');
+assert(calculateUpperLitNumPredicate(77.9, engTh) === 'D', '77.9 produces D for English');
+assert(calculateUpperLitNumPredicate(78, engTh) === 'A', '78 produces A for English');
+
+// 17. Test Thresholds Validation (No gaps, no overlap, minA > minD)
+console.log('\n--- Test 17: LitNum Thresholds Validation ---');
+const valOk = validateLitNumThresholds({ minA: 85, minD: 70 });
+assert(valOk.isValid === true, 'minA=85, minD=70 is valid');
+
+const valInverted = validateLitNumThresholds({ minA: 65, minD: 70 });
+assert(valInverted.isValid === false, 'minA <= minD is rejected');
+
+const valOutOfRange = validateLitNumThresholds({ minA: 105, minD: 70 });
+assert(valOutOfRange.isValid === false, 'minA > 100 is rejected');
+
+// 18. Test Deterministic Narrative Mapping (NO AI, placeholders populated)
+console.log('\n--- Test 18: Deterministic Auto-Narrative Mapping ---');
+const templateA = DEFAULT_LITNUM_TEMPLATES.bahasa_indonesia.A;
+const compiledA = compileLitNumNarrative(templateA, {
+  studentName: 'Budi Santoso',
+  monthLabel: 'Oktober 2026',
+  fieldLabel: 'Bahasa Indonesia',
+  score: 92,
+  predicate: 'A'
+});
+assert(compiledA.includes('Budi Santoso'), 'compiled narrative includes student name');
+assert(compiledA.includes('Oktober 2026'), 'compiled narrative includes month label');
+assert(compiledA.includes('Achieved'), 'compiled narrative corresponds to Achieved predicate');
+assert(!compiledA.includes('{studentName}'), 'no leftover studentName placeholder');
+assert(!compiledA.includes('{monthLabel}'), 'no leftover monthLabel placeholder');
+
+console.log('\nALL 72 TESTS PASSED SUCCESSFULLY!');
 process.exit(0);
 
 

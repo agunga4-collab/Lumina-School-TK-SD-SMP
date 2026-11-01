@@ -1,24 +1,34 @@
 import * as React from 'react';
 import { 
-  MessageSquare, Sparkles, CheckCircle2, AlertTriangle, AlertCircle, 
-  Lock, Unlock, Send, ShieldCheck, Undo2, Users, FileText, Check, Globe 
+  FileText, CheckCircle2, Clock, AlertCircle, Sparkles, 
+  Send, Save, ArrowLeft, ArrowRight, UserCheck, ShieldAlert,
+  Edit2, Trash2, Globe, AlertTriangle, BookOpen, Layers, RefreshCw, Wand2
 } from 'lucide-react';
 import type { 
+  ElementaryUpperStudentNarrativesDoc,
   ElementaryUpperCurriculumDoc,
   ElementaryUpperStudentDataDoc,
   ElementaryUpperLitNumRecordDoc,
-  ElementaryUpperStudentNarrativesDoc,
-  UpperReviewStatus
+  ElementaryUpperLitNumClassConfigDoc,
+  UpperReviewStatus,
+  UpperLitNumSubjectField,
+  UpperLitNumPredicate
+} from '../../../../types/elementaryMonthlyUpperReport';
+import { 
+  calculateUpperLitNumPredicate,
+  compileLitNumNarrative,
+  DEFAULT_LITNUM_TEMPLATES,
+  UPPER_LITNUM_FIELDS
 } from '../../../../types/elementaryMonthlyUpperReport';
 import { 
   fetchUpperStudentNarrativesMap,
   saveUpperStudentNarratives,
-  submitUpperReviewPackage,
-  reviewUpperApprovalPackage,
-  computeUpperMonthlyScoresHash,
-  computeUpperLitNumHash,
+  reviewUpperStudentNarrativePackage,
+  batchReviewUpperStudentNarrativePackage,
+  buildUpperNarrativesDocId,
   isElementaryUpperHeadOrSuperAdmin,
-  buildUpperNarrativesDocId
+  computeUpperMonthlyScoresHash,
+  computeUpperLitNumHash
 } from '../../../../services/elementaryMonthlyUpperReportService';
 import type { Student, Class, User } from '../../../../types';
 import { toast } from 'sonner';
@@ -26,6 +36,7 @@ import { toast } from 'sonner';
 interface UpperNarasiApprovalTabProps {
   curriculumDoc: ElementaryUpperCurriculumDoc | null;
   studentDataMap: Record<string, ElementaryUpperStudentDataDoc>;
+  classConfig?: ElementaryUpperLitNumClassConfigDoc | null;
   litNumRecordsMap?: Record<string, ElementaryUpperLitNumRecordDoc>;
   students: Student[];
   selectedClass: Class | null;
@@ -34,11 +45,13 @@ interface UpperNarasiApprovalTabProps {
   selectedMonth: string;
   monthLabel: string;
   currentUser: User;
+  onRefreshData?: () => void;
 }
 
 export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
   curriculumDoc,
   studentDataMap,
+  classConfig,
   litNumRecordsMap = {},
   students,
   selectedClass,
@@ -46,7 +59,8 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
   selectedSemester,
   selectedMonth,
   monthLabel,
-  currentUser
+  currentUser,
+  onRefreshData
 }) => {
   const isApprover = isElementaryUpperHeadOrSuperAdmin(currentUser);
 
@@ -63,6 +77,14 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
   const [batchPackageType, setBatchPackageType] = React.useState<'MONTHLY_PROGRESS' | 'LITERACY_NUMERACY'>('MONTHLY_PROGRESS');
   const [batchDecision, setBatchDecision] = React.useState<'APPROVED' | 'NEEDS_REVISION'>('APPROVED');
   const [batchNotes, setBatchNotes] = React.useState<string>('');
+
+  // Confirmation modal for overwriting manual narrative
+  const [confirmModal, setConfirmModal] = React.useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Sync selected student
   React.useEffect(() => {
@@ -159,6 +181,50 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
     setLangPreference(currentNarrative.narrativeLanguage || 'ID');
   }, [currentNarrative]);
 
+  // Helper: LitNum data analysis for selected student
+  const studentLitNumDoc = selectedStudent ? litNumRecordsMap[selectedStudent.id] : null;
+
+  const getFieldLitNumStats = React.useCallback((field: UpperLitNumSubjectField) => {
+    const entry = studentLitNumDoc?.periodScores?.[field]?.[selectedMonth];
+    const scoreVal = entry?.score !== undefined && entry?.score !== null ? entry.score : null;
+    const std = classConfig?.standards?.[field] ?? (field === 'english' ? 55 : 70);
+    const th = classConfig?.thresholds?.[field] ?? (field === 'english' ? { minA: 78, minD: 55 } : { minA: 85, minD: 70 });
+    const predicate = calculateUpperLitNumPredicate(scoreVal, th);
+    const template = classConfig?.narrativeTemplates?.[field]?.[predicate || 'D'] || DEFAULT_LITNUM_TEMPLATES[field][predicate || 'D'];
+    const fieldLabel = field === 'bahasa_indonesia' ? 'Bahasa Indonesia' : field === 'english' ? 'English' : 'Mathematics';
+
+    const compiledTemplate = predicate && selectedStudent ? compileLitNumNarrative(template, {
+      studentName: selectedStudent.name,
+      monthLabel,
+      fieldLabel,
+      score: scoreVal,
+      predicate
+    }) : '';
+
+    return {
+      score: scoreVal,
+      standard: std,
+      thresholds: th,
+      predicate,
+      fieldLabel,
+      compiledTemplate
+    };
+  }, [studentLitNumDoc, selectedMonth, classConfig, monthLabel, selectedStudent]);
+
+  const biStats = React.useMemo(() => getFieldLitNumStats('bahasa_indonesia'), [getFieldLitNumStats]);
+  const engStats = React.useMemo(() => getFieldLitNumStats('english'), [getFieldLitNumStats]);
+  const mathStats = React.useMemo(() => getFieldLitNumStats('mathematics'), [getFieldLitNumStats]);
+
+  // Check Stale Hashes
+  const studentScoresDoc = selectedStudent ? studentDataMap[selectedStudent.id] : null;
+  const currentScoresHash = computeUpperMonthlyScoresHash(studentScoresDoc);
+  const isMonthlyStale = currentNarrative.monthlyProgressReview?.sourceHash && 
+    currentNarrative.monthlyProgressReview.sourceHash !== currentScoresHash;
+
+  const currentLitNumHash = computeUpperLitNumHash(studentLitNumDoc);
+  const isLitNumStale = currentNarrative.litNumReview?.sourceHash &&
+    currentNarrative.litNumReview.sourceHash !== currentLitNumHash;
+
   // Save Text Changes
   const handleSaveTextChanges = async () => {
     if (!selectedStudent || !selectedClass) return;
@@ -183,59 +249,118 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
     }
   };
 
-  // Check Stale Hashes
-  const studentScoresDoc = selectedStudent ? studentDataMap[selectedStudent.id] : null;
-  const currentScoresHash = computeUpperMonthlyScoresHash(studentScoresDoc);
-  const isMonthlyStale = currentNarrative.monthlyProgressReview?.sourceHash && 
-    currentNarrative.monthlyProgressReview.sourceHash !== currentScoresHash;
+  // Deterministic LitNum Template Mapper (NO AI)
+  const applyTemplateToField = (field: UpperLitNumSubjectField, force: boolean = false) => {
+    const stats = field === 'bahasa_indonesia' ? biStats : field === 'english' ? engStats : mathStats;
+    const currentText = field === 'bahasa_indonesia' ? biNarrative : field === 'english' ? engNarrative : mathNarrative;
+    const setText = field === 'bahasa_indonesia' ? setBiNarrative : field === 'english' ? setEngNarrative : setMathNarrative;
 
-  const studentLitNumDoc = selectedStudent ? litNumRecordsMap[selectedStudent.id] : null;
-  const currentLitNumHash = computeUpperLitNumHash(studentLitNumDoc);
-  const isLitNumStale = currentNarrative.litNumReview?.sourceHash &&
-    currentNarrative.litNumReview.sourceHash !== currentLitNumHash;
+    if (stats.score === null || !stats.predicate) {
+      toast.error(`Nilai ${stats.fieldLabel} belum diinput. Tidak dapat memetakan predikat.`);
+      return;
+    }
+
+    if (!stats.compiledTemplate) {
+      toast.error(`Template untuk ${stats.fieldLabel} belum dikonfigurasi.`);
+      return;
+    }
+
+    if (currentText.trim() && currentText.trim() !== stats.compiledTemplate.trim() && !force) {
+      // Prompt confirmation before replacing teacher's manual edits
+      setConfirmModal({
+        isOpen: true,
+        title: `Konfirmasi Penggantian Narasi (${stats.fieldLabel})`,
+        message: `Anda sudah pernah menyunting narasi ${stats.fieldLabel}. Apakah Anda yakin ingin menggantinya dengan template otomatis untuk Predikat ${stats.predicate} (${stats.score}/100)? Perubahan manual Anda akan diganti.`,
+        onConfirm: () => {
+          setText(stats.compiledTemplate);
+          setConfirmModal(null);
+          toast.success(`Narasi ${stats.fieldLabel} diperbarui ke template Predikat ${stats.predicate}.`);
+        }
+      });
+      return;
+    }
+
+    setText(stats.compiledTemplate);
+    toast.success(`Narasi ${stats.fieldLabel} berhasil dipetakan dari template Predikat ${stats.predicate}.`);
+  };
+
+  // Bulk Apply Templates to All 3 LitNum Fields
+  const handleBulkApplyLitNum = () => {
+    let populatedCount = 0;
+    const targets: Array<{ field: UpperLitNumSubjectField; stats: any; currentText: string; setText: (s: string) => void }> = [
+      { field: 'bahasa_indonesia', stats: biStats, currentText: biNarrative, setText: setBiNarrative },
+      { field: 'english', stats: engStats, currentText: engNarrative, setText: setEngNarrative },
+      { field: 'mathematics', stats: mathStats, currentText: mathNarrative, setText: setMathNarrative }
+    ];
+
+    const hasAnyExistingManual = targets.some(t => t.currentText.trim() && t.currentText.trim() !== t.stats.compiledTemplate.trim());
+
+    const doApply = () => {
+      for (const t of targets) {
+        if (t.stats.score !== null && t.stats.compiledTemplate) {
+          t.setText(t.stats.compiledTemplate);
+          populatedCount++;
+        }
+      }
+      setConfirmModal(null);
+      if (populatedCount > 0) {
+        toast.success(`${populatedCount} bidang Literasi & Numerasi berhasil dipetakan dari template.`);
+      } else {
+        toast.info('Belum ada nilai yang diinput pada tab Literasi & Numerasi.');
+      }
+    };
+
+    if (hasAnyExistingManual) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'Konfirmasi Petakan Semua Narasi Litnum',
+        message: 'Beberapa bidang sudah memiliki narasi yang telah disunting. Apakah Anda yakin ingin menimpa semuanya dengan template predikat terbaru?',
+        onConfirm: doApply
+      });
+      return;
+    }
+
+    doApply();
+  };
 
   // Submit Package for Review
   const handleSubmitPackage = async (packageType: 'MONTHLY_PROGRESS' | 'LITERACY_NUMERACY') => {
     if (!selectedStudent || !selectedClass) return;
     try {
-      // Auto save latest edits first
+      // First save current text
       await handleSaveTextChanges();
 
-      const hashToUse = packageType === 'MONTHLY_PROGRESS' ? currentScoresHash : currentLitNumHash;
-      await submitUpperReviewPackage(
+      const sourceHash = packageType === 'MONTHLY_PROGRESS' ? currentScoresHash : currentLitNumHash;
+      await reviewUpperStudentNarrativePackage(
         {
           studentId: selectedStudent.id,
-          studentName: selectedStudent.name,
           classId: selectedClass.id,
           academicYear: selectedYear,
           semester: selectedSemester,
           month: selectedMonth,
           packageType,
-          currentScoresHash: hashToUse
+          decision: 'SUBMITTED',
+          sourceHash
         },
         currentUser
       );
 
-      toast.success(`Paket ${packageType === 'MONTHLY_PROGRESS' ? 'Monthly Progress' : 'Literasi & Numerasi'} berhasil diajukan untuk review.`);
+      toast.success(`Paket ${packageType === 'MONTHLY_PROGRESS' ? 'Monthly Progress' : 'Literasi & Numerasi'} berhasil diajukan.`);
       loadNarratives();
     } catch (e: any) {
-      toast.error('Gagal mengajukan paket review.');
+      toast.error(e.message || 'Gagal mengajukan paket narasi.');
     }
   };
 
-  // Review Package (Head Unit / Super Admin)
+  // Review Package (Approve / Return for Revision)
   const handleReviewPackage = async (
     packageType: 'MONTHLY_PROGRESS' | 'LITERACY_NUMERACY',
     decision: 'APPROVED' | 'NEEDS_REVISION'
   ) => {
     if (!selectedStudent || !selectedClass) return;
-    if (decision === 'NEEDS_REVISION' && !reviewNoteInput.trim()) {
-      toast.error('Catatan revisi wajib diisi jika meminta perbaikan.');
-      return;
-    }
-
     try {
-      await reviewUpperApprovalPackage(
+      const sourceHash = packageType === 'MONTHLY_PROGRESS' ? currentScoresHash : currentLitNumHash;
+      await reviewUpperStudentNarrativePackage(
         {
           studentId: selectedStudent.id,
           classId: selectedClass.id,
@@ -244,7 +369,8 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
           month: selectedMonth,
           packageType,
           decision,
-          notes: reviewNoteInput.trim()
+          reviewNotes: reviewNoteInput,
+          sourceHash
         },
         currentUser
       );
@@ -257,8 +383,8 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
     }
   };
 
-  // AI Assistance: Simple standard draft generators (No hallucination, directly based on student achievements)
-  const handleGenerateMonthlyCommentAI = () => {
+  // Monthly Progress (Package 1) Simple Draft Generator
+  const handleGenerateMonthlyComment = () => {
     const scores = studentScoresDoc?.scores || {};
     const subjs = curriculumDoc?.subjects || [];
     let highCount = 0;
@@ -284,25 +410,7 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
     draft += `Dalam kegiatan proyek kolaboratif, ananda mampu berpartisipasi aktif dan menghargai masukan teman kelompoknya.`;
 
     setMonthlyComment(draft);
-    toast.success('Draf narasi Monthly berhasil dibuat.');
-  };
-
-  const handleGenerateLitNumNarrativeAI = (field: 'BI' | 'ENG' | 'MATH') => {
-    const pScores = studentLitNumDoc?.periodScores || {};
-    if (field === 'BI') {
-      const lastScore = pScores.bahasa_indonesia?.[selectedMonth]?.score;
-      const text = `Pada pembelajaran Bahasa Indonesia bulan ${monthLabel}, Ananda ${selectedStudent?.name} mampu mengidentifikasi ide pokok teks dengan baik dan menyampaikan gagasan secara tertulis dengan struktur kalimat yang runtut (Capaian: ${lastScore !== undefined ? `${lastScore}/100` : 'Memuaskan'}).`;
-      setBiNarrative(text);
-    } else if (field === 'ENG') {
-      const lastScore = pScores.english?.[selectedMonth]?.score;
-      const text = `In English literacy for ${monthLabel}, ${selectedStudent?.name} demonstrates good comprehension in reading short narrative texts and actively expresses simple opinions using appropriate vocabulary (Score: ${lastScore !== undefined ? `${lastScore}/100` : 'Good progress'}).`;
-      setEngNarrative(text);
-    } else {
-      const lastScore = pScores.mathematics?.[selectedMonth]?.score;
-      const text = `Pada bidang Matematika, Ananda ${selectedStudent?.name} menunjukkan penalaran logis dalam menyelesaikan masalah berhitung dan soal cerita konseptual secara terstruktur (Capaian: ${lastScore !== undefined ? `${lastScore}/100` : 'Terarah'}).`;
-      setMathNarrative(text);
-    }
-    toast.success(`Draf narasi ${field} berhasil disiapkan.`);
+    toast.success('Draf narasi Monthly Progress berhasil dibuat.');
   };
 
   const isMonthlyLocked = currentNarrative.monthlyProgressReview?.reviewStatus === 'SUBMITTED' ||
@@ -384,7 +492,7 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
               <span className="text-xs text-slate-500 font-semibold">{selectedClass?.name}</span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Kelola narasi bulanan (Monthly Progress) dan 3 deskripsi Literasi &amp; Numerasi.
+              Nilai sumber → rata-rata → predikat A/D/B otomatis → draf terisi tanpa AI. Guru dapat menyunting teks final.
             </p>
           </div>
 
@@ -458,7 +566,7 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
             </div>
           </div>
 
-          {/* Feedback note banner if Needs Revision */}
+          {/* Feedback note banner */}
           {currentNarrative.monthlyProgressReview?.reviewStatus === 'NEEDS_REVISION' && currentNarrative.monthlyProgressReview?.reviewNotes && (
             <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-xs text-red-800 space-y-1">
               <div className="font-bold flex items-center gap-1.5">
@@ -469,18 +577,18 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
             </div>
           )}
 
-          {/* Text Area */}
-          <div className="space-y-2">
+          {/* Textarea */}
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-slate-700">Komentar Umum Siswa</label>
+              <label className="text-xs font-bold text-slate-700">Teks Komentar Umum</label>
               <button
                 type="button"
-                onClick={handleGenerateMonthlyCommentAI}
+                onClick={handleGenerateMonthlyComment}
                 disabled={isMonthlyLocked}
-                className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 disabled:opacity-40"
+                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 disabled:opacity-40 cursor-pointer"
               >
                 <Sparkles size={12} />
-                <span>Draf AI Otomatis</span>
+                <span>Susun Draf Komentar</span>
               </button>
             </div>
             <textarea
@@ -488,8 +596,8 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
               value={monthlyComment}
               onChange={(e) => setMonthlyComment(e.target.value)}
               disabled={isMonthlyLocked}
-              placeholder="Tuliskan komentar umum mengenai capaian belajar, proyek, dan perilaku positif siswa..."
-              className="w-full p-3 text-xs border border-slate-300 rounded-xl bg-slate-50/40 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:opacity-75 disabled:bg-slate-100"
+              placeholder="Tuliskan catatan kemajuan siswa untuk periode ini..."
+              className="w-full p-3 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100"
             />
           </div>
 
@@ -502,20 +610,18 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Teacher Submit Button */}
               {!isApprover && (
                 <button
                   type="button"
                   onClick={() => handleSubmitPackage('MONTHLY_PROGRESS')}
-                  disabled={isMonthlyLocked && !isMonthlyStale}
-                  className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  disabled={isMonthlyLocked || !monthlyComment.trim()}
+                  className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Send size={13} />
-                  <span>Ajukan Review Paket 1</span>
+                  <Send size={12} />
+                  <span>Ajukan Paket 1</span>
                 </button>
               )}
 
-              {/* Approver Controls (Head Unit / Super Admin) */}
               {isApprover && (
                 <div className="flex items-center gap-2">
                   <input
@@ -557,7 +663,7 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
                   Paket 2: Narasi Literasi &amp; Numerasi (3 Bidang)
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Deskripsi kualitatif mendampingi grafik untuk Bahasa Indonesia, English, dan Mathematics.
+                  Nilai sumber → rata-rata → predikat A/D/B otomatis → draf terisi tanpa AI. Guru dapat menyunting teks final.
                 </p>
               </div>
             </div>
@@ -566,7 +672,7 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
               {isLitNumStale && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
                   <AlertTriangle size={11} />
-                  <span>Stale (Nilai Berubah)</span>
+                  <span>Nilai Sumber Berubah</span>
                 </span>
               )}
 
@@ -577,6 +683,16 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
               }`}>
                 Status: {currentNarrative.litNumReview?.reviewStatus || 'DRAFT'}
               </span>
+
+              <button
+                type="button"
+                onClick={handleBulkApplyLitNum}
+                disabled={isLitNumLocked}
+                className="px-2.5 py-1 text-xs font-bold rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+              >
+                <Wand2 size={12} />
+                <span>Petakan Otomatis (3 Bidang)</span>
+              </button>
             </div>
           </div>
 
@@ -591,46 +707,86 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
             </div>
           )}
 
-          {/* 3 Fields Textareas */}
+          {/* 3 Fields Textareas with Source & Predicate Info */}
           <div className="space-y-4">
             {/* Field A: Bahasa Indonesia */}
-            <div className="space-y-1.5 p-3 rounded-xl border border-blue-100 bg-blue-50/20">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-blue-900">1. Narasi Bahasa Indonesia</label>
+            <div className="space-y-2 p-3.5 rounded-xl border border-blue-200 bg-blue-50/20">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-blue-950">1. Narasi Bahasa Indonesia</span>
+                  {/* Source Score & Predicate Pill */}
+                  {biStats.score !== null ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-800 bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-full">
+                      Nilai: {biStats.score} · Rata-rata: {biStats.score} · Predikat: {biStats.predicate} ({biStats.predicate === 'A' ? 'Achieved' : biStats.predicate === 'D' ? 'Developing' : 'Beginning'})
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                      Nilai belum diinput
+                    </span>
+                  )}
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => handleGenerateLitNumNarrativeAI('BI')}
-                  disabled={isLitNumLocked}
-                  className="text-[11px] font-bold text-blue-700 hover:text-blue-800 flex items-center gap-1 disabled:opacity-40"
+                  onClick={() => applyTemplateToField('bahasa_indonesia')}
+                  disabled={isLitNumLocked || biStats.score === null}
+                  className="text-[11px] font-bold text-blue-700 hover:text-blue-900 flex items-center gap-1 disabled:opacity-40 cursor-pointer"
                 >
-                  <Sparkles size={12} />
-                  <span>Draf BI</span>
+                  <Wand2 size={12} />
+                  <span>Petakan Template {biStats.predicate ? `(${biStats.predicate})` : ''}</span>
                 </button>
               </div>
+
+              {biStats.score === null && (
+                <div className="text-[11px] text-amber-700 font-medium bg-amber-50 p-2 rounded-lg border border-amber-200">
+                  Nilai asesmen Bahasa Indonesia belum diisi di tab Literasi &amp; Numerasi. Predikat dan narasi capaian positif tidak dihasilkan sebelum ada nilai sah.
+                </div>
+              )}
+
               <textarea
                 rows={3}
                 value={biNarrative}
                 onChange={(e) => setBiNarrative(e.target.value)}
                 disabled={isLitNumLocked}
-                placeholder="Deskripsi pencapaian membaca, menulis, dan tata bahasa Indonesia..."
+                placeholder="Tulis atau petakan deskripsi capaian membaca, menulis, dan tata bahasa Indonesia..."
                 className="w-full p-2.5 text-xs border border-slate-300 rounded-lg bg-white disabled:bg-slate-100"
               />
             </div>
 
             {/* Field B: English */}
-            <div className="space-y-1.5 p-3 rounded-xl border border-emerald-100 bg-emerald-50/20">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-emerald-900">2. English Literacy Narrative</label>
+            <div className="space-y-2 p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/20">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-emerald-950">2. English Literacy Narrative</span>
+                  {/* Source Score & Predicate Pill */}
+                  {engStats.score !== null ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full">
+                      Score: {engStats.score} · Average: {engStats.score} · Predicate: {engStats.predicate} ({engStats.predicate === 'A' ? 'Achieved' : engStats.predicate === 'D' ? 'Developing' : 'Beginning'})
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                      Score not assessed
+                    </span>
+                  )}
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => handleGenerateLitNumNarrativeAI('ENG')}
-                  disabled={isLitNumLocked}
-                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 disabled:opacity-40"
+                  onClick={() => applyTemplateToField('english')}
+                  disabled={isLitNumLocked || engStats.score === null}
+                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 disabled:opacity-40 cursor-pointer"
                 >
-                  <Sparkles size={12} />
-                  <span>Draf English</span>
+                  <Wand2 size={12} />
+                  <span>Petakan Template {engStats.predicate ? `(${engStats.predicate})` : ''}</span>
                 </button>
               </div>
+
+              {engStats.score === null && (
+                <div className="text-[11px] text-amber-700 font-medium bg-amber-50 p-2 rounded-lg border border-amber-200">
+                  English assessment score has not been recorded in Literacy &amp; Numeracy tab. Predicate and auto narrative cannot be compiled.
+                </div>
+              )}
+
               <textarea
                 rows={3}
                 value={engNarrative}
@@ -642,19 +798,39 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
             </div>
 
             {/* Field C: Mathematics */}
-            <div className="space-y-1.5 p-3 rounded-xl border border-purple-100 bg-purple-50/20">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-purple-900">3. Mathematics Numeracy Narrative</label>
+            <div className="space-y-2 p-3.5 rounded-xl border border-purple-200 bg-purple-50/20">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-purple-950">3. Mathematics Numeracy Narrative</span>
+                  {/* Source Score & Predicate Pill */}
+                  {mathStats.score !== null ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-800 bg-purple-100 border border-purple-200 px-2 py-0.5 rounded-full">
+                      Nilai: {mathStats.score} · Rata-rata: {mathStats.score} · Predikat: {mathStats.predicate} ({mathStats.predicate === 'A' ? 'Achieved' : mathStats.predicate === 'D' ? 'Developing' : 'Beginning'})
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                      Nilai belum diinput
+                    </span>
+                  )}
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => handleGenerateLitNumNarrativeAI('MATH')}
-                  disabled={isLitNumLocked}
-                  className="text-[11px] font-bold text-purple-700 hover:text-purple-800 flex items-center gap-1 disabled:opacity-40"
+                  onClick={() => applyTemplateToField('mathematics')}
+                  disabled={isLitNumLocked || mathStats.score === null}
+                  className="text-[11px] font-bold text-purple-700 hover:text-purple-900 flex items-center gap-1 disabled:opacity-40 cursor-pointer"
                 >
-                  <Sparkles size={12} />
-                  <span>Draf Math</span>
+                  <Wand2 size={12} />
+                  <span>Petakan Template {mathStats.predicate ? `(${mathStats.predicate})` : ''}</span>
                 </button>
               </div>
+
+              {mathStats.score === null && (
+                <div className="text-[11px] text-amber-700 font-medium bg-amber-50 p-2 rounded-lg border border-amber-200">
+                  Nilai asesmen Matematika belum diisi di tab Literasi &amp; Numerasi. Predikat dan narasi capaian positif tidak dihasilkan sebelum ada nilai sah.
+                </div>
+              )}
+
               <textarea
                 rows={3}
                 value={mathNarrative}
@@ -679,11 +855,11 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
                 <button
                   type="button"
                   onClick={() => handleSubmitPackage('LITERACY_NUMERACY')}
-                  disabled={isLitNumLocked && !isLitNumStale}
-                  className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  disabled={isLitNumLocked || !biNarrative.trim() || !engNarrative.trim() || !mathNarrative.trim()}
+                  className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Send size={13} />
-                  <span>Ajukan Review Paket 2</span>
+                  <Send size={12} />
+                  <span>Ajukan Paket 2</span>
                 </button>
               )}
 
@@ -693,7 +869,7 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
                     type="text"
                     value={reviewNoteInput}
                     onChange={(e) => setReviewNoteInput(e.target.value)}
-                    placeholder="Catatan revisi..."
+                    placeholder="Catatan revisi jika dikembalikan..."
                     className="text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg w-52"
                   />
                   <button
@@ -706,7 +882,7 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
                   <button
                     type="button"
                     onClick={() => handleReviewPackage('LITERACY_NUMERACY', 'APPROVED')}
-                    className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+                    className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
                   >
                     Setujui (Approve)
                   </button>
@@ -716,6 +892,37 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal for Overwriting Manual Edits */}
+      {confirmModal && confirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center gap-2 text-amber-600 font-bold text-sm">
+              <AlertTriangle size={18} />
+              <span>{confirmModal.title}</span>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {confirmModal.message}
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer"
+              >
+                Ya, Ganti dengan Template
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

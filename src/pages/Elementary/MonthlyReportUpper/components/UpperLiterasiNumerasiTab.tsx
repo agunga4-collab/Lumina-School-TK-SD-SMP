@@ -1,17 +1,25 @@
 import * as React from 'react';
 import { 
   BarChart2, Settings2, Plus, Trash2, Edit2, CheckCircle2, 
-  AlertCircle, BookOpen, Calculator, Globe, RefreshCw, Save 
+  AlertCircle, BookOpen, Calculator, Globe, RefreshCw, Save, RotateCcw, AlertTriangle
 } from 'lucide-react';
 import { 
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ReferenceLine, CartesianGrid 
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid 
 } from 'recharts';
 import type { 
   ElementaryUpperLitNumRecordDoc,
   ElementaryUpperLitNumClassConfigDoc,
-  UpperLitNumSubjectField
+  UpperLitNumSubjectField,
+  UpperLitNumPredicate,
+  UpperLitNumThresholds
 } from '../../../../types/elementaryMonthlyUpperReport';
-import { UPPER_LITNUM_FIELDS } from '../../../../types/elementaryMonthlyUpperReport';
+import { 
+  UPPER_LITNUM_FIELDS,
+  DEFAULT_LITNUM_TEMPLATES,
+  validateLitNumThresholds,
+  calculateUpperLitNumPredicate,
+  compileLitNumNarrative
+} from '../../../../types/elementaryMonthlyUpperReport';
 import { 
   fetchUpperLitNumClassConfig,
   fetchUpperLitNumRecordsMap,
@@ -29,6 +37,11 @@ interface UpperLiterasiNumerasiTabProps {
   monthLabel: string;
   students: Student[];
   currentUser: User;
+  classConfig?: ElementaryUpperLitNumClassConfigDoc | null;
+  onConfigChange?: (cfg: ElementaryUpperLitNumClassConfigDoc) => void;
+  litNumRecordsMap?: Record<string, ElementaryUpperLitNumRecordDoc>;
+  onRecordsChange?: (recs: Record<string, ElementaryUpperLitNumRecordDoc>) => void;
+  onRefreshData?: () => void;
 }
 
 export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> = ({
@@ -38,7 +51,12 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
   selectedMonth,
   monthLabel,
   students,
-  currentUser
+  currentUser,
+  classConfig: propClassConfig,
+  onConfigChange,
+  litNumRecordsMap: propRecordsMap,
+  onRecordsChange,
+  onRefreshData
 }) => {
   // Active Field Tab ('bahasa_indonesia' | 'english' | 'mathematics')
   const [activeField, setActiveField] = React.useState<UpperLitNumSubjectField>('bahasa_indonesia');
@@ -46,13 +64,18 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
   // Selected Student for chart inspection
   const [selectedStudentId, setSelectedStudentId] = React.useState<string>(students[0]?.id || '');
 
-  // Class Config & Records State
-  const [classConfig, setClassConfig] = React.useState<ElementaryUpperLitNumClassConfigDoc | null>(null);
-  const [recordsMap, setRecordsMap] = React.useState<Record<string, ElementaryUpperLitNumRecordDoc>>({});
-  const [loading, setLoading] = React.useState<boolean>(true);
+  // Class Config & Records State (synced with props or locally loaded)
+  const [localClassConfig, setLocalClassConfig] = React.useState<ElementaryUpperLitNumClassConfigDoc | null>(null);
+  const [localRecordsMap, setLocalRecordsMap] = React.useState<Record<string, ElementaryUpperLitNumRecordDoc>>({});
+  const [loading, setLoading] = React.useState<boolean>(false);
 
-  // Modal for Config Standards & Periods
+  const effectiveConfig = propClassConfig !== undefined ? propClassConfig : localClassConfig;
+  const effectiveRecordsMap = propRecordsMap !== undefined ? propRecordsMap : localRecordsMap;
+
+  // Modal for Config Standards, A/D/B Cutoffs, and Templates
   const [configModalOpen, setConfigModalOpen] = React.useState<boolean>(false);
+  const [modalTab, setModalTab] = React.useState<'STANDARDS' | 'THRESHOLDS' | 'TEMPLATES' | 'PERIODS'>('STANDARDS');
+  const [templateFieldTab, setTemplateFieldTab] = React.useState<UpperLitNumSubjectField>('bahasa_indonesia');
   const [configDraft, setConfigDraft] = React.useState<ElementaryUpperLitNumClassConfigDoc | null>(null);
 
   // Sync selectedStudentId when students change
@@ -62,24 +85,27 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
     }
   }, [students, selectedStudentId]);
 
-  // Load Config & Records
+  // Load Config & Records if not passed from parent
   const loadData = React.useCallback(async () => {
     if (!selectedClass || !selectedYear) return;
+    if (propClassConfig && propRecordsMap) return;
     setLoading(true);
     try {
       const [cfg, recs] = await Promise.all([
         fetchUpperLitNumClassConfig(selectedClass.id, selectedYear),
         fetchUpperLitNumRecordsMap(selectedClass.id, selectedYear)
       ]);
-      setClassConfig(cfg);
-      setRecordsMap(recs);
+      setLocalClassConfig(cfg);
+      setLocalRecordsMap(recs);
+      if (onConfigChange && cfg) onConfigChange(cfg);
+      if (onRecordsChange && recs) onRecordsChange(recs);
     } catch (e) {
       console.error('Error loading litnum data:', e);
       toast.error('Gagal memuat data Literasi & Numerasi.');
     } finally {
       setLoading(false);
     }
-  }, [selectedClass, selectedYear]);
+  }, [selectedClass, selectedYear, propClassConfig, propRecordsMap, onConfigChange, onRecordsChange]);
 
   React.useEffect(() => {
     loadData();
@@ -117,7 +143,7 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
       );
 
       // Local optimistic update
-      setRecordsMap(prev => {
+      const updateRecords = (prev: Record<string, ElementaryUpperLitNumRecordDoc>) => {
         const copy = { ...prev };
         const studentRec = copy[student.id] || {
           id: `${student.id}_${selectedClass!.id}_${selectedYear.replace(/\//g, '_')}`,
@@ -149,92 +175,139 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
           }
         };
         return copy;
-      });
+      };
+
+      const nextRecs = updateRecords(effectiveRecordsMap);
+      setLocalRecordsMap(nextRecs);
+      if (onRecordsChange) {
+        onRecordsChange(nextRecs);
+      }
+      if (onRefreshData) {
+        onRefreshData();
+      }
     } catch (e: any) {
       toast.error('Gagal menyimpan nilai Literasi & Numerasi.');
     }
   };
 
-  // Save Class Config Draft
+  // Open config modal with full defaults populated
+  const handleOpenConfigModal = () => {
+    const draft: ElementaryUpperLitNumClassConfigDoc = JSON.parse(
+      JSON.stringify(
+        effectiveConfig || {
+          id: `${selectedClass?.id}_${selectedYear.replace(/\//g, '_')}`,
+          classId: selectedClass?.id || '',
+          academicYear: selectedYear,
+          standards: { bahasa_indonesia: 70, english: 55, mathematics: 70 },
+          thresholds: {
+            bahasa_indonesia: { minA: 85, minD: 70 },
+            english: { minA: 78, minD: 55 },
+            mathematics: { minA: 85, minD: 70 }
+          },
+          narrativeTemplates: DEFAULT_LITNUM_TEMPLATES,
+          comparisonPeriods: [
+            { periodKey: '2025-08', label: 'Agustus', order: 0 },
+            { periodKey: '2025-09', label: 'September', order: 1 },
+            { periodKey: 'midterm-1', label: 'Midterm 1', order: 2 }
+          ]
+        }
+      )
+    );
+
+    // Ensure thresholds and templates exist
+    if (!draft.thresholds) {
+      draft.thresholds = {
+        bahasa_indonesia: { minA: 85, minD: 70 },
+        english: { minA: 78, minD: 55 },
+        mathematics: { minA: 85, minD: 70 }
+      };
+    }
+    if (!draft.narrativeTemplates) {
+      draft.narrativeTemplates = DEFAULT_LITNUM_TEMPLATES;
+    }
+
+    setConfigDraft(draft);
+    setModalTab('STANDARDS');
+    setConfigModalOpen(true);
+  };
+
+  // Save Class Config Draft with strict threshold validation
   const handleSaveConfig = async () => {
     if (!configDraft) return;
+
+    // Validate thresholds for all fields
+    for (const f of UPPER_LITNUM_FIELDS) {
+      const th = configDraft.thresholds?.[f.field];
+      if (th) {
+        const valRes = validateLitNumThresholds(th);
+        if (!valRes.isValid) {
+          toast.error(`Konfigurasi batas A/D/B [${f.label}] tidak valid: ${valRes.error}`);
+          setModalTab('THRESHOLDS');
+          return;
+        }
+      }
+    }
+
     try {
       await saveUpperLitNumClassConfig(configDraft, currentUser);
-      setClassConfig(configDraft);
-      toast.success('Standar minimum & periode pembanding berhasil disimpan.');
+      setLocalClassConfig(configDraft);
+      if (onConfigChange) {
+        onConfigChange(configDraft);
+      }
+      if (onRefreshData) {
+        onRefreshData();
+      }
+      toast.success('Pengaturan standar, batas A/D/B, dan template berhasil disimpan.');
       setConfigModalOpen(false);
     } catch (e: any) {
-      toast.error('Gagal menyimpan pengaturan.');
+      toast.error('Gagal menyimpan konfigurasi kelas.');
     }
   };
 
-  // Active Field details
-  const activeFieldInfo = UPPER_LITNUM_FIELDS.find(f => f.field === activeField)!;
-  const currentStandard = classConfig?.standards?.[activeField] ?? activeFieldInfo.defaultStandard;
-  const comparisonPeriods = classConfig?.comparisonPeriods || [
-    { periodKey: selectedMonth, label: monthLabel, order: 0 }
-  ];
+  const currentStandard = effectiveConfig?.standards?.[activeField] ?? (activeField === 'english' ? 55 : 70);
+  const currentThresholds = effectiveConfig?.thresholds?.[activeField] ?? (activeField === 'english' ? { minA: 78, minD: 55 } : { minA: 85, minD: 70 });
+  const comparisonPeriods = effectiveConfig?.comparisonPeriods || [];
 
-  // Selected student record for chart
-  const selectedStudent = students.find(s => s.id === selectedStudentId);
-  const selectedStudentRec = selectedStudent ? recordsMap[selectedStudent.id] : null;
-
-  // Chart Data for the selected student:
-  // Shows 3 bars per period (Bahasa Indonesia, English, Mathematics) vs their respective standards
-  const chartData = React.useMemo(() => {
-    if (!selectedStudentRec) return [];
-
-    return comparisonPeriods.map(p => {
-      const biScore = selectedStudentRec.periodScores?.bahasa_indonesia?.[p.periodKey]?.score ?? null;
-      const engScore = selectedStudentRec.periodScores?.english?.[p.periodKey]?.score ?? null;
-      const mathScore = selectedStudentRec.periodScores?.mathematics?.[p.periodKey]?.score ?? null;
-
-      const biStd = classConfig?.standards?.bahasa_indonesia ?? 70;
-      const engStd = classConfig?.standards?.english ?? 55;
-      const mathStd = classConfig?.standards?.mathematics ?? 70;
-
-      return {
-        periodLabel: p.label,
-        'Bahasa Indonesia': biScore,
-        'English': engScore,
-        'Mathematics': mathScore,
-        'Standar BI': biStd,
-        'Standar English': engStd,
-        'Standar Math': mathStd
-      };
-    });
-  }, [selectedStudentRec, comparisonPeriods, classConfig]);
+  // Prepare chart data for selected student
+  const studentRec = effectiveRecordsMap[selectedStudentId];
+  const chartData = comparisonPeriods.map(p => {
+    const biVal = studentRec?.periodScores?.bahasa_indonesia?.[p.periodKey]?.score ?? null;
+    const engVal = studentRec?.periodScores?.english?.[p.periodKey]?.score ?? null;
+    const mathVal = studentRec?.periodScores?.mathematics?.[p.periodKey]?.score ?? null;
+    return {
+      periodLabel: p.label,
+      'Bahasa Indonesia': biVal,
+      'English': engVal,
+      'Mathematics': mathVal
+    };
+  });
 
   return (
     <div className="space-y-6">
-      {/* Top Header Card */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs">
+      {/* Header Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800">
+            <span className="text-xs font-black uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
               Literasi &amp; Numerasi
             </span>
-            <span className="text-xs text-slate-400">·</span>
-            <span className="text-xs text-slate-500 font-semibold">{monthLabel}</span>
+            <span className="text-xs text-slate-400 font-semibold">{monthLabel}</span>
           </div>
           <h2 className="text-base font-bold text-slate-900 mt-1">
             Capaian Literasi &amp; Numerasi Lintas Periode
           </h2>
           <p className="text-xs text-slate-500">
-            Pencatatan angka berkala untuk Bahasa Indonesia, English, dan Mathematics beserta perbandingan standar minimum.
+            Nilai sumber → rata-rata → predikat A/D/B otomatis → terhubung langsung ke Narasi &amp; Approval tanpa reload.
           </p>
         </div>
 
         <button
           type="button"
-          onClick={() => {
-            setConfigDraft(JSON.parse(JSON.stringify(classConfig || {})));
-            setConfigModalOpen(true);
-          }}
+          onClick={handleOpenConfigModal}
           className="px-3.5 py-2 text-xs font-bold rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
         >
           <Settings2 size={14} className="text-indigo-600" />
-          <span>Atur Standar &amp; Periode Grafik</span>
+          <span>Atur Standar, Batas A/D/B &amp; Template</span>
         </button>
       </div>
 
@@ -289,15 +362,15 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
 
         {/* Minimum Standards Reference Pills */}
         <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-100 text-xs">
-          <span className="font-bold text-slate-700">Standar Minimum Kelas:</span>
+          <span className="font-bold text-slate-700">Standar Minimum Grafik:</span>
           <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-800 font-semibold border border-blue-200">
-            Bahasa Indonesia: {classConfig?.standards?.bahasa_indonesia ?? 70}
+            Bahasa Indonesia: {effectiveConfig?.standards?.bahasa_indonesia ?? 70} (A ≥ {effectiveConfig?.thresholds?.bahasa_indonesia?.minA ?? 85}, D ≥ {effectiveConfig?.thresholds?.bahasa_indonesia?.minD ?? 70})
           </span>
           <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200">
-            English: {classConfig?.standards?.english ?? 55}
+            English: {effectiveConfig?.standards?.english ?? 55} (A ≥ {effectiveConfig?.thresholds?.english?.minA ?? 78}, D ≥ {effectiveConfig?.thresholds?.english?.minD ?? 55})
           </span>
           <span className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-800 font-semibold border border-purple-200">
-            Mathematics: {classConfig?.standards?.mathematics ?? 70}
+            Mathematics: {effectiveConfig?.standards?.mathematics ?? 70} (A ≥ {effectiveConfig?.thresholds?.mathematics?.minA ?? 85}, D ≥ {effectiveConfig?.thresholds?.mathematics?.minD ?? 70})
           </span>
         </div>
       </div>
@@ -321,8 +394,14 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
             ))}
           </div>
 
-          <div className="text-xs text-slate-500 font-semibold">
-            Standar Minimum: <strong className="text-slate-900">{currentStandard}</strong> · Input nilai angka 0–100 per periode
+          <div className="text-xs text-slate-600 font-semibold flex items-center gap-2">
+            <span>Standar Min: <strong className="text-slate-900">{currentStandard}</strong></span>
+            <span className="text-slate-300">|</span>
+            <span>Batas A: <strong className="text-emerald-700">≥ {currentThresholds.minA}</strong></span>
+            <span className="text-slate-300">|</span>
+            <span>Batas D: <strong className="text-blue-700">≥ {currentThresholds.minD}</strong></span>
+            <span className="text-slate-300">|</span>
+            <span>Batas B: <strong className="text-amber-700">&lt; {currentThresholds.minD}</strong></span>
           </div>
         </div>
 
@@ -332,21 +411,44 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
             <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
               <tr>
                 <th className="py-2.5 px-3 w-10 text-center sticky left-0 bg-slate-100 z-10">No</th>
-                <th className="py-2.5 px-3 min-w-[200px] sticky left-10 bg-slate-100 z-10 border-r border-slate-200">
+                <th className="py-2.5 px-3 min-w-[190px] sticky left-10 bg-slate-100 z-10 border-r border-slate-200">
                   Nama Siswa
                 </th>
+                {/* Specific Period Evaluation Columns */}
+                <th className="py-2.5 px-3 min-w-[110px] text-center bg-indigo-50/70 text-indigo-950 border-r border-indigo-200">
+                  <div className="font-bold">Rata-rata ({monthLabel})</div>
+                  <div className="text-[10px] text-indigo-600 font-normal">Periode Terpilih</div>
+                </th>
+                <th className="py-2.5 px-3 min-w-[120px] text-center bg-indigo-50/70 text-indigo-950 border-r border-indigo-200">
+                  <div className="font-bold">Predikat A/D/B</div>
+                  <div className="text-[10px] text-indigo-600 font-normal">Otomatis</div>
+                </th>
+                <th className="py-2.5 px-3 min-w-[110px] text-center bg-indigo-50/70 text-indigo-950 border-r border-indigo-200">
+                  <div className="font-bold">Status Standar</div>
+                  <div className="text-[10px] text-indigo-600 font-normal">Std: {currentStandard}</div>
+                </th>
+                {/* Comparison Periods Inputs */}
                 {comparisonPeriods.map(p => (
-                  <th key={p.periodKey} className="py-2.5 px-3 min-w-[130px] text-center border-r border-slate-200">
-                    <div className="font-bold text-slate-900">{p.label}</div>
-                    <div className="text-[10px] text-slate-500 font-normal">Standar: {currentStandard}</div>
+                  <th key={p.periodKey} className={`py-2.5 px-3 min-w-[120px] text-center border-r border-slate-200 ${p.periodKey === selectedMonth ? 'bg-amber-50/60' : ''}`}>
+                    <div className="font-bold text-slate-900">
+                      {p.label}
+                      {p.periodKey === selectedMonth && <span className="ml-1 text-[9px] text-amber-700 font-black">(Aktif)</span>}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-normal">Input Angka</div>
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {students.map((st, idx) => {
-                const rec = recordsMap[st.id];
+                const rec = effectiveRecordsMap[st.id];
                 const fieldScores = rec?.periodScores?.[activeField] || {};
+
+                // Current report month calculation (empty != 0, 0 is valid!)
+                const currentEntry = fieldScores[selectedMonth];
+                const currentScore = currentEntry?.score !== undefined && currentEntry?.score !== null ? currentEntry.score : null;
+                const predicate = calculateUpperLitNumPredicate(currentScore, currentThresholds);
+                const isAboveStd = currentScore !== null ? currentScore >= currentStandard : null;
 
                 return (
                   <tr key={st.id} className="hover:bg-slate-50/70 transition-colors">
@@ -357,13 +459,53 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
                       {st.name}
                     </td>
 
+                    {/* Current Month Average */}
+                    <td className="py-2 px-3 text-center bg-indigo-50/20 font-bold border-r border-indigo-100">
+                      {currentScore !== null ? (
+                        <span className="text-slate-900">{currentScore}</span>
+                      ) : (
+                        <span className="text-slate-400 font-normal italic">Kosong</span>
+                      )}
+                    </td>
+
+                    {/* Predicate A/D/B */}
+                    <td className="py-2 px-3 text-center bg-indigo-50/20 border-r border-indigo-100">
+                      {predicate === 'A' ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                          A · Achieved
+                        </span>
+                      ) : predicate === 'D' ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full">
+                          D · Developing
+                        </span>
+                      ) : predicate === 'B' ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                          B · Beginning
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-slate-400 font-normal">Belum ada nilai</span>
+                      )}
+                    </td>
+
+                    {/* Standard Comparison */}
+                    <td className="py-2 px-3 text-center bg-indigo-50/20 border-r border-indigo-100 font-bold text-[11px]">
+                      {isAboveStd === true ? (
+                        <span className="text-emerald-700">≥ Standar ({currentStandard})</span>
+                      ) : isAboveStd === false ? (
+                        <span className="text-red-700">&lt; Standar ({currentStandard})</span>
+                      ) : (
+                        <span className="text-slate-400 font-normal">-</span>
+                      )}
+                    </td>
+
+                    {/* Comparison Periods Inputs */}
                     {comparisonPeriods.map(p => {
                       const entry = fieldScores[p.periodKey];
                       const val = entry?.score !== undefined && entry?.score !== null ? entry.score : '';
                       const isBelow = entry?.score !== undefined && entry?.score !== null && entry.score < currentStandard;
 
                       return (
-                        <td key={p.periodKey} className="py-2 px-3 text-center border-r border-slate-200">
+                        <td key={p.periodKey} className={`py-2 px-3 text-center border-r border-slate-200 ${p.periodKey === selectedMonth ? 'bg-amber-50/20' : ''}`}>
                           <div className="inline-flex items-center gap-1.5">
                             <input
                               type="number"
@@ -397,122 +539,378 @@ export const UpperLiterasiNumerasiTab: React.FC<UpperLiterasiNumerasiTabProps> =
         </div>
       </div>
 
-      {/* Config Standards & Periods Modal */}
+      {/* Config Standards, A/D/B Thresholds, Templates & Periods Modal */}
       {configModalOpen && configDraft && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
-            <h3 className="text-sm font-bold text-slate-900">Pengaturan Standar &amp; Periode Grafik</h3>
-            <p className="text-xs text-slate-500">
-              Sesuaikan standar minimum kelulusan per bidang untuk kelas {selectedClass?.name} dan daftar periode yang ditampilkan pada grafik.
-            </p>
-
-            <div className="space-y-3">
-              <h4 className="text-xs font-bold text-slate-700 uppercase">Standar Minimum Bidang</h4>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500">Bahasa Indonesia</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={configDraft.standards?.bahasa_indonesia || 70}
-                    onChange={(e) => setConfigDraft({
-                      ...configDraft,
-                      standards: { ...configDraft.standards, bahasa_indonesia: parseInt(e.target.value, 10) || 70 }
-                    })}
-                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-center font-bold text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500">English</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={configDraft.standards?.english || 55}
-                    onChange={(e) => setConfigDraft({
-                      ...configDraft,
-                      standards: { ...configDraft.standards, english: parseInt(e.target.value, 10) || 55 }
-                    })}
-                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-center font-bold text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500">Mathematics</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={configDraft.standards?.mathematics || 70}
-                    onChange={(e) => setConfigDraft({
-                      ...configDraft,
-                      standards: { ...configDraft.standards, mathematics: parseInt(e.target.value, 10) || 70 }
-                    })}
-                    className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-center font-bold text-xs"
-                  />
-                </div>
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Pengaturan Literasi &amp; Numerasi ({selectedClass?.name})
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Standar minimal grafik, aturan konversi predikat A/D/B, dan template redaksi narasi kualitatif.
+                </p>
               </div>
             </div>
 
-            <div className="space-y-3 pt-3 border-t border-slate-200">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-slate-700 uppercase">Periode Pembanding Grafik</h4>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextPeriods = [...(configDraft.comparisonPeriods || [])];
-                    const newKey = `custom_${Date.now()}`;
-                    nextPeriods.push({ periodKey: newKey, label: 'Periode Baru', order: nextPeriods.length });
-                    setConfigDraft({ ...configDraft, comparisonPeriods: nextPeriods });
-                  }}
-                  className="text-[11px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
-                >
-                  <Plus size={12} />
-                  <span>Tambah Periode</span>
-                </button>
-              </div>
+            {/* Modal Subtabs */}
+            <div className="flex items-center gap-1.5 border-b border-slate-200 pb-2 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setModalTab('STANDARDS')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  modalTab === 'STANDARDS' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                1. Standar Minimal Grafik
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('THRESHOLDS')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  modalTab === 'THRESHOLDS' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                2. Batas Nilai A/D/B
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('TEMPLATES')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  modalTab === 'TEMPLATES' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                3. Template Narasi Kualitatif
+              </button>
+              <button
+                type="button"
+                onClick={() => setModalTab('PERIODS')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  modalTab === 'PERIODS' ? 'bg-indigo-100 text-indigo-900' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                4. Periode Grafik
+              </button>
+            </div>
 
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {configDraft.comparisonPeriods?.map((p, idx) => (
-                  <div key={p.periodKey} className="flex items-center gap-2">
+            {/* TAB 1: STANDARDS */}
+            {modalTab === 'STANDARDS' && (
+              <div className="space-y-4">
+                <p className="text-xs text-slate-600">
+                  Garis acuan standar kelulusan minimal yang digambar pada diagram batang (chart) dokumen rapor.
+                </p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700">Bahasa Indonesia</label>
                     <input
-                      type="text"
-                      value={p.label}
-                      onChange={(e) => {
-                        const nextPeriods = [...configDraft.comparisonPeriods];
-                        nextPeriods[idx].label = e.target.value;
-                        setConfigDraft({ ...configDraft, comparisonPeriods: nextPeriods });
-                      }}
-                      className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold"
-                      placeholder="Label Periode (e.g. Agustus / Midterm 1)"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={configDraft.standards?.bahasa_indonesia || 70}
+                      onChange={(e) => setConfigDraft({
+                        ...configDraft,
+                        standards: { ...configDraft.standards, bahasa_indonesia: parseInt(e.target.value, 10) || 70 }
+                      })}
+                      className="w-full mt-1 px-3 py-2 border border-slate-300 rounded-xl text-center font-bold text-xs"
                     />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextPeriods = configDraft.comparisonPeriods.filter((_, i) => i !== idx);
-                        setConfigDraft({ ...configDraft, comparisonPeriods: nextPeriods });
-                      }}
-                      className="p-1.5 text-red-500 hover:text-red-700"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <span className="text-[10px] text-slate-400 mt-1 block text-center">Default: 70</span>
                   </div>
-                ))}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700">English</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={configDraft.standards?.english || 55}
+                      onChange={(e) => setConfigDraft({
+                        ...configDraft,
+                        standards: { ...configDraft.standards, english: parseInt(e.target.value, 10) || 55 }
+                      })}
+                      className="w-full mt-1 px-3 py-2 border border-slate-300 rounded-xl text-center font-bold text-xs"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1 block text-center">Default: 55</span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700">Mathematics</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={configDraft.standards?.mathematics || 70}
+                      onChange={(e) => setConfigDraft({
+                        ...configDraft,
+                        standards: { ...configDraft.standards, mathematics: parseInt(e.target.value, 10) || 70 }
+                      })}
+                      className="w-full mt-1 px-3 py-2 border border-slate-300 rounded-xl text-center font-bold text-xs"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1 block text-center">Default: 70</span>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
 
+            {/* TAB 2: THRESHOLDS */}
+            {modalTab === 'THRESHOLDS' && (
+              <div className="space-y-4">
+                <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-200 text-xs text-blue-900 space-y-1">
+                  <div className="font-bold">Ketentuan Konversi Predikat A/D/B:</div>
+                  <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                    <li><strong>Predikat A (Achieved):</strong> Nilai ≥ Batas A (s.d. 100)</li>
+                    <li><strong>Predikat D (Developing):</strong> Nilai ≥ Batas D dan &lt; Batas A</li>
+                    <li><strong>Predikat B (Beginning):</strong> Nilai &lt; Batas D (mulai dari 0)</li>
+                    <li>Validasi: 100 ≥ Batas A &gt; Batas D &gt; 0 (tidak boleh tumpang tindih atau berlubang).</li>
+                  </ul>
+                </div>
+
+                <div className="space-y-3">
+                  {UPPER_LITNUM_FIELDS.map(f => {
+                    const th = configDraft.thresholds?.[f.field] || f.defaultThresholds;
+                    const errRes = validateLitNumThresholds(th);
+
+                    return (
+                      <div key={f.field} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-800">{f.label}</span>
+                          {!errRes.isValid && (
+                            <span className="text-[10px] font-bold text-red-600 flex items-center gap-1">
+                              <AlertTriangle size={12} /> {errRes.error}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600">Batas Minimal A (Achieved)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={th.minA}
+                              onChange={(e) => {
+                                const nextVal = parseFloat(e.target.value) || 0;
+                                setConfigDraft({
+                                  ...configDraft,
+                                  thresholds: {
+                                    ...configDraft.thresholds!,
+                                    [f.field]: { ...th, minA: nextVal }
+                                  }
+                                });
+                              }}
+                              className="w-full mt-1 px-3 py-1.5 border border-slate-300 rounded-lg text-center font-bold text-xs bg-white"
+                            />
+                            <span className="text-[9.5px] text-slate-500 mt-0.5 block text-center">
+                              Nilai {th.minA} – 100
+                            </span>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600">Batas Minimal D (Developing)</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={th.minD}
+                              onChange={(e) => {
+                                const nextVal = parseFloat(e.target.value) || 0;
+                                setConfigDraft({
+                                  ...configDraft,
+                                  thresholds: {
+                                    ...configDraft.thresholds!,
+                                    [f.field]: { ...th, minD: nextVal }
+                                  }
+                                });
+                              }}
+                              className="w-full mt-1 px-3 py-1.5 border border-slate-300 rounded-lg text-center font-bold text-xs bg-white"
+                            />
+                            <span className="text-[9.5px] text-slate-500 mt-0.5 block text-center">
+                              Nilai {th.minD} – {th.minA - 1} (B: &lt; {th.minD})
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: NARRATIVE TEMPLATES */}
+            {modalTab === 'TEMPLATES' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-600">
+                    Template kalimat kualitatif yang otomatis dipetakan ke Paket 2 Narasi &amp; Approval tanpa AI.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfigDraft({
+                        ...configDraft,
+                        narrativeTemplates: DEFAULT_LITNUM_TEMPLATES
+                      });
+                      toast.success('Template dikembalikan ke standar awal.');
+                    }}
+                    className="text-[11px] font-bold text-slate-600 hover:text-indigo-600 flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw size={12} />
+                    <span>Reset Standar</span>
+                  </button>
+                </div>
+
+                {/* Subtabs for field */}
+                <div className="flex rounded-xl bg-slate-100 p-1">
+                  {UPPER_LITNUM_FIELDS.map(f => (
+                    <button
+                      key={f.field}
+                      type="button"
+                      onClick={() => setTemplateFieldTab(f.field)}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
+                        templateFieldTab === f.field ? 'bg-white text-indigo-900 shadow-xs' : 'text-slate-600'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="text-[11px] text-slate-500 font-medium">
+                    Gunakan placeholder: <code>{'{studentName}'}</code> (nama siswa), <code>{'{monthLabel}'}</code> (nama bulan).
+                  </div>
+
+                  {/* Template A */}
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-emerald-800">
+                      Redaksi Predikat A (Achieved)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={configDraft.narrativeTemplates?.[templateFieldTab]?.A || ''}
+                      onChange={(e) => {
+                        const curFieldTemplates = configDraft.narrativeTemplates?.[templateFieldTab] || DEFAULT_LITNUM_TEMPLATES[templateFieldTab];
+                        setConfigDraft({
+                          ...configDraft,
+                          narrativeTemplates: {
+                            ...configDraft.narrativeTemplates!,
+                            [templateFieldTab]: { ...curFieldTemplates, A: e.target.value }
+                          }
+                        });
+                      }}
+                      className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-emerald-50/20"
+                    />
+                  </div>
+
+                  {/* Template D */}
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-blue-800">
+                      Redaksi Predikat D (Developing)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={configDraft.narrativeTemplates?.[templateFieldTab]?.D || ''}
+                      onChange={(e) => {
+                        const curFieldTemplates = configDraft.narrativeTemplates?.[templateFieldTab] || DEFAULT_LITNUM_TEMPLATES[templateFieldTab];
+                        setConfigDraft({
+                          ...configDraft,
+                          narrativeTemplates: {
+                            ...configDraft.narrativeTemplates!,
+                            [templateFieldTab]: { ...curFieldTemplates, D: e.target.value }
+                          }
+                        });
+                      }}
+                      className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-blue-50/20"
+                    />
+                  </div>
+
+                  {/* Template B */}
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-amber-800">
+                      Redaksi Predikat B (Beginning)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={configDraft.narrativeTemplates?.[templateFieldTab]?.B || ''}
+                      onChange={(e) => {
+                        const curFieldTemplates = configDraft.narrativeTemplates?.[templateFieldTab] || DEFAULT_LITNUM_TEMPLATES[templateFieldTab];
+                        setConfigDraft({
+                          ...configDraft,
+                          narrativeTemplates: {
+                            ...configDraft.narrativeTemplates!,
+                            [templateFieldTab]: { ...curFieldTemplates, B: e.target.value }
+                          }
+                        });
+                      }}
+                      className="w-full p-2.5 text-xs border border-slate-300 rounded-xl bg-amber-50/20"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 4: PERIODS */}
+            {modalTab === 'PERIODS' && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase">Periode Pembanding Grafik</h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextPeriods = [...(configDraft.comparisonPeriods || [])];
+                      const newKey = `custom_${Date.now()}`;
+                      nextPeriods.push({ periodKey: newKey, label: 'Periode Baru', order: nextPeriods.length });
+                      setConfigDraft({ ...configDraft, comparisonPeriods: nextPeriods });
+                    }}
+                    className="text-[11px] font-bold text-indigo-600 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={12} />
+                    <span>Tambah Periode</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {configDraft.comparisonPeriods?.map((p, idx) => (
+                    <div key={p.periodKey} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={p.label}
+                        onChange={(e) => {
+                          const nextPeriods = [...configDraft.comparisonPeriods];
+                          nextPeriods[idx].label = e.target.value;
+                          setConfigDraft({ ...configDraft, comparisonPeriods: nextPeriods });
+                        }}
+                        className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold"
+                        placeholder="Label Periode (e.g. Agustus / Midterm 1)"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextPeriods = configDraft.comparisonPeriods.filter((_, i) => i !== idx);
+                          setConfigDraft({ ...configDraft, comparisonPeriods: nextPeriods });
+                        }}
+                        className="p-1.5 text-red-500 hover:text-red-700 cursor-pointer"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Footer Buttons */}
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
               <button
                 type="button"
                 onClick={() => setConfigModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-600 hover:bg-slate-100"
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-600 hover:bg-slate-100 cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="button"
                 onClick={handleSaveConfig}
-                className="px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+                className="px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer"
               >
                 Simpan Pengaturan
               </button>

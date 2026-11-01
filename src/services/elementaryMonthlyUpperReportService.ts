@@ -31,6 +31,7 @@ import type {
 } from '../types/elementaryMonthlyUpperReport';
 import { 
   UPPER_LITNUM_FIELDS,
+  DEFAULT_LITNUM_TEMPLATES,
   calculateUpperLGAverageAndPredicate,
   normalizeUpperReportFilename
 } from '../types/elementaryMonthlyUpperReport';
@@ -436,8 +437,19 @@ export async function fetchUpperLitNumClassConfig(
   const docId = buildUpperLitNumClassConfigDocId(classId, academicYear);
   try {
     const snap = await getDoc(doc(db, 'elem_monthly_upper_litnum_class_configs', docId));
+    const defaultThresholds = {
+      bahasa_indonesia: { minA: 85, minD: 70 },
+      english: { minA: 78, minD: 55 },
+      mathematics: { minA: 85, minD: 70 }
+    };
+
     if (snap.exists()) {
-      return snap.data() as ElementaryUpperLitNumClassConfigDoc;
+      const data = snap.data() as ElementaryUpperLitNumClassConfigDoc;
+      return {
+        ...data,
+        thresholds: data.thresholds || defaultThresholds,
+        narrativeTemplates: data.narrativeTemplates || DEFAULT_LITNUM_TEMPLATES
+      };
     }
     // Return sensible defaults if not created yet
     return {
@@ -449,6 +461,8 @@ export async function fetchUpperLitNumClassConfig(
         english: 55,
         mathematics: 70
       },
+      thresholds: defaultThresholds,
+      narrativeTemplates: DEFAULT_LITNUM_TEMPLATES,
       comparisonPeriods: [
         { periodKey: '2025-08', label: 'Agustus', order: 0 },
         { periodKey: '2025-09', label: 'September', order: 1 },

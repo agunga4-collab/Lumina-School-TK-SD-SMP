@@ -203,17 +203,39 @@ export interface ElementaryUpperStudentDataDoc {
 // ==========================================
 
 export type UpperLitNumSubjectField = 'bahasa_indonesia' | 'english' | 'mathematics';
+export type UpperLitNumPredicate = 'A' | 'D' | 'B';
+
+export interface UpperLitNumThresholds {
+  minA: number; // e.g. 85 (Achieved >= minA)
+  minD: number; // e.g. 70 or 55 (Developing >= minD and < minA, Beginning < minD)
+}
 
 export interface UpperLitNumFieldConfig {
   field: UpperLitNumSubjectField;
   label: string;
   defaultStandard: number; // e.g. BI 70, English 55, Math 70
+  defaultThresholds: UpperLitNumThresholds;
 }
 
 export const UPPER_LITNUM_FIELDS: UpperLitNumFieldConfig[] = [
-  { field: 'bahasa_indonesia', label: 'Bahasa Indonesia', defaultStandard: 70 },
-  { field: 'english', label: 'English', defaultStandard: 55 },
-  { field: 'mathematics', label: 'Mathematics', defaultStandard: 70 },
+  { 
+    field: 'bahasa_indonesia', 
+    label: 'Bahasa Indonesia', 
+    defaultStandard: 70,
+    defaultThresholds: { minA: 85, minD: 70 }
+  },
+  { 
+    field: 'english', 
+    label: 'English', 
+    defaultStandard: 55,
+    defaultThresholds: { minA: 78, minD: 55 }
+  },
+  { 
+    field: 'mathematics', 
+    label: 'Mathematics', 
+    defaultStandard: 70,
+    defaultThresholds: { minA: 85, minD: 70 }
+  },
 ];
 
 export interface UpperLitNumPeriodScore {
@@ -243,8 +265,14 @@ export interface ElementaryUpperLitNumClassConfigDoc {
   classId: string;
   academicYear: string;
   
-  // Minimum standards per field
+  // Minimum standards per field for charts
   standards: Record<UpperLitNumSubjectField, number>;
+
+  // A/D/B Thresholds per field (minA, minD)
+  thresholds?: Record<UpperLitNumSubjectField, UpperLitNumThresholds>;
+
+  // Narrative Templates per field & predicate
+  narrativeTemplates?: Record<UpperLitNumSubjectField, Record<UpperLitNumPredicate, string>>;
   
   // Selected comparison periods for charts in this class
   comparisonPeriods: Array<{
@@ -256,6 +284,162 @@ export interface ElementaryUpperLitNumClassConfigDoc {
   updatedAt: number;
   updatedBy: string;
   updatedByName?: string;
+}
+
+export const DEFAULT_LITNUM_TEMPLATES: Record<UpperLitNumSubjectField, Record<UpperLitNumPredicate, string>> = {
+  bahasa_indonesia: {
+    A: 'Pada pembelajaran Bahasa Indonesia periode {monthLabel}, {studentName} mencapai capaian optimal (Achieved). Ananda mampu memahami teks bacaan secara mendalam, mengidentifikasi ide pokok serta menyusun tanggapan tertulis secara runtut dan mandiri.',
+    D: 'Pada pembelajaran Bahasa Indonesia periode {monthLabel}, {studentName} menunjukkan perkembangan yang baik (Developing). Ananda mulai mampu memahami informasi penting dalam teks dan menyusun kalimat terstruktur dengan bimbingan berkala.',
+    B: 'Pada pembelajaran Bahasa Indonesia periode {monthLabel}, {studentName} berada pada tahap awal (Beginning). Ananda membutuhkan pendampingan lebih intensif dalam kelancaran membaca, memahami isi teks, dan penguasaan kosakata dasar.'
+  },
+  english: {
+    A: 'In English literacy for {monthLabel}, {studentName} has achieved the learning standards (Achieved). The student demonstrates strong comprehension of reading materials and expresses ideas clearly with well-structured vocabulary.',
+    D: 'In English literacy for {monthLabel}, {studentName} shows good progress (Developing). The student is developing reading confidence and simple conversational skills with occasional guidance.',
+    B: 'In English literacy for {monthLabel}, {studentName} is at the beginning stage (Beginning). The student requires continuous support and practice in basic phonics, vocabulary recognition, and simple sentence comprehension.'
+  },
+  mathematics: {
+    A: 'Pada pembelajaran Matematika periode {monthLabel}, {studentName} mencapai capaian optimal (Achieved). Ananda menunjukkan pemahaman konsep berhitung yang solid serta penalaran logis yang baik dalam menyelesaikan soal cerita.',
+    D: 'Pada pembelajaran Matematika periode {monthLabel}, {studentName} menunjukkan perkembangan yang baik (Developing). Ananda mampu menyelesaikan operasi hitung dasar dan membutuhkan latihan terarah pada penyelesaian masalah kontekstual.',
+    B: 'Pada pembelajaran Matematika periode {monthLabel}, {studentName} berada pada tahap awal (Beginning). Ananda memerlukan bimbingan konseptual berulang serta latihan bertahap dalam operasi hitung dasar.'
+  }
+};
+
+/**
+ * Validate A/D/B Thresholds
+ * Rules: 100 >= minA > minD > 0
+ * No overlap, no gap:
+ * A: [minA, 100]
+ * D: [minD, minA)
+ * B: [0, minD)
+ */
+export function validateLitNumThresholds(thresholds: UpperLitNumThresholds): { isValid: boolean; error?: string } {
+  if (!thresholds) return { isValid: false, error: 'Thresholds belum dikonfigurasi.' };
+  const { minA, minD } = thresholds;
+  if (typeof minA !== 'number' || typeof minD !== 'number' || isNaN(minA) || isNaN(minD)) {
+    return { isValid: false, error: 'Batas nilai harus berupa angka yang valid.' };
+  }
+  if (minA > 100 || minD <= 0) {
+    return { isValid: false, error: 'Batas nilai harus berada dalam rentang 1 hingga 100.' };
+  }
+  if (minA <= minD) {
+    return { isValid: false, error: `Batas Achieved (${minA}) harus lebih tinggi dari batas Developing (${minD}).` };
+  }
+  return { isValid: true };
+}
+
+/**
+ * Classify a score into A/D/B
+ * Kosong (null/undefined/NaN) is NOT zero -> returns null.
+ * 0 is valid -> returns 'B'.
+ * No rounding before classification.
+ */
+export function calculateUpperLitNumPredicate(
+  score: number | null | undefined,
+  thresholds?: UpperLitNumThresholds | null
+): UpperLitNumPredicate | null {
+  if (score === null || score === undefined || isNaN(score)) {
+    return null;
+  }
+  const minA = thresholds?.minA ?? 85;
+  const minD = thresholds?.minD ?? 70;
+
+  if (score >= minA) {
+    return 'A';
+  }
+  if (score >= minD) {
+    return 'D';
+  }
+  return 'B';
+}
+
+/**
+ * Compile qualitative narrative from template without AI
+ */
+export function compileLitNumNarrative(
+  template: string,
+  context: {
+    studentName: string;
+    monthLabel: string;
+    fieldLabel: string;
+    score?: number | null;
+    predicate?: UpperLitNumPredicate | null;
+  }
+): string {
+  if (!template || !template.trim()) return '';
+  return template
+    .replace(/\{studentName\}/g, context.studentName || 'Siswa')
+    .replace(/\{monthLabel\}/g, context.monthLabel || 'Bulan ini')
+    .replace(/\{fieldLabel\}/g, context.fieldLabel || '')
+    .replace(/\{score\}/g, context.score !== null && context.score !== undefined ? String(context.score) : '-')
+    .replace(/\{predicate\}/g, context.predicate || '');
+}
+
+export interface JakartaDateInfo {
+  year: number;
+  month: number; // 1-12
+  day: number; // 1-31
+  currentYm: string; // 'YYYY-MM'
+  defaultYm: string; // 'YYYY-MM' (day 1-10 -> previous month, day >= 11 -> current month)
+  academicYear: string; // e.g. '2026/2027'
+  semester: '1' | '2';
+}
+
+/**
+ * Jakarta Asia/Jakarta date calculation
+ * Day 1–10: default previous month
+ * Day 11+: default current month
+ */
+export function getJakartaDateInfo(dateInput?: Date): JakartaDateInfo {
+  const d = dateInput || new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric'
+  });
+  const parts = formatter.formatToParts(d);
+  let year = d.getFullYear();
+  let month = d.getMonth() + 1;
+  let day = d.getDate();
+
+  for (const part of parts) {
+    if (part.type === 'year') year = parseInt(part.value, 10);
+    if (part.type === 'month') month = parseInt(part.value, 10);
+    if (part.type === 'day') day = parseInt(part.value, 10);
+  }
+
+  const currentYm = `${year}-${String(month).padStart(2, '0')}`;
+
+  let targetYear = year;
+  let targetMonth = month;
+
+  if (day <= 10) {
+    // Previous month
+    if (month === 1) {
+      targetMonth = 12;
+      targetYear = year - 1;
+    } else {
+      targetMonth = month - 1;
+    }
+  }
+
+  const defaultYm = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+
+  // Semester determination:
+  // Month 7–12 -> Semester 1 of targetYear / (targetYear + 1)
+  // Month 1–6 -> Semester 2 of (targetYear - 1) / targetYear
+  const semester: '1' | '2' = targetMonth >= 7 ? '1' : '2';
+  const academicYear = targetMonth >= 7 ? `${targetYear}/${targetYear + 1}` : `${targetYear - 1}/${targetYear}`;
+
+  return {
+    year,
+    month,
+    day,
+    currentYm,
+    defaultYm,
+    academicYear,
+    semester
+  };
 }
 
 // ==========================================

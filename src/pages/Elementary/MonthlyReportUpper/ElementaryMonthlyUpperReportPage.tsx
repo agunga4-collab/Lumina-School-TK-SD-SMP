@@ -12,12 +12,15 @@ import type { Class, Student, User } from '../../../types';
 import type { 
   ElementaryUpperCurriculumDoc,
   ElementaryUpperStudentDataDoc,
-  ElementaryUpperLitNumRecordDoc
+  ElementaryUpperLitNumRecordDoc,
+  ElementaryUpperLitNumClassConfigDoc
 } from '../../../types/elementaryMonthlyUpperReport';
+import { getJakartaDateInfo } from '../../../types/elementaryMonthlyUpperReport';
 import { 
   fetchUpperCurriculum,
   fetchUpperStudentDataMap,
   fetchUpperLitNumRecordsMap,
+  fetchUpperLitNumClassConfig,
   getMonthOptionsForAcademicYear,
   formatMonthLabel
 } from '../../../services/elementaryMonthlyUpperReportService';
@@ -48,20 +51,32 @@ export default function ElementaryMonthlyUpperReportPage() {
     return false;
   }, [effectiveUser]);
 
+  // Jakarta Asia/Jakarta date default (Day 1-10 -> previous month, Day 11+ -> current month)
+  const jakartaDefault = React.useMemo(() => getJakartaDateInfo(), []);
+
   // Year filter
   const availableYears = React.useMemo(() => {
-    const defaults = ['2024/2025', '2025/2026', '2026/2027'];
+    const defaults = ['2024/2025', '2025/2026', '2026/2027', '2027/2028'];
     if (activeYear && !defaults.includes(activeYear)) {
-      return [...defaults, activeYear].sort();
+      defaults.push(activeYear);
     }
-    return defaults;
-  }, [activeYear]);
+    if (jakartaDefault.academicYear && !defaults.includes(jakartaDefault.academicYear)) {
+      defaults.push(jakartaDefault.academicYear);
+    }
+    return Array.from(new Set(defaults)).sort();
+  }, [activeYear, jakartaDefault.academicYear]);
 
   const urlYear = searchParams.get('academicYear');
-  const [selectedYear, setSelectedYear] = React.useState<string>(urlYear || activeYear || '2025/2026');
+  const [selectedYear, setSelectedYear] = React.useState<string>(() => {
+    if (urlYear) return urlYear;
+    return activeYear || jakartaDefault.academicYear || '2025/2026';
+  });
 
   const urlSemester = searchParams.get('semester');
-  const [selectedSemester, setSelectedSemester] = React.useState<string>(urlSemester === '2' ? '2' : '1');
+  const [selectedSemester, setSelectedSemester] = React.useState<string>(() => {
+    if (urlSemester === '1' || urlSemester === '2') return urlSemester;
+    return jakartaDefault.semester;
+  });
 
   // Month options based on year and semester
   const monthOptions = React.useMemo(() => {
@@ -71,11 +86,18 @@ export default function ElementaryMonthlyUpperReportPage() {
   const urlMonth = searchParams.get('month');
   const [selectedMonth, setSelectedMonth] = React.useState<string>(() => {
     if (urlMonth) return urlMonth;
-    const today = new Date();
-    const currentYm = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-    const match = monthOptions.find(m => m.value === currentYm);
+    // Check if jakarta default month belongs to current month options
+    const targetYm = jakartaDefault.defaultYm;
+    const match = monthOptions.find(m => m.value === targetYm);
     return match ? match.value : monthOptions[0]?.value || '2025-08';
   });
+
+  // Keep selectedMonth in sync when semester or academic year changes
+  React.useEffect(() => {
+    if (monthOptions.length > 0 && !monthOptions.some(m => m.value === selectedMonth)) {
+      setSelectedMonth(monthOptions[0].value);
+    }
+  }, [monthOptions, selectedMonth]);
 
   // Classes & Student state (Strictly Grade 4-6 only!)
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -88,6 +110,7 @@ export default function ElementaryMonthlyUpperReportPage() {
   // Curriculum & Scores
   const [curriculumDoc, setCurriculumDoc] = React.useState<ElementaryUpperCurriculumDoc | null>(null);
   const [studentDataMap, setStudentDataMap] = React.useState<Record<string, ElementaryUpperStudentDataDoc>>({});
+  const [classConfig, setClassConfig] = React.useState<ElementaryUpperLitNumClassConfigDoc | null>(null);
   const [litNumRecordsMap, setLitNumRecordsMap] = React.useState<Record<string, ElementaryUpperLitNumRecordDoc>>({});
   const [loadingData, setLoadingData] = React.useState<boolean>(false);
 
@@ -193,19 +216,22 @@ export default function ElementaryMonthlyUpperReportPage() {
       setCurriculumDoc(null);
       setStudentDataMap({});
       setLitNumRecordsMap({});
+      setClassConfig(null);
       return;
     }
 
     if (!silent) setLoadingData(true);
     try {
-      const [curric, studentData, litNumData] = await Promise.all([
+      const [curric, studentData, litNumData, cfg] = await Promise.all([
         fetchUpperCurriculum(selectedClassId, selectedYear, selectedSemester, selectedMonth),
         fetchUpperStudentDataMap(selectedClassId, selectedYear, selectedSemester, selectedMonth),
-        fetchUpperLitNumRecordsMap(selectedClassId, selectedYear)
+        fetchUpperLitNumRecordsMap(selectedClassId, selectedYear),
+        fetchUpperLitNumClassConfig(selectedClassId, selectedYear)
       ]);
       setCurriculumDoc(curric);
       setStudentDataMap(studentData);
       setLitNumRecordsMap(litNumData);
+      setClassConfig(cfg);
     } catch (err) {
       console.error("Error loading upper monthly report data:", err);
       toast.error('Gagal memuat data Monthly Report Upper Grade.');
@@ -439,11 +465,17 @@ export default function ElementaryMonthlyUpperReportPage() {
           monthLabel={monthLabel}
           students={students}
           currentUser={effectiveUser}
+          classConfig={classConfig}
+          onConfigChange={setClassConfig}
+          litNumRecordsMap={litNumRecordsMap}
+          onRecordsChange={setLitNumRecordsMap}
+          onRefreshData={() => loadUpperData(true)}
         />
       ) : activeTab === 'NARRATIVE' ? (
         <UpperNarasiApprovalTab
           curriculumDoc={curriculumDoc}
           studentDataMap={studentDataMap}
+          classConfig={classConfig}
           litNumRecordsMap={litNumRecordsMap}
           students={students}
           selectedClass={selectedClass}
@@ -452,6 +484,7 @@ export default function ElementaryMonthlyUpperReportPage() {
           selectedMonth={selectedMonth}
           monthLabel={monthLabel}
           currentUser={effectiveUser}
+          onRefreshData={() => loadUpperData(true)}
         />
       ) : (
         <UpperPublicationTrackingTab
