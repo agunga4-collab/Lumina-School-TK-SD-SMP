@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   MessageSquare, Calendar, Users, Save, CheckCircle2, RefreshCw, 
   AlertCircle, Info, Check, Search, X, Edit3, UserCheck, Eye, EyeOff, Sparkles,
   Copy, Clipboard, Download, Upload, AlertTriangle, Wand2, BookOpen, Layers,
-  CheckSquare, Square, CheckCheck, Send, RotateCcw, ShieldCheck, Lock, Unlock, FileText, Clock
+  CheckSquare, Square, CheckCheck, Send, RotateCcw, ShieldCheck, Lock, Unlock, FileText, Clock, Plus
 } from 'lucide-react';
 import { db, getClasses, getActiveStudents } from '../../lib/firebase';
 import { doc, getDoc, getDocs, setDoc, query, collection, where, writeBatch } from 'firebase/firestore';
@@ -14,7 +15,16 @@ import { toast } from 'sonner';
 import type { Class, Student, JuniorHighMonthlyReportComment, MonthlyGenComReviewStatus } from '../../types';
 import * as XLSX from 'xlsx';
 import { isTeacherAssignedToClass } from '../../services/classTeacherAssignmentService';
+import { useJHReportAttendance } from '../../hooks/useJHReportAttendance';
 import { 
+  JH_MONTHLY_STRENGTHS_BANK,
+  JH_MONTHLY_ACHIEVEMENTS_BANK,
+  JH_MONTHLY_NEEDS_IMPROVEMENT_BANK,
+  JHMonthlyCustomOption,
+  fetchJHMonthlyCustomOptions,
+  saveJHMonthlyCustomOption,
+  archiveJHMonthlyCustomOption,
+  getJakartaDefaultMonth,
   generateMonthlyGeneralCommentAI, 
   refineMonthlyGeneralCommentAI, 
   generateDeterministicMonthlyComment,
@@ -26,54 +36,6 @@ import {
   fetchStudentPreviousGencomHistory,
   PreviousGencomHistoryItem
 } from '../../services/juniorHighMonthlyReportService';
-
-export const JH_MONTHLY_TEMPLATES = [
-  {
-    id: 'ACADEMIC_INDEPENDENCE',
-    title: 'Prestasi & Kemandirian Belajar',
-    desc: 'Fokus pada penguasaan tujuan pembelajaran (LO), inisiatif, dan ketuntasan tugas mandiri.'
-  },
-  {
-    id: 'ACTIVE_COLLABORATION',
-    title: 'Perkembangan & Keaktifan Kolaborasi',
-    desc: 'Fokus pada interaksi positif, keaktifan bertanya, dan kerja sama tim.'
-  },
-  {
-    id: 'GUIDANCE_FOCUS',
-    title: 'Pendampingan & Peningkatan Fokus',
-    desc: 'Fokus pada konsistensi fokus belajar, manajemen waktu, dan ketelitian.'
-  },
-  {
-    id: 'ISLAMIC_CHARACTER',
-    title: 'Karakter Islami & Kepemimpinan',
-    desc: 'Fokus pada akhlak mulia, adab islami, empati, dan kepedulian sosial.'
-  }
-];
-
-export const JH_MONTHLY_STRENGTHS_BANK = [
-  'Aktif dan antusias dalam mengikuti proses pembelajaran di kelas',
-  'Menunjukkan rasa ingin tahu yang tinggi dan daya nalar kritis',
-  'Disiplin, bertanggung jawab, dan tepat waktu dalam menuntaskan tugas',
-  'Memiliki inisiatif belajar mandiri dan adaptasi yang sangat baik',
-  'Mampu bekerja sama dan menghargai pandangan teman dalam kerja kelompok',
-  'Menunjukkan adab sopan santun dan kepedulian sosial yang konsisten'
-];
-
-export const JH_MONTHLY_ACHIEVEMENTS_BANK = [
-  'Memahami tujuan pembelajaran (LO) bulan ini dengan penguasaan yang sangat baik',
-  'Menunjukkan peningkatan signifikan dalam penyelesaian tugas dan proyek kelas',
-  'Mampu mempresentasikan hasil belajar dan gagasan dengan percaya diri',
-  'Konsisten dalam mengaplikasikan konsep pelajaran pada pemecahan masalah',
-  'Aktif berpartisipasi dalam aktivitas eksplorasi dan unjuk bakat siswa'
-];
-
-export const JH_MONTHLY_NEEDS_IMPROVEMENT_BANK = [
-  'mempertahankan konsistensi fokus selama sesi pengerjaan tugas mandiri',
-  'lebih percaya diri dalam mengungkapkan pendapat dan mengajukan pertanyaan di kelas',
-  'meningkatkan ketelitian dengan memeriksa kembali hasil kerja sebelum dikumpulkan',
-  'mengoptimalkan manajemen waktu dalam menyelesaikan setiap rangkaian aktivitas belajar',
-  'lebih aktif berkonsultasi dengan guru saat menemui materi atau tugas yang menantang'
-];
 
 const indonesianMonths = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -203,11 +165,58 @@ function MonthlyReportCommentsContent() {
   const { profile } = useAuth();
   const { activeYear, activeSemester } = useAcademicYear();
 
-  // Selected parameters
-  const [selectedYear, setSelectedYear] = React.useState<string>('2026/2027');
-  const [selectedSemester, setSelectedSemester] = React.useState<string>('1');
-  const [selectedMonth, setSelectedMonth] = React.useState<string>('');
-  const [selectedClassId, setSelectedClassId] = React.useState<string>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Selected parameters with priority: URL -> Date default (Asia/Jakarta)
+  const initialMonth = React.useMemo(() => {
+    const urlM = searchParams.get('month');
+    if (urlM && /^\d{4}-(0[1-9]|1[0-2])$/.test(urlM)) {
+      return urlM;
+    }
+    return getJakartaDefaultMonth();
+  }, []);
+
+  const [selectedYear, setSelectedYear] = React.useState<string>(searchParams.get('year') || '2026/2027');
+  const [selectedSemester, setSelectedSemester] = React.useState<string>(searchParams.get('semester') || '1');
+  const [selectedMonth, setSelectedMonth] = React.useState<string>(initialMonth);
+  const [selectedClassId, setSelectedClassId] = React.useState<string>(searchParams.get('classId') || '');
+
+  const handleSelectMonth = (m: string) => {
+    setSelectedMonth(m);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.set('month', m);
+      return p;
+    }, { replace: true });
+  };
+
+  const handleSelectClass = (cid: string) => {
+    setSelectedClassId(cid);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (cid) p.set('classId', cid);
+      else p.delete('classId');
+      return p;
+    }, { replace: true });
+  };
+
+  const handleSelectYear = (yr: string) => {
+    setSelectedYear(yr);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.set('year', yr);
+      return p;
+    }, { replace: true });
+  };
+
+  const handleSelectSemester = (sem: string) => {
+    setSelectedSemester(sem);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.set('semester', sem);
+      return p;
+    }, { replace: true });
+  };
 
   // Dropdown list & student roster
   const [classesList, setClassesList] = React.useState<Class[]>([]);
@@ -215,6 +224,29 @@ function MonthlyReportCommentsContent() {
   const [students, setStudents] = React.useState<Student[]>([]);
   const [loadingStudents, setLoadingStudents] = React.useState<boolean>(false);
   const [searchQuery, setSearchQuery] = React.useState<string>('');
+
+  const selectedClassObj = React.useMemo(() => {
+    return classesList.find(c => c.id === selectedClassId);
+  }, [classesList, selectedClassId]);
+
+  const studentIds = React.useMemo(() => students.map(s => s.id), [students]);
+
+  // Official Junior High Attendance
+  const { 
+    studentAttendanceMap, 
+    loading: loadingAttendance, 
+    error: attendanceError,
+    attendanceAvailableForPeriod
+  } = useJHReportAttendance({
+    selectedClassId,
+    selectedClassName: selectedClassObj?.name,
+    selectedYear,
+    selectedSemester,
+    selectedMonth,
+    studentIds
+  });
+
+  const [loadingCustomOptions, setLoadingCustomOptions] = React.useState<boolean>(false);
 
   // Comment records map (studentId -> Comment object)
   const [commentsMap, setCommentsMap] = React.useState<Record<string, JuniorHighMonthlyReportComment>>({});
@@ -224,6 +256,8 @@ function MonthlyReportCommentsContent() {
   const [editingStudent, setEditingStudent] = React.useState<Student | null>(null);
   const [commentText, setCommentText] = React.useState<string>('');
   const [editorStatus, setEditorStatus] = React.useState<'DRAFT' | 'FINAL'>('DRAFT');
+  const [editingGeneratorSnapshot, setEditingGeneratorSnapshot] = React.useState<any>(null);
+  const [editingAttendanceSnapshot, setEditingAttendanceSnapshot] = React.useState<any>(null);
   const [isSavingComment, setIsSavingComment] = React.useState<boolean>(false);
   const [showWarning, setShowWarning] = React.useState<boolean>(false);
 
@@ -255,24 +289,55 @@ function MonthlyReportCommentsContent() {
   const [showDraftOverwriteOption, setShowDraftOverwriteOption] = React.useState<boolean>(false);
   const [isImporting, setIsImporting] = React.useState<boolean>(false);
 
-  // Indonesian Comment Generator States
-  // Indonesian Comment Generator States (Midterm Pattern)
+  // Indonesian Comment Generator States (Simplified, No AI-slop, No style cards)
   const [showGeneratorModal, setShowGeneratorModal] = React.useState<boolean>(false);
   const [generatorStudent, setGeneratorStudent] = React.useState<Student | null>(null);
-  const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>('ACADEMIC_INDEPENDENCE');
   const [genNickname, setGenNickname] = React.useState<string>('');
   const [genGender, setGenGender] = React.useState<'MALE' | 'FEMALE'>('MALE');
   const [genStrengths, setGenStrengths] = React.useState<string[]>([]);
   const [genAchievements, setGenAchievements] = React.useState<string[]>([]);
+  const [genAchievementText, setGenAchievementText] = React.useState<string>('');
   const [genNeeds, setGenNeeds] = React.useState<string[]>([]);
   const [genManualNotes, setGenManualNotes] = React.useState<string>('');
   const [genDraftText, setGenDraftText] = React.useState<string>('');
-  const [genAttendance, setGenAttendance] = React.useState<{ sickLeave: number; excusedLeave: number; absent: number } | null>(null);
-  const [genLearningJourney, setGenLearningJourney] = React.useState<string>('');
-  const [genReflection, setGenReflection] = React.useState<string>('');
-  const [loadingContextData, setLoadingContextData] = React.useState<boolean>(false);
+  const [genAttendanceTotals, setGenAttendanceTotals] = React.useState<any>(null);
+  const [genAttendanceStatus, setGenAttendanceStatus] = React.useState<'LOADING' | 'AVAILABLE' | 'INCOMPLETE' | 'FAILED'>('INCOMPLETE');
   const [isGeneratingAI, setIsGeneratingAI] = React.useState<boolean>(false);
   const [isPolishingAI, setIsPolishingAI] = React.useState<boolean>(false);
+
+  // Custom Teacher Choices States
+  const [customOptions, setCustomOptions] = React.useState<JHMonthlyCustomOption[]>([]);
+  const [showAddOptionModal, setShowAddOptionModal] = React.useState<boolean>(false);
+  const [newOptionGroup, setNewOptionGroup] = React.useState<'STRENGTHS' | 'ACHIEVEMENTS' | 'NEEDS_IMPROVEMENT'>('STRENGTHS');
+  const [newOptionText, setNewOptionText] = React.useState<string>('');
+  const [newOptionScope, setNewOptionScope] = React.useState<'CLASS' | 'SPECIFIC_CLASSES' | 'ALL_JH'>('CLASS');
+  const [newOptionTargetClasses, setNewOptionTargetClasses] = React.useState<string[]>([]);
+  const [isSavingCustomOption, setIsSavingCustomOption] = React.useState<boolean>(false);
+
+  const attendanceContradictionWarning = React.useMemo(() => {
+    if (!genAttendanceTotals || genAttendanceStatus !== 'AVAILABLE') return null;
+
+    const hasAttendanceStrength = genStrengths.some(s => 
+      s.toLowerCase().includes('hadir') || s.toLowerCase().includes('kehadiran')
+    );
+    const unexcused = genAttendanceTotals.absent ?? 0;
+    const pct = genAttendanceTotals.percentage ?? 0;
+
+    if ((unexcused > 0 || (pct > 0 && pct < 75)) && hasAttendanceStrength) {
+      return `Perhatian: Siswa tercatat memiliki ketidakhadiran tanpa keterangan (Alpa: ${unexcused} hari) atau persentase kehadiran rendah (${pct}%), namun Anda memilih aspek kehadiran pada kekuatan siswa. Harap pastikan evaluasi telah sesuai.`;
+    }
+
+    const hasAttendanceNeed = genNeeds.some(n => 
+      n.toLowerCase().includes('hadir') || n.toLowerCase().includes('kehadiran')
+    );
+    const sick = genAttendanceTotals.sickLeave ?? 0;
+    const excused = genAttendanceTotals.excusedLeave ?? 0;
+    if (unexcused === 0 && sick === 0 && excused === 0 && hasAttendanceNeed) {
+      return `Perhatian: Siswa tercatat hadir penuh tanpa catatan absen pada data absensi resmi, namun dipilih aspek peningkatan keteraturan kehadiran. Harap periksa kembali.`;
+    }
+
+    return null;
+  }, [genAttendanceTotals, genAttendanceStatus, genStrengths, genNeeds]);
 
   // Approver role check (Super Admin OR Kepala Unit SMP)
   const isApprover = React.useMemo(() => {
@@ -574,70 +639,50 @@ function MonthlyReportCommentsContent() {
 
     setGenNickname(firstName);
     setGenGender(detectedGender);
-    setSelectedTemplateId('ACADEMIC_INDEPENDENCE');
-    setGenStrengths([JH_MONTHLY_STRENGTHS_BANK[0]]);
-    setGenAchievements([JH_MONTHLY_ACHIEVEMENTS_BANK[0]]);
-    setGenNeeds([JH_MONTHLY_NEEDS_IMPROVEMENT_BANK[0]]);
-    setGenManualNotes('');
-    setGenDraftText(existing);
+
+    // If existing has generatorSnapshot, restore previous selections; otherwise start empty (NO auto-selected items)
+    if (existing?.generatorSnapshot) {
+      setGenStrengths(existing.generatorSnapshot.strengths || []);
+      setGenAchievements(existing.generatorSnapshot.achievements || []);
+      setGenNeeds(existing.generatorSnapshot.needsImprovement || []);
+      setGenManualNotes(existing.generatorSnapshot.manualNotes || '');
+      setGenAchievementText('');
+    } else {
+      setGenStrengths([]);
+      setGenAchievements([]);
+      setGenNeeds([]);
+      setGenManualNotes('');
+      setGenAchievementText('');
+    }
+
+    setGenDraftText(existing?.generalComment || '');
     setShowGeneratorModal(true);
 
-    // Ingest authentic student monthly context
-    setLoadingContextData(true);
+    // Load custom options for this class
     try {
-      // 1. Fetch Class Summary
-      let summaryText = '';
-      if (selectedClassId && selectedMonth) {
-        const summaryDocId = `${selectedClassId}_${selectedYear.replace(/\//g, '-')}_${selectedSemester}_${selectedMonth}`;
-        const summarySnap = await getDoc(doc(db, 'class_report_summaries', summaryDocId));
-        if (summarySnap.exists()) {
-          const sData = summarySnap.data();
-          const ljTitle = sData?.sections?.learningJourney?.title || '';
-          const ljSummary = sData?.sections?.learningJourney?.summary || '';
-          summaryText = `${ljTitle}: ${ljSummary}`.trim();
-        }
-      }
-      setGenLearningJourney(summaryText);
-
-      // 2. Fetch Attendance for selected month
-      let attData = null;
-      try {
-        const attSnap = await getDoc(doc(db, 'jh_monthly_attendance', `${student.id}_${selectedMonth}`));
-        if (attSnap.exists()) {
-          const data = attSnap.data();
-          attData = {
-            sickLeave: data.sickLeave ?? 0,
-            excusedLeave: data.excusedLeave ?? 0,
-            absent: data.absent ?? 0,
-          };
-        }
-      } catch (attErr) {
-        console.warn('Could not load monthly attendance record:', attErr);
-      }
-      setGenAttendance(attData);
-
-      // 3. Fetch Self-Exploration approved reflection
-      let reflText = '';
-      try {
-        const qRefl = query(
-          collection(db, 'seMonthlyReflections'),
-          where('studentId', '==', student.id),
-          where('periodKey', '==', selectedMonth),
-          where('status', '==', 'APPROVED')
-        );
-        const reflSnap = await getDocs(qRefl);
-        if (!reflSnap.empty) {
-          const docs = reflSnap.docs.map(d => d.data());
-          reflText = docs.map(d => `${d.activityNameSnapshot || 'Eksplorasi'}: ${d.reflectionText || ''}`).join('; ');
-        }
-      } catch (reflErr) {
-        console.warn('Could not load self-exploration reflections:', reflErr);
-      }
-      setGenReflection(reflText);
-    } catch (loadErr) {
-      console.warn('Error ingesting monthly report context:', loadErr);
+      setLoadingCustomOptions(true);
+      const opts = await fetchJHMonthlyCustomOptions(selectedClassId);
+      setCustomOptions(opts);
+    } catch (err) {
+      console.warn('Error loading custom options:', err);
     } finally {
-      setLoadingContextData(false);
+      setLoadingCustomOptions(false);
+    }
+
+    // Ingest factual attendance from official module (useJHReportAttendance)
+    const attRec = studentAttendance ? studentAttendance[student.id] : undefined;
+    if (loadingAttendance) {
+      setGenAttendanceStatus('LOADING');
+      setGenAttendanceTotals(null);
+    } else if (attendanceError) {
+      setGenAttendanceStatus('FAILED');
+      setGenAttendanceTotals(null);
+    } else if (attRec && attRec.totalDays > 0) {
+      setGenAttendanceStatus('AVAILABLE');
+      setGenAttendanceTotals(attRec);
+    } else {
+      setGenAttendanceStatus('INCOMPLETE');
+      setGenAttendanceTotals(attRec || null);
     }
   };
 
@@ -645,20 +690,29 @@ function MonthlyReportCommentsContent() {
     if (!generatorStudent) return;
     setIsGeneratingAI(true);
     try {
-      const attSummary = genAttendance
-        ? `Sakit: ${genAttendance.sickLeave}, Izin: ${genAttendance.excusedLeave}, Alpa: ${genAttendance.absent}`
-        : 'Kehadiran tertib';
+      let attSummary = '';
+      if (genAttendanceStatus === 'AVAILABLE' && genAttendanceTotals) {
+        attSummary = `Hadir: ${genAttendanceTotals.hadir}, Sakit: ${genAttendanceTotals.sakit}, Izin: ${genAttendanceTotals.izin}, Alpa: ${genAttendanceTotals.alpa}${genAttendanceTotals.terlambat > 0 ? `, Terlambat: ${genAttendanceTotals.terlambat}` : ''} (Total: ${genAttendanceTotals.totalDays} hari, Kehadiran: ${genAttendanceTotals.percentage}%)`;
+      } else if (genAttendanceStatus === 'INCOMPLETE') {
+        attSummary = 'Data absensi resmi bulan ini belum tersedia / belum direkap';
+      } else if (genAttendanceStatus === 'LOADING') {
+        attSummary = 'Sedang memuat data absensi';
+      }
+
+      // Combine achievements from chips + freeform textarea
+      const allAchievements = [...genAchievements];
+      if (genAchievementText.trim() && !allAchievements.includes(genAchievementText.trim())) {
+        allAchievements.push(genAchievementText.trim());
+      }
 
       const generated = await generateMonthlyGeneralCommentAI({
         studentName: generatorStudent.name,
         nickname: genNickname.trim() || undefined,
         gender: genGender,
         monthPeriod: selectedMonth ? getIndonesianMonthLabel(selectedMonth) : undefined,
-        learningContext: genLearningJourney || undefined,
         attendanceSummary: attSummary,
-        reflectionSummary: genReflection || undefined,
         strengths: genStrengths,
-        achievements: genAchievements,
+        achievements: allAchievements,
         needsImprovement: genNeeds,
         manualNotes: genManualNotes.trim() || undefined,
       });
@@ -668,7 +722,6 @@ function MonthlyReportCommentsContent() {
     } catch (err: any) {
       console.error('AI Generation error:', err);
       toast.error(err.message || 'Gagal generate AI. Menggunakan penyusunan narasi terstruktur...');
-      // Deterministic fallback if API endpoint errors
       handleGenerateDraftNarrative();
     } finally {
       setIsGeneratingAI(false);
@@ -701,31 +754,34 @@ function MonthlyReportCommentsContent() {
     if (!generatorStudent) return;
     const callName = genNickname.trim() || generatorStudent.name.split(' ')[0] || generatorStudent.name;
 
-    if (genStrengths.length === 0 && genAchievements.length === 0 && genNeeds.length === 0 && !genManualNotes.trim()) {
+    const allAchievements = [...genAchievements];
+    if (genAchievementText.trim() && !allAchievements.includes(genAchievementText.trim())) {
+      allAchievements.push(genAchievementText.trim());
+    }
+
+    if (genStrengths.length === 0 && allAchievements.length === 0 && genNeeds.length === 0 && !genManualNotes.trim()) {
       toast.error('Silakan pilih minimal satu aspek perkembangan atau tulis catatan khusus untuk siswa.');
       return;
     }
 
-    const attSummary = genAttendance
-      ? `Sakit: ${genAttendance.sickLeave}, Izin: ${genAttendance.excusedLeave}, Alpa: ${genAttendance.absent}`
-      : 'Kehadiran tertib';
+    let attSummary = '';
+    if (genAttendanceStatus === 'AVAILABLE' && genAttendanceTotals) {
+      attSummary = `Hadir: ${genAttendanceTotals.hadir}, Sakit: ${genAttendanceTotals.sakit}, Izin: ${genAttendanceTotals.izin}, Alpa: ${genAttendanceTotals.alpa}`;
+    }
 
     const result = generateDeterministicMonthlyComment({
       studentName: generatorStudent.name,
       nickname: callName,
       gender: genGender,
-      templateId: selectedTemplateId,
-      learningContext: genLearningJourney,
       attendanceSummary: attSummary,
-      reflectionSummary: genReflection,
       strengths: genStrengths,
-      achievements: genAchievements,
+      achievements: allAchievements,
       needsImprovement: genNeeds,
       manualNotes: genManualNotes.trim() || undefined,
     });
 
     setGenDraftText(result);
-    toast.success('Draf komentar naratif berhasil dirangkai.');
+    toast.success('Draf narasi terstruktur berhasil dirangkai.');
   };
 
   const handleApplyGeneratedToEditor = () => {
@@ -751,10 +807,35 @@ function MonthlyReportCommentsContent() {
       if (!confirmReplace) return;
     }
 
-    // Apply to editor state
+    const allAchievements = [...genAchievements];
+    if (genAchievementText.trim() && !allAchievements.includes(genAchievementText.trim())) {
+      allAchievements.push(genAchievementText.trim());
+    }
+
+    // Save snapshot state for persistence
+    const genSnapshot = {
+      strengths: genStrengths,
+      achievements: allAchievements,
+      needsImprovement: genNeeds,
+      manualNotes: genManualNotes,
+      generatedAt: new Date().toISOString()
+    };
+    const attSnapshot = {
+      sickLeave: genAttendanceTotals?.sakit ?? 0,
+      excusedLeave: genAttendanceTotals?.izin ?? 0,
+      unexcusedLeave: genAttendanceTotals?.alpa ?? 0,
+      present: genAttendanceTotals?.present,
+      totalDays: genAttendanceTotals?.totalDays,
+      percentage: genAttendanceTotals?.percentage,
+      status: genAttendanceStatus,
+      capturedAt: new Date().toISOString()
+    };
+
     setEditingStudent(generatorStudent);
     setCommentText(genDraftText.trim());
     setEditorStatus('DRAFT');
+    setEditingGeneratorSnapshot(genSnapshot);
+    setEditingAttendanceSnapshot(attSnapshot);
     setInitialCommentText(existing?.generalComment || '');
     setInitialEditorStatus(existing?.status || 'DRAFT');
     setShowWarning(false);
@@ -762,15 +843,110 @@ function MonthlyReportCommentsContent() {
     toast.success('Draf komentar berhasil dipindahkan ke editor. Silakan periksa dan Simpan Draft.');
   };
 
+  // Direct save draft from generator modal with snapshots
+  const handleDirectSaveDraftFromGenerator = async () => {
+    if (!genDraftText.trim()) {
+      toast.error('Draf komentar masih kosong.');
+      return;
+    }
+    if (!generatorStudent || !selectedClassId || !selectedMonth) return;
 
-  // Initialize dates and default values
+    const existing = commentsMap[generatorStudent.id];
+    if (existing?.status === 'FINAL') {
+      toast.error('Komentar sudah FINAL dan terkunci.');
+      return;
+    }
+
+    const selectedClassObj = classesList.find(c => c.id === selectedClassId);
+    if (profile?.role === 'TEACHER' || profile?.role === 'HOMEROOM_TEACHER') {
+      const authorized = selectedClassObj ? isTeacherAssignedToClass(selectedClassObj, profile?.uid || '') : false;
+      if (!authorized) {
+        toast.error('Anda tidak memiliki otorisasi untuk mengelola kelas ini.');
+        return;
+      }
+    }
+
+    try {
+      const studentId = generatorStudent.id;
+      const academicYearNormalized = selectedYear.replace(/\//g, '-');
+      const docId = `JUNIOR_HIGH_MONTHLY_COMMENT_${studentId}_${selectedClassId}_${academicYearNormalized}_${selectedSemester}_${selectedMonth}`;
+      const docRef = doc(db, 'junior_high_monthly_report_comments', docId);
+
+      const allAchievements = [...genAchievements];
+      if (genAchievementText.trim() && !allAchievements.includes(genAchievementText.trim())) {
+        allAchievements.push(genAchievementText.trim());
+      }
+
+      const genSnapshot = {
+        strengths: genStrengths,
+        achievements: allAchievements,
+        needsImprovement: genNeeds,
+        manualNotes: genManualNotes,
+        generatedAt: new Date().toISOString()
+      };
+      const attSnapshot = {
+        sickLeave: genAttendanceTotals?.sakit ?? 0,
+        excusedLeave: genAttendanceTotals?.izin ?? 0,
+        unexcusedLeave: genAttendanceTotals?.alpa ?? 0,
+        present: genAttendanceTotals?.present,
+        totalDays: genAttendanceTotals?.totalDays,
+        percentage: genAttendanceTotals?.percentage,
+        status: genAttendanceStatus,
+        capturedAt: new Date().toISOString()
+      };
+
+      const gradeStr = selectedClassObj?.gradeLevel !== undefined 
+        ? `Grade ${selectedClassObj.gradeLevel}` 
+        : (generatorStudent.grade !== undefined ? `Grade ${generatorStudent.grade}` : 'Junior High');
+
+      const actorName = profile?.displayName || profile?.email || 'Guru';
+      const actorUid = profile?.uid || 'unknown';
+
+      const payload: JuniorHighMonthlyReportComment = {
+        unit: 'JUNIOR_HIGH',
+        reportType: 'MONTHLY_PROGRESS',
+        studentId,
+        studentNameSnapshot: generatorStudent.name,
+        classId: selectedClassId,
+        classNameSnapshot: selectedClassObj?.name || '',
+        gradeSnapshot: gradeStr,
+        academicYear: selectedYear,
+        semester: selectedSemester,
+        periodKey: selectedMonth,
+        periodLabel: getIndonesianMonthLabel(selectedMonth),
+        generalComment: genDraftText.trim(),
+        status: 'DRAFT',
+        createdBy: existing?.createdBy || profile?.email || 'unknown',
+        createdAt: existing?.createdAt || new Date().toISOString(),
+        createdByName: existing?.createdByName || actorName,
+        createdByUid: existing?.createdByUid || actorUid,
+        updatedBy: profile?.email || 'unknown',
+        updatedAt: new Date().toISOString(),
+        updatedByName: actorName,
+        updatedByUid: actorUid,
+        version: (existing?.version || 1) + 1,
+        reviewStatus: existing?.reviewStatus || 'DRAFT',
+        generatorSnapshot: genSnapshot,
+        attendanceSnapshot: attSnapshot
+      };
+
+      await setDoc(docRef, payload);
+      setCommentsMap(prev => ({
+        ...prev,
+        [studentId]: { ...payload, id: docId }
+      }));
+      setShowGeneratorModal(false);
+      toast.success(`Draf komentar ${generatorStudent.name} berhasil disimpan sebagai DRAFT.`);
+    } catch (err: any) {
+      console.error('Error direct saving comment:', err);
+      toast.error('Gagal menyimpan draf komentar.');
+    }
+  };
+
+  // Initialize academic year and semester without overriding user/URL selected month
   React.useEffect(() => {
-    if (activeYear) setSelectedYear(activeYear);
-    if (activeSemester) setSelectedSemester(String(activeSemester));
-
-    const now = new Date();
-    const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    setSelectedMonth(currentMonthStr);
+    if (activeYear && !searchParams.get('year')) setSelectedYear(activeYear);
+    if (activeSemester && !searchParams.get('semester')) setSelectedSemester(String(activeSemester));
   }, [activeYear, activeSemester]);
 
   // Fetch Junior High Classes
@@ -1006,7 +1182,9 @@ function MonthlyReportCommentsContent() {
         updatedByName: actorName,
         updatedByUid: actorUid,
         version: (existingDoc?.version || 1) + 1,
-        reviewStatus: existingDoc?.reviewStatus || 'DRAFT'
+        reviewStatus: existingDoc?.reviewStatus || 'DRAFT',
+        generatorSnapshot: editingGeneratorSnapshot || existingDoc?.generatorSnapshot,
+        attendanceSnapshot: editingAttendanceSnapshot || existingDoc?.attendanceSnapshot
       };
 
       await setDoc(docRef, payload);
@@ -1595,8 +1773,6 @@ function MonthlyReportCommentsContent() {
     });
   }, [filteredStudents, commentsMap, statusFilter]);
 
-  const selectedClassObj = classesList.find(c => c.id === selectedClassId);
-
   return (
     <div id="monthly-report-comments-page" className="min-h-screen bg-slate-50/50 p-6">
       {/* Header Area */}
@@ -1642,7 +1818,7 @@ function MonthlyReportCommentsContent() {
             </label>
             <select
               value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
+              onChange={(e) => handleSelectYear(e.target.value)}
               className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50"
             >
               <option value="2025/2026">2025/2026</option>
@@ -1659,7 +1835,7 @@ function MonthlyReportCommentsContent() {
               {['1', '2'].map((sem) => (
                 <button
                   key={sem}
-                  onClick={() => setSelectedSemester(sem)}
+                  onClick={() => handleSelectSemester(sem)}
                   className={`py-2 text-sm font-semibold rounded-lg border transition-all ${
                     selectedSemester === sem
                       ? 'bg-[#002366] text-white border-[#002366] shadow-sm'
@@ -1679,7 +1855,7 @@ function MonthlyReportCommentsContent() {
             <input
               type="month"
               value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
+              onChange={(e) => handleSelectMonth(e.target.value)}
               className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5 bg-slate-50/50"
             />
           </div>
@@ -1696,7 +1872,7 @@ function MonthlyReportCommentsContent() {
             ) : (
               <select
                 value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
+                onChange={(e) => handleSelectClass(e.target.value)}
                 className="w-full text-sm rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 bg-slate-50/50 font-medium"
               >
                 <option value="" disabled>
@@ -2860,7 +3036,7 @@ function MonthlyReportCommentsContent() {
         )}
       </AnimatePresence>
 
-      {/* Indonesian Comment Generator Modal (Midterm Pattern) */}
+      {/* Indonesian Comment Generator Modal (Clean, Focused, No AI-slop) */}
       <AnimatePresence>
         {showGeneratorModal && generatorStudent && (
           <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
@@ -2871,7 +3047,7 @@ function MonthlyReportCommentsContent() {
               transition={{ duration: 0.18 }}
               className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden max-h-[92vh] flex flex-col"
             >
-              {/* Modal Header */}
+              {/* Modal Header: 1. Identitas Siswa */}
               <div className="bg-gradient-to-r from-[#002366] to-[#003399] px-6 py-4 flex items-center justify-between text-white shrink-0">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 rounded-xl bg-white/10 text-amber-300">
@@ -2881,7 +3057,7 @@ function MonthlyReportCommentsContent() {
                     <div className="flex items-center gap-2">
                       <h3 className="font-bold text-base tracking-tight text-white">Generator Komentar Rapor Bulanan</h3>
                       <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-white/20 text-white tracking-wider">
-                        Bahasa Indonesia
+                        SMP · Bahasa Indonesia
                       </span>
                     </div>
                     <p className="text-xs text-blue-150 mt-0.5">
@@ -2900,86 +3076,20 @@ function MonthlyReportCommentsContent() {
               {/* Modal Body - Scrollable */}
               <div className="p-6 overflow-y-auto space-y-5 text-xs text-slate-700">
                 
-                {/* 1. Context Data Indicator Banner */}
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-700 flex items-center gap-1.5 uppercase text-[10px] tracking-wider text-[#002366]">
-                      <Info size={14} className="text-[#002366]" /> Konteks Data Terdeteksi Bulan Ini
-                    </span>
-                    {loadingContextData && (
-                      <span className="flex items-center gap-1 text-[11px] text-blue-600 font-medium">
-                        <RefreshCw size={12} className="animate-spin" /> Membaca data siswa...
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
-                    <div className="p-2.5 bg-white rounded-lg border border-slate-200/80">
-                      <span className="block text-[10px] font-semibold text-slate-400 uppercase">Kehadiran Periode</span>
-                      <strong className="text-slate-800 text-xs">
-                        {genAttendance 
-                          ? `Sakit: ${genAttendance.sickLeave} · Izin: ${genAttendance.excusedLeave} · Alpa: ${genAttendance.absent}`
-                          : 'Kehadiran tertib / nihil catatan'}
-                      </strong>
-                    </div>
-                    <div className="p-2.5 bg-white rounded-lg border border-slate-200/80">
-                      <span className="block text-[10px] font-semibold text-slate-400 uppercase">Materi Pembelajaran Kelas</span>
-                      <strong className="text-slate-800 text-xs truncate block" title={genLearningJourney || 'Belum diisi'}>
-                        {genLearningJourney ? genLearningJourney.slice(0, 45) + '...' : <span className="text-slate-400 italic">Belum diisi di ringkasan</span>}
-                      </strong>
-                    </div>
-                    <div className="p-2.5 bg-white rounded-lg border border-slate-200/80">
-                      <span className="block text-[10px] font-semibold text-slate-400 uppercase">Eksplorasi Diri (Refleksi)</span>
-                      <strong className="text-slate-800 text-xs truncate block" title={genReflection || 'Belum ada refleksi'}>
-                        {genReflection ? genReflection.slice(0, 40) + '...' : <span className="text-slate-400 italic">Tidak ada catatan</span>}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 2. Focus Template Selector */}
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-slate-600 text-[11px] mb-2 flex items-center gap-1.5">
-                    <Layers size={13} className="text-[#002366]" /> 1. Pilih Aspek Fokus / Gaya Komentar
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {JH_MONTHLY_TEMPLATES.map((tmpl) => {
-                      const isSelected = selectedTemplateId === tmpl.id;
-                      return (
-                        <div
-                          key={tmpl.id}
-                          onClick={() => setSelectedTemplateId(tmpl.id)}
-                          className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
-                            isSelected
-                              ? 'bg-blue-50/70 border-[#002366] shadow-xs'
-                              : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className={`font-bold text-xs ${isSelected ? 'text-[#002366]' : 'text-slate-800'}`}>
-                              {tmpl.title}
-                            </span>
-                            {isSelected && <CheckCircle2 size={15} className="text-[#002366] shrink-0" />}
-                          </div>
-                          <p className="text-[11px] text-slate-500 leading-relaxed">{tmpl.desc}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* 3. Student Calling Name & Gender */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                {/* 1. Student Calling Name & Gender Identitas */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-                      Nama Panggilan Siswa
+                      Nama Panggilan Siswa <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="text"
                       value={genNickname}
                       onChange={(e) => setGenNickname(e.target.value)}
-                      placeholder="Nama panggilan siswa"
+                      placeholder="Nama panggilan (contoh: Fatih)"
                       className="w-full bg-white text-xs rounded-lg border-slate-200 py-1.5 px-3 focus:border-[#002366] focus:ring-[#002366]"
                     />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Digunakan pada pembuka: "Ananda [panggilan] telah..."</span>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
@@ -3012,26 +3122,119 @@ function MonthlyReportCommentsContent() {
                   </div>
                 </div>
 
-                {/* 4. Strengths & Progress Bank */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="font-bold uppercase tracking-wider text-slate-600 text-[11px]">
-                      2. Kekuatan & Perkembangan Siswa ({genStrengths.length} terpilih)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setGenStrengths([])}
-                      className="text-[10px] text-slate-400 hover:text-slate-600"
-                    >
-                      Reset
-                    </button>
+                {/* 2. Kehadiran Faktual (Official Attendance) */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-700 flex items-center gap-1.5 uppercase text-[10px] tracking-wider text-[#002366]">
+                      <Calendar size={13} className="text-[#002366]" /> Kehadiran Faktual Periode Bulan Ini
+                    </span>
+                    <div>
+                      {genAttendanceStatus === 'LOADING' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                          <RefreshCw size={10} className="animate-spin" /> Memuat Absensi...
+                        </span>
+                      ) : genAttendanceStatus === 'AVAILABLE' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <CheckCircle2 size={11} /> Data Resmi Tersedia
+                        </span>
+                      ) : genAttendanceStatus === 'FAILED' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                          <AlertCircle size={11} /> Gagal Memuat Absensi
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                          <AlertTriangle size={11} /> Belum Direkap / Belum Tersedia
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+
+                  {genAttendanceStatus === 'AVAILABLE' && genAttendanceTotals ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 text-center">
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <span className="block text-[10px] text-slate-400 font-semibold">HADIR</span>
+                        <strong className="text-emerald-700 text-sm font-bold">{genAttendanceTotals.hadir}</strong>
+                      </div>
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <span className="block text-[10px] text-slate-400 font-semibold">SAKIT</span>
+                        <strong className="text-slate-700 text-sm font-bold">{genAttendanceTotals.sakit}</strong>
+                      </div>
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <span className="block text-[10px] text-slate-400 font-semibold">IZIN</span>
+                        <strong className="text-slate-700 text-sm font-bold">{genAttendanceTotals.izin}</strong>
+                      </div>
+                      <div className="p-2 bg-white rounded-lg border border-slate-200">
+                        <span className="block text-[10px] text-slate-400 font-semibold">ALPA</span>
+                        <strong className={`text-sm font-bold ${genAttendanceTotals.alpa > 0 ? 'text-rose-600' : 'text-slate-700'}`}>
+                          {genAttendanceTotals.alpa}
+                        </strong>
+                      </div>
+                      <div className="p-2 bg-white rounded-lg border border-slate-200 col-span-2 sm:col-span-1">
+                        <span className="block text-[10px] text-slate-400 font-semibold">PERSENTASE</span>
+                        <strong className="text-[#002366] text-sm font-bold">
+                          {genAttendanceTotals.percentage !== undefined ? `${genAttendanceTotals.percentage}%` : '-'}
+                        </strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 bg-amber-50/60 rounded-lg border border-amber-200/70 text-slate-600 text-[11px] leading-relaxed">
+                      {genAttendanceStatus === 'LOADING'
+                        ? 'Menghubungkan ke buku absensi kelas resmi SMP...'
+                        : 'Data rekapitulasi kehadiran resmi untuk periode ini belum tersedia. Generator tidak akan memanipulasi atau mengarang kehadiran.'}
+                    </div>
+                  )}
+
+                  {/* Contradiction Warning Box */}
+                  {attendanceContradictionWarning && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-lg text-[11px] text-amber-900 flex items-start gap-2 mt-2">
+                      <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                      <div>{attendanceContradictionWarning}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Kelompok A: Kekuatan / Progress (24 bank + custom) */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="font-bold uppercase tracking-wider text-slate-700 text-[11px] flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-full bg-[#002366] text-white inline-flex items-center justify-center text-[10px] font-bold">
+                        A
+                      </span>
+                      Kekuatan / Progres Belajar ({genStrengths.length} terpilih)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewOptionGroup('STRENGTHS');
+                          setNewOptionText('');
+                          setNewOptionScope('CLASS');
+                          setNewOptionTargetClasses(selectedClassId ? [selectedClassId] : []);
+                          setShowAddOptionModal(true);
+                        }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#002366] hover:text-[#002366]/80 px-2 py-1 rounded bg-blue-50 border border-blue-200 transition-colors"
+                      >
+                        <Plus size={12} /> Tambah Pilihan
+                      </button>
+                      {genStrengths.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setGenStrengths([])}
+                          className="text-[10px] text-slate-400 hover:text-slate-600"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 max-h-56 overflow-y-auto p-1 border border-slate-150 rounded-xl bg-slate-50/30">
+                    {/* Official Bank Items */}
                     {JH_MONTHLY_STRENGTHS_BANK.map((item, idx) => {
                       const isSel = genStrengths.includes(item);
                       return (
                         <button
-                          key={idx}
+                          key={`s_bank_${idx}`}
                           type="button"
                           onClick={() => {
                             if (isSel) setGenStrengths(genStrengths.filter(s => s !== item));
@@ -3039,7 +3242,7 @@ function MonthlyReportCommentsContent() {
                           }}
                           className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
                             isSel
-                              ? 'bg-blue-50 border-[#002366] text-[#002366] font-semibold'
+                              ? 'bg-blue-50 border-[#002366] text-[#002366] font-semibold shadow-2xs'
                               : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                           }`}
                         >
@@ -3047,67 +3250,138 @@ function MonthlyReportCommentsContent() {
                         </button>
                       );
                     })}
-                  </div>
-                </div>
 
-                {/* 5. Achievements Bank */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="font-bold uppercase tracking-wider text-slate-600 text-[11px]">
-                      3. Capaian & Prestasi Spesifik ({genAchievements.length} terpilih)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setGenAchievements([])}
-                      className="text-[10px] text-slate-400 hover:text-slate-600"
-                    >
-                      Reset
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {JH_MONTHLY_ACHIEVEMENTS_BANK.map((item, idx) => {
-                      const isSel = genAchievements.includes(item);
+                    {/* Teacher Custom Items */}
+                    {customOptions.filter(o => o.group === 'STRENGTHS').map((opt) => {
+                      const isSel = genStrengths.includes(opt.text);
                       return (
                         <button
-                          key={idx}
+                          key={`s_custom_${opt.id}`}
                           type="button"
                           onClick={() => {
-                            if (isSel) setGenAchievements(genAchievements.filter(a => a !== item));
-                            else setGenAchievements([...genAchievements, item]);
+                            if (isSel) setGenStrengths(genStrengths.filter(s => s !== opt.text));
+                            else setGenStrengths([...genStrengths, opt.text]);
                           }}
                           className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
                             isSel
-                              ? 'bg-emerald-50 border-emerald-600 text-emerald-800 font-semibold'
-                              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                              ? 'bg-blue-50 border-[#002366] text-[#002366] font-semibold shadow-2xs'
+                              : 'bg-white border-blue-200 text-blue-900 hover:bg-blue-50/50'
                           }`}
+                          title={`Kustom oleh ${opt.createdByName}`}
                         >
-                          {isSel ? '✓ ' : '+ '} {item}
+                          {isSel ? '✓ ' : '+ '} ✦ {opt.text}
                         </button>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* 6. Needs Improvement Bank */}
+                {/* 4. Kelompok B: Achievement Bulan Ini (Opsional) */}
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="font-bold uppercase tracking-wider text-slate-600 text-[11px]">
-                      4. Area Peningkatan & Rekomendasi ({genNeeds.length} terpilih)
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="font-bold uppercase tracking-wider text-slate-700 text-[11px] flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-full bg-emerald-600 text-white inline-flex items-center justify-center text-[10px] font-bold">
+                        B
+                      </span>
+                      Achievement Bulan Ini <span className="text-slate-400 font-normal lowercase">(opsional)</span>
                     </label>
                     <button
                       type="button"
-                      onClick={() => setGenNeeds([])}
-                      className="text-[10px] text-slate-400 hover:text-slate-600"
+                      onClick={() => {
+                        setNewOptionGroup('ACHIEVEMENTS');
+                        setNewOptionText('');
+                        setNewOptionScope('CLASS');
+                        setNewOptionTargetClasses(selectedClassId ? [selectedClassId] : []);
+                        setShowAddOptionModal(true);
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded bg-emerald-50 border border-emerald-200 transition-colors"
                     >
-                      Reset
+                      <Plus size={12} /> Tambah Pilihan
                     </button>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+
+                  <div className="space-y-2">
+                    <textarea
+                      value={genAchievementText}
+                      onChange={(e) => setGenAchievementText(e.target.value)}
+                      rows={2}
+                      placeholder="Tuliskan capaian atau prestasi khusus siswa bulan ini (kosongkan jika tidak ada capaian spesifik)..."
+                      className="w-full text-xs rounded-xl border-slate-200 focus:border-emerald-600 focus:ring-emerald-600 py-2 px-3 bg-white"
+                    />
+
+                    {/* Custom chips if any exists */}
+                    {customOptions.filter(o => o.group === 'ACHIEVEMENTS').length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {customOptions.filter(o => o.group === 'ACHIEVEMENTS').map((opt) => {
+                          const isSel = genAchievements.includes(opt.text);
+                          return (
+                            <button
+                              key={`a_custom_${opt.id}`}
+                              type="button"
+                              onClick={() => {
+                                if (isSel) setGenAchievements(genAchievements.filter(a => a !== opt.text));
+                                else setGenAchievements([...genAchievements, opt.text]);
+                              }}
+                              className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
+                                isSel
+                                  ? 'bg-emerald-50 border-emerald-600 text-emerald-800 font-semibold'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              {isSel ? '✓ ' : '+ '} {opt.text}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <span className="text-[10px] text-slate-400 block italic">
+                      * Ucapan selamat hanya akan diberikan jika bagian ini diisi dengan capaian nyata.
+                    </span>
+                  </div>
+                </div>
+
+                {/* 5. Kelompok C: Area Peningkatan (12 bank + custom) */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="font-bold uppercase tracking-wider text-slate-700 text-[11px] flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-600 text-white inline-flex items-center justify-center text-[10px] font-bold">
+                        C
+                      </span>
+                      Area Peningkatan Perilaku Belajar / Sosial Emosional ({genNeeds.length} terpilih)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewOptionGroup('NEEDS_IMPROVEMENT');
+                          setNewOptionText('');
+                          setNewOptionScope('CLASS');
+                          setNewOptionTargetClasses(selectedClassId ? [selectedClassId] : []);
+                          setShowAddOptionModal(true);
+                        }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 hover:text-amber-900 px-2 py-1 rounded bg-amber-50 border border-amber-200 transition-colors"
+                      >
+                        <Plus size={12} /> Tambah Pilihan
+                      </button>
+                      {genNeeds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setGenNeeds([])}
+                          className="text-[10px] text-slate-400 hover:text-slate-600"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 max-h-56 overflow-y-auto p-1 border border-slate-150 rounded-xl bg-slate-50/30">
+                    {/* Official Bank Items */}
                     {JH_MONTHLY_NEEDS_IMPROVEMENT_BANK.map((item, idx) => {
                       const isSel = genNeeds.includes(item);
                       return (
                         <button
-                          key={idx}
+                          key={`n_bank_${idx}`}
                           type="button"
                           onClick={() => {
                             if (isSel) setGenNeeds(genNeeds.filter(n => n !== item));
@@ -3115,7 +3389,7 @@ function MonthlyReportCommentsContent() {
                           }}
                           className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
                             isSel
-                              ? 'bg-amber-50 border-amber-500 text-amber-900 font-semibold'
+                              ? 'bg-amber-50 border-amber-500 text-amber-900 font-semibold shadow-2xs'
                               : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                           }`}
                         >
@@ -3123,24 +3397,47 @@ function MonthlyReportCommentsContent() {
                         </button>
                       );
                     })}
+
+                    {/* Teacher Custom Items */}
+                    {customOptions.filter(o => o.group === 'NEEDS_IMPROVEMENT').map((opt) => {
+                      const isSel = genNeeds.includes(opt.text);
+                      return (
+                        <button
+                          key={`n_custom_${opt.id}`}
+                          type="button"
+                          onClick={() => {
+                            if (isSel) setGenNeeds(genNeeds.filter(n => n !== opt.text));
+                            else setGenNeeds([...genNeeds, opt.text]);
+                          }}
+                          className={`text-left text-[11px] px-2.5 py-1.5 rounded-lg border transition-all ${
+                            isSel
+                              ? 'bg-amber-50 border-amber-500 text-amber-900 font-semibold shadow-2xs'
+                              : 'bg-white border-amber-200 text-amber-900 hover:bg-amber-50/50'
+                          }`}
+                          title={`Kustom oleh ${opt.createdByName}`}
+                        >
+                          {isSel ? '✓ ' : '+ '} ✦ {opt.text}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* 7. Additional Teacher Notes */}
+                {/* 6. Catatan Tambahan Guru (Opsional) */}
                 <div>
                   <label className="block font-bold uppercase tracking-wider text-slate-600 text-[11px] mb-1">
-                    5. Catatan Tambahan Guru (Opsional)
+                    6. Catatan Tambahan Guru (Opsional)
                   </label>
                   <textarea
                     value={genManualNotes}
                     onChange={(e) => setGenManualNotes(e.target.value)}
                     rows={2}
                     placeholder="Tuliskan catatan khusus atau konteks unik siswa yang perlu dimasukkan ke dalam narasi..."
-                    className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 px-3"
+                    className="w-full text-xs rounded-xl border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-2 px-3"
                   />
                 </div>
 
-                {/* Action Trigger Buttons Bar */}
+                {/* 7. Action Trigger Buttons Bar */}
                 <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-200">
                   <button
                     type="button"
@@ -3167,7 +3464,7 @@ function MonthlyReportCommentsContent() {
                     className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-xs cursor-pointer transition-all"
                   >
                     <Wand2 size={13} className="text-purple-600" />
-                    Rangkai Narasi Terstruktur
+                    Rangkai Narasi Terstruktur (Tanpa AI)
                   </button>
 
                   <button
@@ -3194,17 +3491,24 @@ function MonthlyReportCommentsContent() {
                 <div className="space-y-1.5 pt-1">
                   <div className="flex items-center justify-between">
                     <label className="font-bold uppercase tracking-wider text-slate-700 text-[11px] flex items-center gap-1">
-                      <BookOpen size={13} className="text-[#002366]" /> Pratinjau & Sunting Draf Narasi
+                      <BookOpen size={13} className="text-[#002366]" /> Pratinjau & Sunting Draf Narasi (1 Paragraf, Maks 120 Kata)
                     </label>
                     <div className="flex items-center gap-3 text-[11px]">
-                      <span className="font-medium text-slate-400">
-                        Kata: <strong className="text-slate-700">{countWords(genDraftText)}</strong> (Target: 60 - 110 kata)
+                      <span className={`font-medium ${countWords(genDraftText) > 120 ? 'text-rose-600 font-bold' : 'text-slate-500'}`}>
+                        Kata: <strong>{countWords(genDraftText)}</strong> / 120
                       </span>
                       <span className="font-medium text-slate-400">
                         Karakter: <strong className="text-slate-700">{genDraftText.length}</strong>
                       </span>
                     </div>
                   </div>
+
+                  {countWords(genDraftText) > 120 && (
+                    <div className="p-2 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-[11px] flex items-center gap-1.5">
+                      <AlertCircle size={14} className="shrink-0 text-rose-600" />
+                      <span>Panjang narasi melebihi batas maksimal 120 kata. Harap ringkas kalimat sebelum menerapkan.</span>
+                    </div>
+                  )}
 
                   <textarea
                     value={genDraftText}
@@ -3228,14 +3532,14 @@ function MonthlyReportCommentsContent() {
                   {commentsMap[generatorStudent.id]?.status === 'DRAFT' && commentsMap[generatorStudent.id]?.generalComment?.trim() && (
                     <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 flex items-center gap-2">
                       <AlertTriangle size={14} className="text-amber-600 shrink-0" />
-                      <span>Siswa ini sudah memiliki draf. Menerapkan draf baru akan menimpa draf sebelumnya setelah konfirmasi.</span>
+                      <span>Siswa ini sudah memiliki draf tersimpan. Menerapkan draf baru akan menimpa draf sebelumnya setelah konfirmasi.</span>
                     </div>
                   )}
                 </div>
 
               </div>
 
-              {/* Modal Footer */}
+              {/* Modal Footer: 9. Terapkan DRAFT */}
               <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-between shrink-0">
                 <button
                   type="button"
@@ -3245,14 +3549,222 @@ function MonthlyReportCommentsContent() {
                   Tutup
                 </button>
 
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleApplyGeneratedToEditor}
+                    disabled={!genDraftText.trim() || commentsMap[generatorStudent.id]?.status === 'FINAL'}
+                    className="px-4 py-2 text-xs font-semibold rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs disabled:opacity-50 transition-all cursor-pointer"
+                  >
+                    Pindahkan ke Editor
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDirectSaveDraftFromGenerator}
+                    disabled={!genDraftText.trim() || commentsMap[generatorStudent.id]?.status === 'FINAL'}
+                    className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl bg-[#002366] hover:bg-[#002366]/90 text-white shadow-sm disabled:opacity-50 transition-all cursor-pointer"
+                  >
+                    <Check size={14} />
+                    Terapkan & Simpan DRAFT
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Teacher Add Custom Option Modal */}
+      <AnimatePresence>
+        {showAddOptionModal && (
+          <div className="fixed inset-0 z-[70] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden p-6 space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-slate-150 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-blue-50 text-[#002366]">
+                    <Plus size={18} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm">Tambah Pilihan Guru</h4>
+                    <p className="text-[11px] text-slate-400">Pilihan baru akan tersimpan di bank pilihan Junior High</p>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  onClick={handleApplyGeneratedToEditor}
-                  disabled={!genDraftText.trim() || commentsMap[generatorStudent.id]?.status === 'FINAL'}
-                  className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold rounded-xl bg-[#002366] hover:bg-[#002366]/90 text-white shadow-sm disabled:opacity-50 transition-all cursor-pointer"
+                  onClick={() => setShowAddOptionModal(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
                 >
-                  <Check size={14} />
-                  Terapkan ke Komentar Siswa (DRAFT)
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="space-y-3.5 text-xs text-slate-700">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    Kelompok Pilihan
+                  </label>
+                  <select
+                    value={newOptionGroup}
+                    onChange={(e: any) => setNewOptionGroup(e.target.value)}
+                    className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] py-1.5"
+                  >
+                    <option value="STRENGTHS">A. Kekuatan / Progress Siswa</option>
+                    <option value="ACHIEVEMENTS">B. Achievement Bulan Ini</option>
+                    <option value="NEEDS_IMPROVEMENT">C. Area Peningkatan Perilaku Belajar</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    Teks Deskripsi Pilihan <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    value={newOptionText}
+                    onChange={(e) => setNewOptionText(e.target.value)}
+                    rows={3}
+                    placeholder="Tuliskan kalimat deskripsi pilihan (contoh: Mulai menunjukkan inisiatif bertanya saat diskusi kelompok)..."
+                    className="w-full text-xs rounded-lg border-slate-200 focus:border-[#002366] focus:ring-[#002366] p-2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                    Cakupan Berbagi (Scope)
+                  </label>
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="option-scope"
+                        checked={newOptionScope === 'CLASS'}
+                        onChange={() => {
+                          setNewOptionScope('CLASS');
+                          setNewOptionTargetClasses(selectedClassId ? [selectedClassId] : []);
+                        }}
+                        className="text-[#002366] focus:ring-[#002366]"
+                      />
+                      <div>
+                        <span className="font-semibold block text-slate-800">Hanya Kelas Sendiri</span>
+                        <span className="text-[10px] text-slate-400">Pilihan hanya muncul untuk kelas {selectedClassObj?.name || 'ini'}</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="option-scope"
+                        checked={newOptionScope === 'ALL_JH'}
+                        onChange={() => {
+                          setNewOptionScope('ALL_JH');
+                          setNewOptionTargetClasses([]);
+                        }}
+                        className="text-[#002366] focus:ring-[#002366]"
+                      />
+                      <div>
+                        <span className="font-semibold block text-slate-800">Semua Kelas Junior High</span>
+                        <span className="text-[10px] text-slate-400">Pilihan dapat digunakan oleh seluruh guru SMP</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="option-scope"
+                        checked={newOptionScope === 'SPECIFIC_CLASSES'}
+                        onChange={() => setNewOptionScope('SPECIFIC_CLASSES')}
+                        className="text-[#002366] focus:ring-[#002366]"
+                      />
+                      <div>
+                        <span className="font-semibold block text-slate-800">Kelas Spesifik</span>
+                        <span className="text-[10px] text-slate-400">Pilih satu atau lebih kelas SMP yang dapat melihat</span>
+                      </div>
+                    </label>
+                  </div>
+
+                  {newOptionScope === 'SPECIFIC_CLASSES' && (
+                    <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg max-h-32 overflow-y-auto space-y-1">
+                      {classesList.map(c => {
+                        const isChecked = newOptionTargetClasses.includes(c.id);
+                        return (
+                          <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewOptionTargetClasses([...newOptionTargetClasses, c.id]);
+                                } else {
+                                  setNewOptionTargetClasses(newOptionTargetClasses.filter(id => id !== c.id));
+                                }
+                              }}
+                              className="rounded border-slate-300 text-[#002366] focus:ring-[#002366]"
+                            />
+                            <span>{c.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-150">
+                <button
+                  type="button"
+                  onClick={() => setShowAddOptionModal(false)}
+                  className="px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingCustomOption || !newOptionText.trim()}
+                  onClick={async () => {
+                    const cleanText = newOptionText.trim();
+                    if (!cleanText) {
+                      toast.error('Teks deskripsi pilihan tidak boleh kosong.');
+                      return;
+                    }
+
+                    setIsSavingCustomOption(true);
+                    try {
+                      const saved = await saveJHMonthlyCustomOption({
+                        group: newOptionGroup,
+                        text: cleanText,
+                        scope: newOptionScope,
+                        targetClassIds: newOptionScope === 'ALL_JH' ? [] : (newOptionTargetClasses.length > 0 ? newOptionTargetClasses : [selectedClassId]),
+                        unit: 'JUNIOR_HIGH',
+                        createdByUid: profile?.uid || 'unknown',
+                        createdByName: profile?.displayName || profile?.email || 'Guru',
+                      });
+                      setCustomOptions(prev => [...prev, saved]);
+                      setShowAddOptionModal(false);
+                      setNewOptionText('');
+                      toast.success('Pilihan baru berhasil disimpan ke bank Junior High.');
+                    } catch (err: any) {
+                      console.error('Error saving custom option:', err);
+                      toast.error('Gagal menyimpan pilihan kustom.');
+                    } finally {
+                      setIsSavingCustomOption(false);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold rounded-lg bg-[#002366] hover:bg-[#002366]/90 text-white shadow-sm disabled:opacity-50"
+                >
+                  {isSavingCustomOption ? (
+                    <>
+                      <RefreshCw size={12} className="animate-spin" /> Menyimpan...
+                    </>
+                  ) : (
+                    <>
+                      <Check size={13} /> Simpan Pilihan
+                    </>
+                  )}
                 </button>
               </div>
             </motion.div>

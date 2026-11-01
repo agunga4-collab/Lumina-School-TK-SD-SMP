@@ -5313,7 +5313,7 @@ Return only the refined paragraph.`,
     junior_high_monthly_general_comment: `Anda adalah asisten penyusun laporan perkembangan akademik dan karakter siswa SMP Lazuardi (Junior High) untuk Laporan Bulanan (Monthly Report).
 
 Tugas Anda:
-Susunlah SATU paragraf naratif komentar umum (General Comments) dalam Bahasa Indonesia yang baku, hangat, santun, objektif, dan ramah untuk dibaca oleh orang tua/wali murid, berdasarkan HANYA pada data yang disediakan oleh guru di bawah ini.
+Susunlah TEPAT SATU paragraf naratif komentar umum (General Comments) dalam Bahasa Indonesia yang baku, positif, hangat, santun, dan objektif berdasarkan HANYA pada data yang disediakan oleh guru di bawah ini.
 
 Identitas Siswa:
 - Nama Lengkap: {{studentName}}
@@ -5321,40 +5321,33 @@ Identitas Siswa:
 - Jenis Kelamin: {{gender}}
 - Periode Bulan: {{monthPeriod}}
 
-Konteks Ringkasan Kelas & Pembelajaran Bulan Ini:
-{{learningContext}}
-
-Data Kehadiran Bulan Ini:
+Data Kehadiran Faktual Bulan Ini:
 {{attendanceSummary}}
 
-Refleksi / Eksplorasi Diri Siswa:
-{{reflectionSummary}}
-
-Fokus Perkembangan & Kekuatan Siswa:
+Kekuatan & Perkembangan Siswa:
 {{strengths}}
 
-Pencapaian Khusus:
+Pencapaian Khusus / Achievement (Opsional):
 {{achievements}}
 
-Area Penguatan / Rekomendasi Selanjutnya:
+Area Peningkatan yang Perlu Dikembangkan:
 {{needsImprovement}}
 
 Catatan Khusus Tambahan dari Guru:
 {{manualNotes}}
 
-Aturan Penulisan (Ketentuan Ketat):
-1. WAJIB menggunakan Bahasa Indonesia yang baik, benar, dan santun (sesuai EYD).
-2. Tepat SATU paragraf naratif yang padu dan mengalir (tanpa bullet points, tanpa subjudul, tanpa numbering).
-3. Panjang komentar berkisar antara 60 hingga 110 kata.
-4. Gunakan sudut pandang orang ketiga. Sapa ananda dengan panggilan 'ananda {{nickname}}' atau nama panggilannya secara santun dan natural.
-5. Awali paragraf dengan apresiasi positif yang tulus mengenai partisipasi, kemandirian, atau keterlibatan ananda dalam proses belajar di kelas selama bulan ini.
-6. Sebutkan capaian, materi pembelajaran, atau aktivitas spesifik HANYA jika data tersebut tercantum di atas.
-7. Jika ada data kehadiran (misalnya tidak ada ketidakhadiran / kehadiran baik), apresiasi kedisiplinannya secara wajar. Jika ada sakit/izin, jangan membesar-besarkan atau menyudutkan.
-8. Sampaikan arahan atau rekomendasi peningkatan secara konstruktif dan memotivasi menggunakan formulasi santun (contoh: "Ananda diharapkan dapat terus mempertahankan...", "Disarankan untuk lebih...").
-9. DILARANG KERAS mengarang (halusinasi) capaian, aktivitas, perilaku, skor/angka nilai, penyakit, atau pelanggaran yang TIDAK ada pada data yang disediakan.
-10. Jangan gunakan tanda seru (!). Hindari singkatan internal atau istilah teknis yang tidak ramah orang tua.
-11. Akhiri paragraf dengan harapan positif dan doa atau motivasi untuk pembelajaran di bulan berikutnya.
-12. HANYA kembalikan satu paragraf teks komentar. Jangan tambahkan tanda kutip, jangan tambahkan pengantar seperti "Berikut komentar...", dan jangan gunakan format markdown seperti tebal atau miring.`,
+Aturan Penulisan (KETAT & WAJIB DIIKUTI):
+1. WAJIB tepat SATU paragraf naratif dalam Bahasa Indonesia yang baku dan mengalir (tanpa bullet points, tanpa subjudul, tanpa numbering).
+2. Panjang narasi MAKSIMAL 120 KATA.
+3. Awalan kalimat pertama WAJIB dimulai dengan: "Ananda {{nickname}} telah ...".
+4. Gunakan kata sapaan "ananda", DILARANG menggunakan kata ganti "dia" atau "ia".
+5. Gunakan bahasa positif konstruktif. DILARANG menggunakan kata "tetapi", "namun", "meskipun".
+6. Rekomendasi peningkatan WAJIB menggunakan formulasi: "Ananda disarankan untuk ...".
+7. Ucapan selamat HANYA diberikan jika bagian Achievement benar-benar diisi oleh guru. Jika kosong/tidak ada, DILARANG mengarang prestasi, lomba, atau ucapan selamat buatan.
+8. Data kehadiran faktual hanya dirangkai jika tersedia di atas. DILARANG mengklaim kehadiran tertib jika data tidak tercatat.
+9. Akhiri paragraf dengan harapan perkembangan positif untuk pembelajaran di bulan berikutnya.
+10. DILARANG KERAS mengarang fakta, nilai, atau aktivitas di luar data yang diberikan.
+11. HANYA kembalikan teks satu paragraf langsung tanpa tanda kutip, tanpa pengantar, dan tanpa format markdown tebal/miring.`,
     junior_high_monthly_refine_comment: `Anda adalah editor bahasa profesional untuk Laporan Bulanan (Monthly Report) SMP Lazuardi (Junior High).
 
 Tugas Anda:
@@ -6036,25 +6029,19 @@ app.post("/api/junior-high/monthly/generate-general-comment", async (req, res) =
     const formattedGender = (gender === 'FEMALE' || gender === 'P') ? 'Perempuan' : 'Laki-laki';
     const formattedStrengths = Array.isArray(strengths) && strengths.length > 0 
       ? strengths.map(s => `- ${s}`).join("\n")
-      : "- Menunjukkan semangat belajar yang konsisten dan keikutsertaan aktif dalam kegiatan kelas.";
+      : "(Belum ada pilihan kekuatan spesifik yang dipilih)";
     const formattedAchievements = Array.isArray(achievements) && achievements.length > 0 
       ? achievements.map(a => `- ${a}`).join("\n")
-      : "(Tidak ada data tambahan)";
+      : "(Tidak ada pencapaian khusus yang diinput guru)";
     const formattedNeedsImprovement = Array.isArray(needsImprovement) && needsImprovement.length > 0 
       ? needsImprovement.map(n => `- ${n}`).join("\n")
-      : "(Tidak ada catatan khusus)";
+      : "(Tidak ada catatan area peningkatan khusus)";
     const formattedManualNotes = manualNotes && typeof manualNotes === 'string' && manualNotes.trim() 
       ? manualNotes.trim() 
-      : "(Tidak ada catatan manual)";
-    const formattedLearningContext = learningContext && typeof learningContext === 'string' && learningContext.trim()
-      ? learningContext.trim()
-      : "(Ringkasan kelas umum)";
+      : "(Tidak ada catatan manual tambahan)";
     const formattedAttendance = attendanceSummary && typeof attendanceSummary === 'string' && attendanceSummary.trim()
       ? attendanceSummary.trim()
-      : "Kehadiran tertib";
-    const formattedReflection = reflectionSummary && typeof reflectionSummary === 'string' && reflectionSummary.trim()
-      ? reflectionSummary.trim()
-      : "(Belum ada refleksi khusus)";
+      : "(Data kehadiran tidak tersedia/tidak tercatat)";
 
     // 4. Resolve Prompt Template
     let prompt = "";
@@ -6064,9 +6051,7 @@ app.post("/api/junior-high/monthly/generate-general-comment", async (req, res) =
         nickname: (nickname && typeof nickname === 'string' && nickname.trim()) || studentName.trim().split(" ")[0],
         gender: formattedGender,
         monthPeriod: (monthPeriod && typeof monthPeriod === 'string') ? monthPeriod : "",
-        learningContext: formattedLearningContext,
         attendanceSummary: formattedAttendance,
-        reflectionSummary: formattedReflection,
         strengths: formattedStrengths,
         achievements: formattedAchievements,
         needsImprovement: formattedNeedsImprovement,

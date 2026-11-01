@@ -2356,6 +2356,25 @@ export interface JuniorHighMonthlyReportComment {
   reviewFeedback?: string;
   reviewHistory?: MonthlyCommentReviewHistoryEntry[];
   version?: number;
+
+  // Generator & Attendance Snapshots
+  generatorSnapshot?: {
+    strengths: string[];
+    achievements: string[];
+    needsImprovement: string[];
+    manualNotes?: string;
+    generatedAt: string;
+  };
+  attendanceSnapshot?: {
+    sickLeave: number;
+    excusedLeave: number;
+    unexcusedLeave: number;
+    present?: number;
+    totalDays?: number;
+    percentage?: number;
+    status: 'LOADING' | 'AVAILABLE' | 'INCOMPLETE' | 'FAILED';
+    capturedAt: string;
+  };
 }
 
 export interface JuniorHighAAPResult {

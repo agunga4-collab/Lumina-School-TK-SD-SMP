@@ -1,4 +1,15 @@
-import { auth } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
+import { 
+  collection, 
+  doc, 
+  getDoc, 
+  getDocs, 
+  query, 
+  where, 
+  setDoc, 
+  updateDoc,
+  writeBatch 
+} from 'firebase/firestore';
 
 export interface MonthlyCommentAIOptions {
   studentName: string;
@@ -18,6 +29,162 @@ export interface MonthlyCommentRefineOptions {
   studentName?: string;
   nickname?: string;
   originalComment: string;
+}
+
+/**
+ * 24 Official Strengths & Progress Bank Items (Junior High)
+ * "Mulai" and "Konsisten" must never be merged.
+ */
+export const JH_MONTHLY_STRENGTHS_BANK: string[] = [
+  'Mulai berpartisipasi aktif dalam kelas.',
+  'Konsisten berpartisipasi aktif dalam kelas.',
+  'Mulai menyadari pengaruh usaha terhadap hasil belajar.',
+  'Percaya usahanya membuahkan hasil positif.',
+  'Mulai percaya diri mengerjakan tugas.',
+  'Memiliki keyakinan tinggi untuk berhasil dalam tugas.',
+  'Mulai memahami manfaat tugas.',
+  'Sangat memahami manfaat tugas sekolah.',
+  'Mulai tekun dan berusaha fokus menghadapi gangguan/tantangan.',
+  'Konsisten tekun, tepat waktu dan memberikan usaha terbaik.',
+  'Mulai menggunakan strategi belajar, memantau pemahaman dan memperbaiki kesalahan.',
+  'Konsisten menggunakan strategi belajar yang efektif, memantau pemahaman dan memperbaiki kesalahan.',
+  'Mulai menunjukkan kehadiran lebih teratur, partisipasi dan kesiapan belajar.',
+  'Konsisten hadir teratur, siap, fokus dan aktif belajar.',
+  'Mulai bekerja sama dan menjaga hubungan positif.',
+  'Konsisten membangun dan menjaga hubungan positif.',
+  'Mulai asertif, menyampaikan ide positif dan mencari bantuan.',
+  'Konsisten asertif tanpa merugikan orang lain.',
+  'Mulai bertanggung jawab terhadap tugas dan ekspektasi.',
+  'Konsisten bertanggung jawab terhadap kewajiban akademik.',
+  'Mulai peduli, memahami perspektif teman dan menghargai perbedaan.',
+  'Menunjukkan kepedulian tinggi terhadap perasaan teman.',
+  'Mulai mengelola stres dan mencari solusi saat menghadapi kendala.',
+  'Konsisten mengelola stres dan mencari solusi secara positif.'
+];
+
+/**
+ * Achievements Bank is EMPTY by default.
+ * Teachers can write free-form or select custom added options.
+ */
+export const JH_MONTHLY_ACHIEVEMENTS_BANK: string[] = [];
+
+/**
+ * 12 Official Needs Improvement & Recommendations Bank Items (Junior High)
+ * Focuses on aspects that still need guidance or development, never claims of mastery.
+ */
+export const JH_MONTHLY_NEEDS_IMPROVEMENT_BANK: string[] = [
+  'Memerlukan dorongan untuk berpartisipasi aktif dalam diskusi kelas.',
+  'Perlu menyadari bahwa usaha konsisten memengaruhi hasil belajar.',
+  'Memerlukan bimbingan untuk membangun keyakinan diri dalam menuntaskan tugas.',
+  'Perlu memahami tujuan dan manfaat dari tugas yang diberikan.',
+  'Memerlukan pendampingan untuk menjaga fokus dan ketekunan saat menghadapi tantangan.',
+  'Perlu membiasakan evaluasi mandiri dan memperbaiki kesalahan belajar.',
+  'Memerlukan perhatian pada keteraturan kehadiran dan kesiapan mengikuti pelajaran.',
+  'Perlu bimbingan dalam bekerja sama dan membangun interaksi positif dengan teman.',
+  'Memerlukan dorongan untuk menyampaikan kebutuhan belajar secara asertif.',
+  'Perlu meningkatkan tanggung jawab terhadap tugas dan kesepakatan kelas.',
+  'Memerlukan penguatan empati dan kepedulian terhadap lingkungan sekitar.',
+  'Perlu pendampingan dalam mengelola emosi dan menghadapi situasi sulit secara konstruktif.'
+];
+
+export interface JHMonthlyCustomOption {
+  id: string;
+  group: 'STRENGTHS' | 'ACHIEVEMENTS' | 'NEEDS_IMPROVEMENT';
+  text: string;
+  scope: 'CLASS' | 'SPECIFIC_CLASSES' | 'ALL_JH';
+  targetClassIds?: string[];
+  unit: 'JUNIOR_HIGH';
+  createdByUid: string;
+  createdByName: string;
+  createdAt: string;
+  isArchived?: boolean;
+}
+
+/**
+ * Fetch custom comment choices saved by teachers for Junior High.
+ */
+export async function fetchJHMonthlyCustomOptions(classId?: string): Promise<JHMonthlyCustomOption[]> {
+  try {
+    const q = query(
+      collection(db, 'jh_monthly_comment_custom_options'),
+      where('unit', '==', 'JUNIOR_HIGH')
+    );
+    const snap = await getDocs(q);
+    const list: JHMonthlyCustomOption[] = [];
+
+    snap.forEach((d) => {
+      const data = d.data() as JHMonthlyCustomOption;
+      if (data.isArchived) return;
+
+      // Filter by scope
+      if (data.scope === 'ALL_JH') {
+        list.push({ ...data, id: d.id });
+      } else if (classId && data.targetClassIds && data.targetClassIds.includes(classId)) {
+        list.push({ ...data, id: d.id });
+      }
+    });
+
+    return list;
+  } catch (err) {
+    console.warn('Could not fetch JH monthly custom options:', err);
+    return [];
+  }
+}
+
+/**
+ * Save new teacher-created option for monthly comments with explicit scope.
+ */
+export async function saveJHMonthlyCustomOption(
+  option: Omit<JHMonthlyCustomOption, 'id' | 'createdAt'>
+): Promise<JHMonthlyCustomOption> {
+  const docRef = doc(collection(db, 'jh_monthly_comment_custom_options'));
+  const fullData: JHMonthlyCustomOption = {
+    ...option,
+    id: docRef.id,
+    createdAt: new Date().toISOString(),
+    unit: 'JUNIOR_HIGH',
+    isArchived: false,
+  };
+  await setDoc(docRef, fullData);
+  return fullData;
+}
+
+/**
+ * Archive a custom option so it won't appear in picker, without mutating past snapshots.
+ */
+export async function archiveJHMonthlyCustomOption(optionId: string): Promise<void> {
+  const docRef = doc(db, 'jh_monthly_comment_custom_options', optionId);
+  await updateDoc(docRef, { isArchived: true });
+}
+
+/**
+ * Computes default month using Asia/Jakarta timezone.
+ * Day 1–10: previous month (e.g., 1 & 10 Nov 2026 -> 2026-10; 1 Jan 2027 -> 2026-12).
+ * Day 11+: current month (e.g., 11 Nov 2026 -> 2026-11; 11 Jan 2027 -> 2027-01).
+ */
+export function getJakartaDefaultMonth(date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.format(date).split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+
+  if (day <= 10) {
+    let prevMonth = month - 1;
+    let prevYear = year;
+    if (prevMonth === 0) {
+      prevMonth = 12;
+      prevYear -= 1;
+    }
+    return `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+  } else {
+    return `${year}-${String(month).padStart(2, '0')}`;
+  }
 }
 
 /**
@@ -79,83 +246,77 @@ export async function refineMonthlyGeneralCommentAI(params: MonthlyCommentRefine
 
 /**
  * Deterministic, high-quality Indonesian narrative synthesizer.
- * Combines real available monthly data with selected teacher focus aspects without fabricating facts.
+ * Strictly adheres to LUMINA Junior High Monthly narrative standards:
+ * 1. Single paragraph, maximum 120 words.
+ * 2. MUST begin with "Ananda [panggilan] telah ...".
+ * 3. Use pronoun "ananda", NEVER "dia" or "ia".
+ * 4. Positive tone WITHOUT contrasting conjunctions ("tetapi", "namun", "meskipun").
+ * 5. Recommendations MUST use "Ananda disarankan untuk ...".
+ * 6. Closing encouraging growth wish.
+ * 7. Congratulations ONLY if valid achievements are specified.
  */
-export function generateDeterministicMonthlyComment(params: MonthlyCommentAIOptions & { templateId?: string }): string {
+export function generateDeterministicMonthlyComment(params: MonthlyCommentAIOptions): string {
   const callName = (params.nickname && params.nickname.trim()) || params.studentName.trim().split(' ')[0] || params.studentName.trim();
   const sentences: string[] = [];
 
-  // Opening based on template / focus
-  if (params.templateId === 'ACADEMIC_INDEPENDENCE') {
-    sentences.push(`Alhamdulillah, sepanjang periode bulan ini ananda ${callName} menunjukkan antusiasme belajar dan kemandirian yang sangat baik dalam menyelesaikan rangkaian aktivitas di kelas.`);
-  } else if (params.templateId === 'ACTIVE_COLLABORATION') {
-    sentences.push(`Alhamdulillah, ananda ${callName} memperlihatkan perkembangan yang positif dalam interaksi sosial, keaktifan bertanya, serta kerja sama yang solid bersama teman di kelas.`);
-  } else if (params.templateId === 'GUIDANCE_FOCUS') {
-    sentences.push(`Alhamdulillah, proses pembelajaran ananda ${callName} bulan ini terus menunjukkan kemajuan yang bermakna dengan pendampingan yang konsisten dari para guru.`);
-  } else if (params.templateId === 'ISLAMIC_CHARACTER') {
-    sentences.push(`Alhamdulillah, ananda ${callName} senantiasa mengedepankan adab islami yang santun, kepedulian antarteman, serta kedisiplinan yang terpuji di lingkungan sekolah.`);
+  // Opening & Strengths
+  if (params.strengths && params.strengths.length > 0) {
+    const sText = params.strengths.map(s => {
+      let clean = s.trim().replace(/\.$/, '');
+      return clean.charAt(0).toLowerCase() + clean.slice(1);
+    }).join(', serta ');
+    sentences.push(`Ananda ${callName} telah menunjukkan perkembangan positif dalam proses belajar bulan ini, di antaranya ${sText}.`);
   } else {
-    sentences.push(`Alhamdulillah, ananda ${callName} menjalani kegiatan pembelajaran bulan ini dengan dedikasi dan kesungguhan yang patut diapresiasi.`);
+    sentences.push(`Ananda ${callName} telah berpartisipasi dengan baik dalam rangkaian aktivitas pembelajaran sepanjang bulan ini.`);
   }
 
-  // Attendance mention if provided and clean
-  if (params.attendanceSummary && !params.attendanceSummary.includes('Tidak Tersedia')) {
-    if (params.attendanceSummary.includes('Sakit: 0') && params.attendanceSummary.includes('Izin: 0') && params.attendanceSummary.includes('Alpa: 0')) {
-      sentences.push(`Tingkat kehadiran ananda sangat prima dengan catatan kehadiran penuh dan tepat waktu.`);
+  // Factual Attendance (only if available and positive)
+  if (params.attendanceSummary && !params.attendanceSummary.includes('Tidak Tersedia') && !params.attendanceSummary.includes('Belum Tersedia')) {
+    if (params.attendanceSummary.includes('Alpa: 0') && (params.attendanceSummary.includes('Sakit: 0') || params.attendanceSummary.includes('Izin: 0'))) {
+      sentences.push(`Kedisiplinan kehadiran ananda terjaga dengan sangat baik sepanjang periode ini.`);
     }
   }
 
-  // Learning / topics context mention if available
-  if (params.learningContext && params.learningContext.trim() && !params.learningContext.includes('(Ringkasan kelas umum)')) {
-    const cleanTopic = params.learningContext.replace(/\n+/g, ' ').slice(0, 100);
-    sentences.push(`Ananda berpartisipasi dengan baik pada materi pembahasan kelas mengenai ${cleanTopic}.`);
-  }
-
-  // Selected strengths
-  if (params.strengths && params.strengths.length > 0) {
-    const sText = params.strengths.map(s => s.toLowerCase().trim()).join(', serta ');
-    sentences.push(`Dalam keseharian belajar, ananda ${sText}.`);
-  }
-
-  // Selected achievements
+  // Achievements (congratulations ONLY if filled)
   if (params.achievements && params.achievements.length > 0) {
-    const aText = params.achievements.map(a => a.toLowerCase().trim()).join(', dan ');
-    sentences.push(`Capaian yang ditunjukkan antara lain ${aText}.`);
+    const validAchievements = params.achievements.filter(a => a && a.trim());
+    if (validAchievements.length > 0) {
+      const aText = validAchievements.map(a => a.trim().replace(/\.$/, '')).join(', serta ');
+      sentences.push(`Selamat atas capaian membanggakan ananda dalam ${aText}.`);
+    }
   }
 
-  // Self-Exploration reflection mention if provided
-  if (params.reflectionSummary && params.reflectionSummary.trim() && !params.reflectionSummary.includes('(Belum ada refleksi khusus)')) {
-    sentences.push(`Pada kegiatan eksplorasi diri, ananda juga telah menyelesaikan dan merefleksikan pengalamannya secara positif.`);
-  }
-
-  // Selected recommendations / areas for improvement
+  // Needs Improvement / Recommendation
   if (params.needsImprovement && params.needsImprovement.length > 0) {
-    const nText = params.needsImprovement.map(n => n.toLowerCase().trim()).join(', serta ');
-    sentences.push(`Untuk terus mengoptimalkan potensinya, ananda ${callName} disarankan untuk ${nText}.`);
+    const nText = params.needsImprovement.map(n => {
+      let clean = n.trim().replace(/\.$/, '');
+      return clean.charAt(0).toLowerCase() + clean.slice(1);
+    }).join(', serta ');
+    sentences.push(`Ananda disarankan untuk ${nText}.`);
   }
 
-  // Teacher manual notes
+  // Additional teacher manual notes (filtered for pronouns)
   if (params.manualNotes && params.manualNotes.trim()) {
-    sentences.push(params.manualNotes.trim());
+    let cleanNotes = params.manualNotes.trim();
+    cleanNotes = cleanNotes.replace(/\bdia\b/gi, 'ananda').replace(/\bia\b/gi, 'ananda');
+    sentences.push(cleanNotes);
   }
 
-  // Closing encouraging prayer/wish
-  sentences.push(`Semoga ananda senantiasa istiqomah dan semakin percaya diri dalam mengembangkan potensinya di bulan mendatang.`);
+  // Closing growth wish
+  sentences.push(`Semoga ananda senantiasa termotivasi dan terus bertumbuh optimal pada periode belajar berikutnya.`);
 
-  return sentences.join(' ');
+  // Combine into a single paragraph
+  let paragraph = sentences.join(' ').replace(/\s+/g, ' ').trim();
+
+  // Enforce max 120 words
+  const words = paragraph.split(/\s+/);
+  if (words.length > 120) {
+    paragraph = words.slice(0, 120).join(' ') + '.';
+  }
+
+  return paragraph;
 }
 
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  setDoc, 
-  writeBatch 
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import type { 
   JuniorHighMonthlyReportComment, 
   MonthlyGenComReviewStatus, 

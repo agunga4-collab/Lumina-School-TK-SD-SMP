@@ -15,6 +15,9 @@ export interface StudentAttendanceTotals {
   sickLeave: number | null;
   excusedLeave: number | null;
   absent: number | null;
+  present?: number | null;
+  totalDays?: number | null;
+  percentage?: number | null;
 }
 
 export interface JHReportAttendanceResult {
@@ -118,6 +121,9 @@ export function useJHReportAttendance({
               sickLeave: 0,
               excusedLeave: 0,
               absent: 0,
+              present: 0,
+              totalDays: 0,
+              percentage: null,
             };
           });
 
@@ -133,7 +139,23 @@ export function useJHReportAttendance({
                 map[sid].excusedLeave = (map[sid].excusedLeave || 0) + 1;
               } else if (status === 'ALPA') {
                 map[sid].absent = (map[sid].absent || 0) + 1;
+              } else if (status === 'HADIR' || status === 'LATE') {
+                map[sid].present = (map[sid].present || 0) + 1;
               }
+            }
+          });
+
+          // Calculate totalDays and percentage
+          studentIds.forEach(sid => {
+            const cur = map[sid];
+            if (cur) {
+              const present = cur.present || 0;
+              const sick = cur.sickLeave || 0;
+              const excused = cur.excusedLeave || 0;
+              const absent = cur.absent || 0;
+              const total = present + sick + excused + absent;
+              cur.totalDays = total;
+              cur.percentage = total > 0 ? Math.round((present / total) * 100) : null;
             }
           });
         } else {
@@ -143,6 +165,9 @@ export function useJHReportAttendance({
               sickLeave: null,
               excusedLeave: null,
               absent: null,
+              present: null,
+              totalDays: null,
+              percentage: null,
             };
           });
         }
