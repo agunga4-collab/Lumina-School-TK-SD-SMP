@@ -23,8 +23,8 @@ import {
 import { 
   fetchUpperStudentNarrativesMap,
   saveUpperStudentNarratives,
-  reviewUpperStudentNarrativePackage,
-  batchReviewUpperStudentNarrativePackage,
+  submitUpperReviewPackage,
+  reviewUpperApprovalPackage,
   buildUpperNarrativesDocId,
   isElementaryUpperHeadOrSuperAdmin,
   computeUpperMonthlyScoresHash,
@@ -226,8 +226,8 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
     currentNarrative.litNumReview.sourceHash !== currentLitNumHash;
 
   // Save Text Changes
-  const handleSaveTextChanges = async () => {
-    if (!selectedStudent || !selectedClass) return;
+  const handleSaveTextChanges = async (): Promise<boolean> => {
+    if (!selectedStudent || !selectedClass) return false;
     const docToSave: ElementaryUpperStudentNarrativesDoc = {
       ...currentNarrative,
       monthlyGeneralComment: monthlyComment,
@@ -244,8 +244,10 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
         [selectedStudent.id]: docToSave
       }));
       toast.success(`Draf narasi ${selectedStudent.name} berhasil disimpan.`);
+      return true;
     } catch (e: any) {
       toast.error('Gagal menyimpan draf narasi.');
+      return false;
     }
   };
 
@@ -327,26 +329,29 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
   const handleSubmitPackage = async (packageType: 'MONTHLY_PROGRESS' | 'LITERACY_NUMERACY') => {
     if (!selectedStudent || !selectedClass) return;
     try {
-      // First save current text
-      await handleSaveTextChanges();
+      const saved = await handleSaveTextChanges();
+      if (!saved) return;
 
-      const sourceHash = packageType === 'MONTHLY_PROGRESS' ? currentScoresHash : currentLitNumHash;
-      await reviewUpperStudentNarrativePackage(
+      const currentScoresHashForPackage = packageType === 'MONTHLY_PROGRESS'
+        ? currentScoresHash
+        : currentLitNumHash;
+
+      await submitUpperReviewPackage(
         {
           studentId: selectedStudent.id,
+          studentName: selectedStudent.name,
           classId: selectedClass.id,
           academicYear: selectedYear,
           semester: selectedSemester,
           month: selectedMonth,
           packageType,
-          decision: 'SUBMITTED',
-          sourceHash
+          currentScoresHash: currentScoresHashForPackage
         },
         currentUser
       );
 
       toast.success(`Paket ${packageType === 'MONTHLY_PROGRESS' ? 'Monthly Progress' : 'Literasi & Numerasi'} berhasil diajukan.`);
-      loadNarratives();
+      await loadNarratives();
     } catch (e: any) {
       toast.error(e.message || 'Gagal mengajukan paket narasi.');
     }
@@ -358,9 +363,22 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
     decision: 'APPROVED' | 'NEEDS_REVISION'
   ) => {
     if (!selectedStudent || !selectedClass) return;
+    if (!isApprover) {
+      toast.error('Anda tidak berwenang memberikan review.');
+      return;
+    }
+    if (decision === 'NEEDS_REVISION' && !reviewNoteInput.trim()) {
+      toast.error('Catatan revisi wajib diisi.');
+      return;
+    }
+
     try {
-      const sourceHash = packageType === 'MONTHLY_PROGRESS' ? currentScoresHash : currentLitNumHash;
-      await reviewUpperStudentNarrativePackage(
+      if (decision === 'APPROVED') {
+        const saved = await handleSaveTextChanges();
+        if (!saved) return;
+      }
+
+      await reviewUpperApprovalPackage(
         {
           studentId: selectedStudent.id,
           classId: selectedClass.id,
@@ -369,15 +387,14 @@ export const UpperNarasiApprovalTab: React.FC<UpperNarasiApprovalTabProps> = ({
           month: selectedMonth,
           packageType,
           decision,
-          reviewNotes: reviewNoteInput,
-          sourceHash
+          notes: reviewNoteInput.trim()
         },
         currentUser
       );
 
       toast.success(`Paket ${packageType === 'MONTHLY_PROGRESS' ? 'Monthly Progress' : 'Literasi & Numerasi'} ${decision === 'APPROVED' ? 'disetujui' : 'dikembalikan untuk revisi'}.`);
       setReviewNoteInput('');
-      loadNarratives();
+      await loadNarratives();
     } catch (e: any) {
       toast.error(e.message || 'Gagal memproses review.');
     }
