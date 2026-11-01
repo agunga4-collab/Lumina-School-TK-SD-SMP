@@ -323,6 +323,7 @@ export interface ElementaryMonthlyReportSignatory {
   principalNiy?: string;
   principalSignatureUrl?: string | null;
   homeroomTeacherName: string;
+  homeroomTeacherId?: string;
   homeroomTeacherNiy?: string;
   homeroomTeacherSignatureUrl?: string | null;
   signingDate: string;
@@ -340,6 +341,12 @@ export interface ElementaryMonthlyAttendanceSummary {
 }
 
 export interface ElementaryMonthlyReportSnapshot {
+  /** Absent on legacy snapshots; never infer a template for an old publication. */
+  templateVersion?: string;
+  /** Frozen operation reservation time; absent on legacy reports and draft models. */
+  snapshotCreatedAt?: number;
+  /** Exact Elementary logo source selected when this snapshot was created. */
+  logoUrl?: string;
   student: {
     id: string;
     name: string;
@@ -363,6 +370,7 @@ export interface ElementaryMonthlyReportSnapshot {
   };
   photos: {
     identityPhotoUrl?: string;
+    identityPhoto?: ElementaryMonthlyIdentityPhoto;
     snapshots: [
       ElementaryMonthlyPhotoSnapshot,
       ElementaryMonthlyPhotoSnapshot,
@@ -374,6 +382,7 @@ export interface ElementaryMonthlyReportSnapshot {
     academicComment: string;
     selProfile: string;
     approvedByName?: string;
+    approvedBy?: string;
     approvedAt?: number;
   };
   attendance: ElementaryMonthlyAttendanceSummary;
@@ -406,6 +415,11 @@ export interface PublishedElementaryMonthlyReportDoc {
   reportSnapshot: ElementaryMonthlyReportSnapshot;
   driveFileUrl?: string;
   driveFileId?: string;
+  driveFolderId?: string;
+  publicationId?: string;
+  templateVersion?: string;
+  pdfSha256?: string;
+  byteSize?: number;
   fileName?: string;
   generatedBy: string;
   generatedByName?: string;
@@ -425,6 +439,8 @@ export interface ElementaryMonthlyPublishValidationResult {
   blockingReasons: string[];
   warnings: string[];
 }
+
+export const ELEMENTARY_MONTHLY_TEMPLATE_VERSION = 'elementary-monthly-lower-v2';
 
 /**
  * Pre-publish validation gate for Elementary Lower Grade Monthly Report.
@@ -446,6 +462,7 @@ export function validateElementaryMonthlyPublishEligibility(params: {
   photoDoc: ElementaryMonthlyStudentPhotoDoc | null;
   attendanceSummary: ElementaryMonthlyAttendanceSummary | null;
   signatory: ElementaryMonthlyReportSignatory | null;
+  logoUrl?: string | null;
 }): ElementaryMonthlyPublishValidationResult {
   const blockingReasons: string[] = [];
   const warnings: string[] = [];
@@ -457,7 +474,8 @@ export function validateElementaryMonthlyPublishEligibility(params: {
     projectDoc,
     photoDoc,
     attendanceSummary,
-    signatory
+    signatory,
+    logoUrl
   } = params;
 
   // 1. Curriculum & LO Scores
@@ -465,16 +483,44 @@ export function validateElementaryMonthlyPublishEligibility(params: {
     blockingReasons.push('Struktur mata pelajaran dan Learning Goals belum dikonfigurasi.');
   } else {
     let missingLoCount = 0;
+    let invalidLoCount = 0;
     let totalLoCount = 0;
     const scores = studentScoreDoc?.scores || {};
+    const seenLgIds = new Set<string>();
+    const seenLoIds = new Set<string>();
 
     for (const sub of curriculumDoc.subjects) {
+      if (sub.kkm != null && (!Number.isFinite(sub.kkm) || sub.kkm <= 0 || sub.kkm >= 100)) {
+        blockingReasons.push(`KKM/KKTP ${sub.name} harus berupa angka lebih dari 0 dan kurang dari 100.`);
+      }
+      if (!sub.learningGoals?.length) {
+        blockingReasons.push(`Mata pelajaran ${sub.name} belum memiliki Learning Goal.`);
+      }
       for (const lg of sub.learningGoals || []) {
+        if (!lg.id || seenLgIds.has(lg.id)) {
+          blockingReasons.push(`ID Learning Goal kosong atau ganda pada ${sub.name}.`);
+        }
+        seenLgIds.add(lg.id);
+        if (lg.kkmOverride != null && (!Number.isFinite(lg.kkmOverride) || lg.kkmOverride <= 0 || lg.kkmOverride >= 100)) {
+          blockingReasons.push(`KKM/KKTP ${lg.code || lg.title} harus berupa angka lebih dari 0 dan kurang dari 100.`);
+        }
+        if (!lg.learningObjectives?.length) {
+          blockingReasons.push(`Learning Goal ${lg.code || lg.title} belum memiliki LO.`);
+        }
         for (const lo of lg.learningObjectives || []) {
           totalLoCount++;
-          const val = scores[lo.id];
-          if (val === undefined || val === null || val === '') {
+          if (!lo.id || seenLoIds.has(lo.id)) {
+            blockingReasons.push(`ID Learning Objective kosong atau ganda pada ${lg.code || lg.title}.`);
+          }
+          seenLoIds.add(lo.id);
+          const val: unknown = scores[lo.id];
+          if (val === undefined || val === null || (typeof val === 'string' && val.trim() === '')) {
             missingLoCount++;
+          } else {
+            const value = typeof val === 'string' ? Number(val.trim().replace(',', '.')) : val;
+            if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) {
+              invalidLoCount++;
+            }
           }
         }
       }
@@ -484,6 +530,9 @@ export function validateElementaryMonthlyPublishEligibility(params: {
       blockingReasons.push('Belum ada Learning Objective (LO) yang terdaftar pada kurikulum bulan ini.');
     } else if (missingLoCount > 0) {
       blockingReasons.push(`Nilai LO aktif belum lengkap (${missingLoCount} dari ${totalLoCount} LO masih kosong).`);
+    }
+    if (invalidLoCount > 0) {
+      blockingReasons.push(`${invalidLoCount} nilai LO tidak valid; gunakan angka 0 sampai 100.`);
     }
   }
 
@@ -505,6 +554,14 @@ export function validateElementaryMonthlyPublishEligibility(params: {
     if (narrativeDoc.isSourceStale) {
       blockingReasons.push('Persetujuan narasi usang (stale): nilai LO siswa telah diubah setelah approval narasi.');
     }
+    const currentScoresHash = studentScoreDoc?.scores
+      ? Object.entries(studentScoreDoc.scores)
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([id, score]) => `${id}:${score}`).join('|')
+      : '';
+    if (!narrativeDoc.lastScoresHash || narrativeDoc.lastScoresHash !== currentScoresHash) {
+      blockingReasons.push('Persetujuan narasi usang (stale) atau belum memiliki jejak nilai yang sesuai; ajukan dan setujui ulang narasi.');
+    }
     if (!narrativeDoc.academicComment || !narrativeDoc.academicComment.trim()) {
       blockingReasons.push('Academic Comments wajib diisi.');
     }
@@ -525,6 +582,9 @@ export function validateElementaryMonthlyPublishEligibility(params: {
   if (!photoDoc) {
     blockingReasons.push('Dokumentasi foto siswa belum diunggah.');
   } else {
+    if (!(photoDoc.identityPhoto?.url || photoDoc.identityPhotoUrl || '').trim()) {
+      blockingReasons.push('Foto identitas siswa wajib tersedia.');
+    }
     const snapshots = photoDoc.snapshots || [];
     let emptySnapshots = 0;
     let emptyCaptions = 0;
@@ -550,6 +610,21 @@ export function validateElementaryMonthlyPublishEligibility(params: {
     blockingReasons.push('Data kehadiran siswa belum tersedia atau belum dikonfigurasi (data tidak boleh diasumsikan 100%).');
   } else if (attendanceSummary.totalDays <= 0) {
     blockingReasons.push('Total hari efektif sekolah pada periode kehadiran harus lebih dari 0.');
+  } else if (
+    !Number.isFinite(attendanceSummary.totalDays) ||
+    !Number.isFinite(attendanceSummary.presentDays) ||
+    !Number.isFinite(attendanceSummary.percentage) ||
+    attendanceSummary.presentDays < 0 ||
+    attendanceSummary.presentDays > attendanceSummary.totalDays ||
+    attendanceSummary.percentage < 0 || attendanceSummary.percentage > 100
+  ) {
+    blockingReasons.push('Angka kehadiran siswa tidak valid.');
+  } else if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(attendanceSummary.startDate) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(attendanceSummary.endDate) ||
+    attendanceSummary.startDate > attendanceSummary.endDate
+  ) {
+    blockingReasons.push('Rentang tanggal kehadiran siswa tidak valid.');
   }
 
   // 6. Titimangsa & Signatories
@@ -557,10 +632,22 @@ export function validateElementaryMonthlyPublishEligibility(params: {
     blockingReasons.push('Titimangsa penandatanganan rapor belum ditentukan.');
   }
   if (!signatory || !signatory.principalName || !signatory.principalName.trim()) {
-    warnings.push('Nama Principal belum terkonfigurasi pada profil sekolah.');
+    blockingReasons.push('Nama Principal belum terkonfigurasi pada Report Config Elementary.');
+  }
+  if (!signatory?.principalTitle?.trim() || !signatory?.principalNiy?.trim() || !signatory?.principalSignatureUrl?.trim()) {
+    blockingReasons.push('Jabatan, NIY, dan tanda tangan Principal wajib diisi pada Report Config Elementary.');
   }
   if (!signatory || !signatory.homeroomTeacherName || !signatory.homeroomTeacherName.trim()) {
-    warnings.push('Nama Homeroom Teacher belum terkonfigurasi.');
+    blockingReasons.push('Nama Homeroom Teacher belum terkonfigurasi pada profil wali kelas yang ditugaskan.');
+  }
+  if (!signatory?.homeroomTeacherId?.trim() || !signatory?.homeroomTeacherNiy?.trim() || !signatory?.homeroomTeacherSignatureUrl?.trim()) {
+    blockingReasons.push('Penugasan, NIY, dan tanda tangan wali kelas wajib lengkap pada kelas/profil guru yang ditugaskan.');
+  }
+  if (!signatory?.signingLocation?.trim()) {
+    blockingReasons.push('Lokasi penandatanganan rapor belum ditentukan.');
+  }
+  if (!logoUrl?.trim()) {
+    blockingReasons.push('Logo resmi laporan pada menu Logo Elementary belum dikonfigurasi.');
   }
 
   return {

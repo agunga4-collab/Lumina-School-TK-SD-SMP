@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Check, ExternalLink, Calendar, Award, UserCheck, HeartHandshake } from 'lucide-react';
 import type { 
   ElementaryMonthlyReportSnapshot,
   ElementaryMonthlyAttendanceSummary,
@@ -8,10 +7,11 @@ import type {
   ElementaryMonthlyStudentNarrativeDoc,
   ElementaryMonthlyProjectDoc,
   ElementaryMonthlyStudentPhotoDoc,
-  LGAverageResult,
-  calculateLGAverageAndPredicate
+  LGAverageResult
 } from '../../../../types/elementaryMonthlyReport';
-import { formatMonthLabel } from '../../../../services/elementaryMonthlyReportService';
+import { calculateLGAverageAndPredicate } from '../../../../types/elementaryMonthlyReport';
+import { buildElementaryMonthlyReportSnapshot } from '../../../../lib/elementaryMonthlyReportModel';
+import { resolveElementaryMonthlyImage, waitForElementaryMonthlyPages } from '../../../../lib/elementaryMonthlyReportRender';
 import type { Student, Class } from '../../../../types';
 
 export interface ElementaryMonthlyReportDocumentProps {
@@ -34,133 +34,155 @@ export interface ElementaryMonthlyReportDocumentProps {
   } | null;
   isDraft?: boolean;
   onReadyChange?: (ready: boolean) => void;
+  onRenderError?: (message: string | null) => void;
 }
 
 export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDocumentProps> = ({
   snapshot,
   previewData,
   isDraft = false,
-  onReadyChange
+  onReadyChange,
+  onRenderError
 }) => {
-  // Extract data from snapshot or previewData
-  const student = snapshot ? snapshot.student : previewData?.student;
-  const academicYear = snapshot ? snapshot.academicYear : previewData?.academicYear || '2025/2026';
-  const semester = snapshot ? snapshot.semester : previewData?.semester || '1';
-  const month = snapshot ? snapshot.month : previewData?.month || '';
-  const monthLabel = snapshot ? snapshot.monthLabel : (previewData?.monthLabel || formatMonthLabel(month));
+  const report = React.useMemo(() => snapshot || (previewData ? buildElementaryMonthlyReportSnapshot({
+    student: previewData.student,
+    classId: previewData.classInfo?.id || previewData.curriculumDoc?.classId || '',
+    className: previewData.classInfo?.name || previewData.curriculumDoc?.className || '',
+    gradeLevel: Number(previewData.classInfo?.grade || previewData.curriculumDoc?.gradeLevel || 0),
+    academicYear: previewData.academicYear,
+    semester: previewData.semester,
+    month: previewData.month,
+    curriculumDoc: previewData.curriculumDoc,
+    studentScoreDoc: { scores: previewData.scoresMap },
+    narrativeDoc: previewData.narrativeDoc,
+    projectDoc: previewData.projectDoc,
+    photoDoc: previewData.photoDoc,
+    attendanceSummary: previewData.attendanceSummary,
+    signatory: previewData.signatory,
+    logoUrl: previewData.logoUrl || null
+  }) : null), [snapshot, previewData]);
 
-  const curriculum = snapshot ? snapshot.curriculum : previewData?.curriculumDoc;
-  const scoresMap = snapshot ? snapshot.scoresSummary?.scores || {} : previewData?.scoresMap || {};
-  
-  // Calculate LG results map
+  const student = report?.student;
+  const academicYear = report?.academicYear || '';
+  const semester = report?.semester || '';
+  const month = report?.month || '';
+  const monthLabel = report?.monthLabel || '';
+  const curriculum = report?.curriculum;
+  const scoresMap = report?.scoresSummary?.scores || {};
   const lgResultsMap = React.useMemo<Record<string, LGAverageResult>>(() => {
-    if (snapshot && snapshot.scoresSummary?.lgResults) {
-      return snapshot.scoresSummary.lgResults;
-    }
-    const map: Record<string, LGAverageResult> = {};
-    if (curriculum?.subjects) {
-      for (const sub of curriculum.subjects) {
-        for (const lg of sub.learningGoals || []) {
-          const kkm = lg.kkmOverride || sub.kkm || 70;
-          map[lg.id] = calculateLGAverageAndPredicate(scoresMap, lg.learningObjectives || [], kkm);
-        }
+    if (report?.scoresSummary?.lgResults) return report.scoresSummary.lgResults;
+    const results: Record<string, LGAverageResult> = {};
+    for (const subject of curriculum?.subjects || []) {
+      for (const goal of subject.learningGoals || []) {
+        results[goal.id] = calculateLGAverageAndPredicate(scoresMap, goal.learningObjectives || [], goal.kkmOverride || subject.kkm || 70);
       }
     }
-    return map;
-  }, [snapshot, curriculum, scoresMap]);
-
-  const project = snapshot ? snapshot.project : {
-    projectTitle: previewData?.projectDoc?.projectTitle || 'Belum diisi',
-    projectOverview: previewData?.projectDoc?.projectOverview || 'Project Overview belum diisi.',
-    sharedAlbumLink: previewData?.projectDoc?.sharedAlbumLink || ''
+    return results;
+  }, [report, curriculum, scoresMap]);
+  const project = report?.project || { projectTitle: '', projectOverview: '', sharedAlbumLink: '' };
+  const photos = report?.photos || { identityPhotoUrl: '', snapshots: [], albumLink: '' };
+  const narratives = report?.narratives || { academicComment: '', selProfile: '' };
+  const attendance = report?.attendance || {
+    startDate: '', endDate: '', presentDays: 0, totalDays: 0, percentage: 0,
+    basisDescription: 'Belum dikonfigurasi', isAvailable: false
   };
-
-  const photos = snapshot ? snapshot.photos : {
-    identityPhotoUrl: previewData?.photoDoc?.identityPhotoUrl || '',
-    snapshots: previewData?.photoDoc?.snapshots || [
-      { index: 0, url: '', caption: '' },
-      { index: 1, url: '', caption: '' },
-      { index: 2, url: '', caption: '' }
-    ],
-    albumLink: previewData?.photoDoc?.albumLink || ''
+  const signatory: ElementaryMonthlyReportSignatory = report?.signatory || {
+    principalName: '', principalTitle: '', principalNiy: '', principalSignatureUrl: null,
+    homeroomTeacherName: '', homeroomTeacherNiy: '', homeroomTeacherSignatureUrl: null,
+    signingDate: '', signingLocation: ''
   };
-
-  const narratives = snapshot ? snapshot.narratives : {
-    academicComment: previewData?.narrativeDoc?.academicComment || 'Belum ada Academic Comments.',
-    selProfile: previewData?.narrativeDoc?.selProfile || 'Belum ada Social Emotional Profile.',
-    approvedByName: previewData?.narrativeDoc?.approvedByName || ''
+  const logoUrl = report?.logoUrl || '';
+  const studentName = student?.name || 'Nama Siswa belum diisi';
+  const studentNisn = student?.nisn || '-';
+  const className = student?.className || '-';
+  const gradeLevel = student?.grade || '-';
+  const signingLine = signatory.signingDate.toLowerCase().startsWith(signatory.signingLocation.toLowerCase() + ',')
+    ? signatory.signingDate
+    : [signatory.signingLocation, signatory.signingDate].filter(Boolean).join(', ');
+  const rawAlbumLink = photos.albumLink || project.sharedAlbumLink || '';
+  const albumLink = /^https?:\/\//i.test(rawAlbumLink) ? rawAlbumLink : '';
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const callbacksRef = React.useRef({ onReadyChange, onRenderError });
+  callbacksRef.current = { onReadyChange, onRenderError };
+  const scope = {
+    classId: curriculum?.classId || previewData?.classInfo?.id || '',
+    studentId: student?.id || '', academicYear, semester, month
   };
-
-  const attendance = snapshot ? snapshot.attendance : (previewData?.attendanceSummary || {
-    startDate: '',
-    endDate: '',
-    presentDays: 0,
-    totalDays: 0,
-    percentage: 0,
-    basisDescription: 'Belum dikonfigurasi',
-    isAvailable: false
-  });
-
-  const signatory = snapshot ? snapshot.signatory : (previewData?.signatory || {
-    principalName: 'Dewi Masyitoh, M.Pd.',
-    principalTitle: 'Principal',
-    principalNiy: '19820512',
-    principalSignatureUrl: null,
-    homeroomTeacherName: previewData?.classInfo?.homeroomTeacherName || 'Homeroom Teacher',
-    homeroomTeacherNiy: '',
-    homeroomTeacherSignatureUrl: null,
-    signingDate: 'Depok, ' + monthLabel,
-    signingLocation: 'Depok'
-  });
-
-  // Image loading trackers for PDF generation readiness
-  const [imagesLoaded, setImagesLoaded] = React.useState<number>(0);
-  const totalTrackedImages = React.useMemo(() => {
-    let count = 0;
-    if (photos.identityPhotoUrl) count++;
-    for (const snap of photos.snapshots || []) {
-      if (snap?.url) count++;
-    }
-    if (signatory.principalSignatureUrl) count++;
-    if (signatory.homeroomTeacherSignatureUrl) count++;
-    return count;
-  }, [photos, signatory]);
+  const sources = Array.from(new Set([
+    logoUrl, photos.identityPhotoUrl || '', ...photos.snapshots.map(photo => photo.url || ''),
+    signatory.principalSignatureUrl || '', signatory.homeroomTeacherSignatureUrl || ''
+  ].filter(Boolean)));
+  const assetKey = JSON.stringify({ scope, sources });
+  const contentKey = JSON.stringify([report, isDraft]);
+  const [assetState, setAssetState] = React.useState<{ key: string; urls: Record<string, string>; error: string | null }>({ key: '', urls: {}, error: null });
+  const [renderError, setRenderError] = React.useState<string | null>(null);
+  const resolvedImages = assetState.key === assetKey ? assetState.urls : {};
 
   React.useEffect(() => {
-    if (onReadyChange) {
-      if (totalTrackedImages === 0 || imagesLoaded >= totalTrackedImages) {
-        onReadyChange(true);
-      } else {
-        // Fallback timer in case image fails to trigger onLoad
-        const timer = setTimeout(() => onReadyChange(true), 1500);
-        return () => clearTimeout(timer);
+    const controller = new AbortController();
+    callbacksRef.current.onReadyChange?.(false);
+    callbacksRef.current.onRenderError?.(null);
+    setRenderError(null);
+    setAssetState({ key: '', urls: {}, error: null });
+    Promise.all(sources.map(async source => [source, await resolveElementaryMonthlyImage(source, scope, controller.signal)] as const))
+      .then(entries => {
+        if (!controller.signal.aborted) setAssetState({ key: assetKey, urls: Object.fromEntries(entries), error: null });
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          const message = error instanceof Error ? error.message : 'Gambar laporan gagal dimuat.';
+          setAssetState({ key: assetKey, urls: {}, error: message });
+          setRenderError(message);
+          callbacksRef.current.onRenderError?.(message);
+        }
+      });
+    return () => controller.abort();
+  }, [assetKey]);
+
+  React.useEffect(() => {
+    const controller = new AbortController();
+    callbacksRef.current.onReadyChange?.(false);
+    if (!rootRef.current || assetState.key !== assetKey || assetState.error) return () => controller.abort();
+    setRenderError(null);
+    callbacksRef.current.onRenderError?.(null);
+    const pages = Array.from(rootRef.current.querySelectorAll<HTMLElement>('[data-monthly-page]')) as HTMLElement[];
+    waitForElementaryMonthlyPages(pages, controller.signal).then(() => {
+      if (!controller.signal.aborted) callbacksRef.current.onReadyChange?.(true);
+    }).catch(error => {
+      if (!controller.signal.aborted) {
+        const message = error instanceof Error ? error.message : 'Renderer laporan belum siap.';
+        setRenderError(message);
+        callbacksRef.current.onRenderError?.(message);
       }
-    }
-  }, [imagesLoaded, totalTrackedImages, onReadyChange]);
-
-  const handleImageLoaded = () => {
-    setImagesLoaded(prev => prev + 1);
-  };
-
-  const studentName = student?.name || 'Nama Siswa';
-  const studentNisn = (student as any)?.nisn || (student as any)?.nis || '-';
-  const className = (student as any)?.className || previewData?.classInfo?.name || 'Class 1';
-  const gradeLevel = (student as any)?.grade || (previewData?.classInfo ? (previewData.classInfo.grade || 1) : 1);
+    });
+    return () => controller.abort();
+  }, [assetState, assetKey, contentKey]);
 
   return (
-    <div className="flex flex-col items-center gap-8 py-4 bg-slate-100 print:bg-white print:p-0">
+    <div ref={rootRef} className="flex flex-col items-center gap-8 py-4 print:p-0" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '32px', padding: '16px 0', flexShrink: 0 }}>
+      {renderError && (
+        <div role="alert" data-html2canvas-ignore="true" style={{ width: 794, padding: 12, border: '1px solid #dc2626', color: '#991b1b', background: '#fef2f2', fontSize: 13 }}>
+          {renderError}
+        </div>
+      )}
       {/* ============================================================ */}
       {/* PAGE 1: KOP, IDENTITAS, BASIC LITERACY & NUMERACY, COMMENTS, PROJECT */}
       {/* ============================================================ */}
       <div 
-        id="elem-monthly-pdf-page-1"
-        className="elem-monthly-page bg-white shadow-xl print:shadow-none relative flex flex-col justify-between overflow-hidden"
+        data-monthly-page="1"
+        className="elem-monthly-page bg-white shadow-xl print:shadow-none relative flex flex-col justify-between"
         style={{
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
           width: '794px',
           minWidth: '794px',
           maxWidth: '794px',
           minHeight: '1123px',
-          height: '1123px',
+          flexShrink: 0,
+          overflow: 'visible',
+          overflowWrap: 'anywhere',
+          gap: '14px',
           padding: '36px 42px',
           boxSizing: 'border-box',
           backgroundColor: '#ffffff',
@@ -193,7 +215,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             style={{
               backgroundColor: '#1e3a8a',
               color: '#ffffff',
-              borderRadius: '12px',
+              borderRadius: 0,
               padding: '16px 20px',
               marginBottom: '16px',
               display: 'flex',
@@ -203,22 +225,12 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <div 
-                style={{
-                  width: '44px',
-                  height: '44px',
-                  borderRadius: '10px',
-                  backgroundColor: '#ffffff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 900,
-                  color: '#1e3a8a',
-                  fontSize: '20px',
-                  letterSpacing: '-1px'
-                }}
-              >
-                L
+              <div style={{ width: '130px', height: '52px', backgroundColor: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px' }}>
+                {logoUrl ? (
+                  <img src={resolvedImages[logoUrl]} alt="Logo resmi Elementary" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                ) : (
+                  <span style={{ fontSize: '9px', color: '#475569', textAlign: 'center' }}>Logo Elementary belum dikonfigurasi</span>
+                )}
               </div>
               <div>
                 <h2 style={{ fontSize: '13px', fontWeight: 800, letterSpacing: '1px', textTransform: 'uppercase', margin: 0 }}>
@@ -248,7 +260,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
               gap: '16px',
               backgroundColor: '#f8fafc',
               border: '1px solid #cbd5e1',
-              borderRadius: '10px',
+              borderRadius: 0,
               padding: '12px 16px',
               marginBottom: '16px'
             }}
@@ -287,7 +299,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 style={{
                   width: '74px',
                   height: '92px',
-                  borderRadius: '6px',
+                  borderRadius: 0,
                   border: '1px solid #94a3b8',
                   overflow: 'hidden',
                   backgroundColor: '#e2e8f0',
@@ -298,9 +310,8 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
               >
                 {photos.identityPhotoUrl ? (
                   <img 
-                    src={photos.identityPhotoUrl} 
+                    src={resolvedImages[photos.identityPhotoUrl]} 
                     alt={studentName}
-                    onLoad={handleImageLoaded}
                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                 ) : (
@@ -322,7 +333,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 backgroundColor: '#1e3a8a',
                 color: '#ffffff',
                 padding: '5px 12px',
-                borderRadius: '6px 6px 0 0',
+                borderRadius: 0,
                 fontSize: '10px',
                 fontWeight: 800,
                 letterSpacing: '0.8px',
@@ -334,7 +345,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             >
               <span>BASIC LITERACY AND NUMERACY</span>
               <span style={{ fontSize: '9px', fontWeight: 600, color: '#93c5fd' }}>
-                (A: Amat Baik · D: Diharapkan · B: Berkembang)
+                (A: Achieved · D: Developing · B: Beginning)
               </span>
             </div>
 
@@ -379,7 +390,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                           <td 
                             style={{
                               borderRight: '1px solid #cbd5e1',
-                              padding: '4px 6px',
+                              padding: '2.5px 6px',
                               textAlign: 'center',
                               fontWeight: 800,
                               color: '#1e3a8a'
@@ -390,7 +401,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                           <td 
                             colSpan={4} 
                             style={{
-                              padding: '4px 8px',
+                              padding: '2.5px 8px',
                               fontWeight: 800,
                               color: '#0f172a',
                               textTransform: 'uppercase',
@@ -408,26 +419,26 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
 
                           return (
                             <tr key={lg.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '4px 6px', textAlign: 'center', color: '#64748b' }}>
+                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '2.5px 6px', textAlign: 'center', color: '#64748b' }}>
                                 •
                               </td>
-                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '4px 8px', lineHeight: '1.35', color: '#1e293b' }}>
+                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '2.5px 8px', lineHeight: '1.35', color: '#1e293b' }}>
                                 {lg.title}
                               </td>
                               {/* Predicate Checkmarks (No raw numbers printed!) */}
-                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '2px', textAlign: 'center', width: '35px' }}>
+                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '1px', textAlign: 'center', width: '35px' }}>
                                 {pred === 'A' ? (
-                                  <span style={{ color: '#15803d', fontWeight: 900, fontSize: '12px' }}>✓</span>
+                                  <span style={{ color: '#15803d', fontWeight: 900, fontSize: '12px', lineHeight: '1' }}>✓</span>
                                 ) : null}
                               </td>
-                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '2px', textAlign: 'center', width: '35px' }}>
+                              <td style={{ borderRight: '1px solid #cbd5e1', padding: '1px', textAlign: 'center', width: '35px' }}>
                                 {pred === 'D' ? (
-                                  <span style={{ color: '#1e40af', fontWeight: 900, fontSize: '12px' }}>✓</span>
+                                  <span style={{ color: '#1e40af', fontWeight: 900, fontSize: '12px', lineHeight: '1' }}>✓</span>
                                 ) : null}
                               </td>
-                              <td style={{ padding: '2px', textAlign: 'center', width: '35px' }}>
+                              <td style={{ padding: '1px', textAlign: 'center', width: '35px' }}>
                                 {pred === 'B' ? (
-                                  <span style={{ color: '#d97706', fontWeight: 900, fontSize: '12px' }}>✓</span>
+                                  <span style={{ color: '#d97706', fontWeight: 900, fontSize: '12px', lineHeight: '1' }}>✓</span>
                                 ) : null}
                               </td>
                             </tr>
@@ -448,7 +459,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 backgroundColor: '#1e3a8a',
                 color: '#ffffff',
                 padding: '4px 10px',
-                borderRadius: '6px 6px 0 0',
+                borderRadius: 0,
                 fontSize: '9.5px',
                 fontWeight: 800,
                 letterSpacing: '0.8px',
@@ -460,16 +471,17 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             <div 
               style={{
                 border: '1px solid #1e3a8a',
-                borderRadius: '0 0 6px 6px',
+                borderRadius: 0,
                 padding: '10px 14px',
                 fontSize: '9.5px',
                 lineHeight: '1.5',
                 color: '#1e293b',
                 backgroundColor: '#ffffff',
-                minHeight: '62px'
+                minHeight: '62px',
+                whiteSpace: 'pre-wrap'
               }}
             >
-              {narratives.academicComment}
+              {narratives.academicComment || 'Academic Comments belum diisi.'}
             </div>
           </div>
 
@@ -480,7 +492,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 backgroundColor: '#1e3a8a',
                 color: '#ffffff',
                 padding: '4px 10px',
-                borderRadius: '6px 6px 0 0',
+                borderRadius: 0,
                 fontSize: '9.5px',
                 fontWeight: 800,
                 letterSpacing: '0.8px',
@@ -492,7 +504,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             <div 
               style={{
                 border: '1px solid #1e3a8a',
-                borderRadius: '0 0 6px 6px',
+                borderRadius: 0,
                 padding: '10px 14px',
                 fontSize: '9.5px',
                 lineHeight: '1.5',
@@ -503,7 +515,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
               <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: '3px' }}>
                 Project Overview :
               </div>
-              <p style={{ margin: 0, textAlign: 'justify' }}>
+              <p style={{ margin: 0, textAlign: 'justify', whiteSpace: 'pre-wrap' }}>
                 {project.projectOverview}
               </p>
             </div>
@@ -531,14 +543,20 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
       {/* PAGE 2: PROJECT SNAPSHOT, SEL PROFILE, LEGENDA, ATTENDANCE, SIGNATURES */}
       {/* ============================================================ */}
       <div 
-        id="elem-monthly-pdf-page-2"
-        className="elem-monthly-page bg-white shadow-xl print:shadow-none relative flex flex-col justify-between overflow-hidden"
+        data-monthly-page="2"
+        className="elem-monthly-page bg-white shadow-xl print:shadow-none relative flex flex-col justify-between"
         style={{
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
           width: '794px',
           minWidth: '794px',
           maxWidth: '794px',
           minHeight: '1123px',
-          height: '1123px',
+          flexShrink: 0,
+          overflow: 'visible',
+          overflowWrap: 'anywhere',
+          gap: '14px',
           padding: '36px 42px',
           boxSizing: 'border-box',
           backgroundColor: '#ffffff',
@@ -578,7 +596,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 backgroundColor: '#1e3a8a',
                 color: '#ffffff',
                 padding: '4px 10px',
-                borderRadius: '6px 6px 0 0',
+                borderRadius: 0,
                 fontSize: '9.5px',
                 fontWeight: 800,
                 letterSpacing: '0.8px',
@@ -591,7 +609,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             <div 
               style={{
                 border: '1px solid #1e3a8a',
-                borderRadius: '0 0 6px 6px',
+                borderRadius: 0,
                 padding: '12px 14px',
                 backgroundColor: '#ffffff'
               }}
@@ -605,7 +623,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                         style={{
                           width: '100%',
                           height: '138px',
-                          borderRadius: '8px',
+                          borderRadius: 0,
                           border: '1px solid #cbd5e1',
                           overflow: 'hidden',
                           backgroundColor: '#f1f5f9',
@@ -616,9 +634,8 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                       >
                         {snap?.url ? (
                           <img 
-                            src={snap.url} 
+                            src={resolvedImages[snap.url]} 
                             alt={`Project Snapshot ${idx + 1}`}
-                            onLoad={handleImageLoaded}
                             style={{
                               width: '100%',
                               height: '100%',
@@ -640,7 +657,10 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                           color: '#334155',
                           textAlign: 'center',
                           fontStyle: 'italic',
-                          minHeight: '24px'
+                          minHeight: '24px',
+                          border: '1px solid #cbd5e1',
+                          padding: '5px',
+                          whiteSpace: 'pre-wrap'
                         }}
                       >
                         {snap?.caption || `Dokumentasi kegiatan proyek ${idx + 1}`}
@@ -663,9 +683,9 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 }}
               >
                 <span style={{ fontWeight: 800, color: '#0f172a' }}>Link Photo Project :</span>
-                {photos.albumLink || project.sharedAlbumLink ? (
+                {albumLink ? (
                   <a 
-                    href={photos.albumLink || project.sharedAlbumLink} 
+                    href={albumLink} data-monthly-album="true" 
                     target="_blank" 
                     rel="noreferrer"
                     style={{
@@ -675,7 +695,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                       wordBreak: 'break-all'
                     }}
                   >
-                    {photos.albumLink || project.sharedAlbumLink}
+                    {albumLink}
                   </a>
                 ) : (
                   <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Tautan album belum tersedia</span>
@@ -691,7 +711,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 backgroundColor: '#1e3a8a',
                 color: '#ffffff',
                 padding: '4px 10px',
-                borderRadius: '6px 6px 0 0',
+                borderRadius: 0,
                 fontSize: '9.5px',
                 fontWeight: 800,
                 letterSpacing: '0.8px',
@@ -703,16 +723,17 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             <div 
               style={{
                 border: '1px solid #1e3a8a',
-                borderRadius: '0 0 6px 6px',
+                borderRadius: 0,
                 padding: '10px 14px',
                 fontSize: '9.5px',
                 lineHeight: '1.5',
                 color: '#1e293b',
                 backgroundColor: '#ffffff',
-                minHeight: '66px'
+                minHeight: '66px',
+                whiteSpace: 'pre-wrap'
               }}
             >
-              {narratives.selProfile}
+              {narratives.selProfile || 'Social Emotional Profile belum diisi.'}
             </div>
           </div>
 
@@ -722,7 +743,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             <div 
               style={{
                 border: '1px solid #cbd5e1',
-                borderRadius: '8px',
+                borderRadius: 0,
                 padding: '8px 12px',
                 backgroundColor: '#f8fafc',
                 fontSize: '8.5px',
@@ -734,13 +755,13 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', color: '#334155' }}>
                 <div>
-                  <strong style={{ color: '#15803d' }}>A (Amat Baik)</strong> : Capaian melampaui kriteria ketuntasan
+                  <strong style={{ color: '#15803d' }}>A — Achieved</strong>
                 </div>
                 <div>
-                  <strong style={{ color: '#1e40af' }}>D (Diharapkan)</strong> : Capaian telah memenuhi kriteria ketuntasan
+                  <strong style={{ color: '#1e40af' }}>D — Developing</strong>
                 </div>
                 <div>
-                  <strong style={{ color: '#d97706' }}>B (Berkembang)</strong> : Masih memerlukan bimbingan dan pendampingan
+                  <strong style={{ color: '#d97706' }}>B — Beginning</strong>
                 </div>
               </div>
             </div>
@@ -749,7 +770,7 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
             <div 
               style={{
                 border: '1px solid #cbd5e1',
-                borderRadius: '8px',
+                borderRadius: 0,
                 padding: '8px 12px',
                 backgroundColor: '#f8fafc',
                 fontSize: '8.5px',
@@ -776,27 +797,39 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
           <div style={{ marginTop: '12px' }}>
             {/* Titimangsa */}
             <div style={{ textAlign: 'right', fontSize: '9.5px', fontWeight: 700, color: '#0f172a', marginBottom: '14px' }}>
-              {signatory.signingLocation}, {signatory.signingDate}
+              {signingLine || 'Titimangsa belum dikonfigurasi'}
             </div>
 
-            {/* 3 Signatures: Parents, Homeroom Teacher, Principal */}
+            {/* Signatures: Principal, Homeroom Teacher, Parents */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', textAlign: 'center' }}>
-              {/* 1. Parents / Guardian */}
+              {/* 3. Principal */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <span style={{ fontSize: '9px', fontWeight: 700, color: '#475569' }}>
-                  Mengetahui,
+                  Kepala Sekolah,
                 </span>
                 <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#0f172a', marginTop: '1px' }}>
-                  Orang Tua / Wali
+                  {signatory.principalTitle || 'Principal'}
                 </span>
                 <div style={{ height: '54px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {/* Space for physical or digital parent signature */}
+                  {signatory.principalSignatureUrl ? (
+                    <img 
+                      src={resolvedImages[signatory.principalSignatureUrl]} 
+                      alt="Signature"
+                      style={{ maxHeight: '48px', maxWidth: '120px', objectFit: 'contain' }}
+                    />
+                  ) : null}
                 </div>
-                <div style={{ width: '80%', borderTop: '1px solid #0f172a', paddingTop: '3px' }}>
-                  <span style={{ fontSize: '9px', color: '#475569' }}>( ............................................. )</span>
+                <div style={{ width: '85%', borderTop: '1px solid #0f172a', paddingTop: '3px' }}>
+                  <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#0f172a', display: 'block' }}>
+                    {signatory.principalName}
+                  </span>
+                  {signatory.principalNiy && (
+                    <span style={{ fontSize: '8px', color: '#64748b' }}>
+                      NIY: {signatory.principalNiy}
+                    </span>
+                  )}
                 </div>
               </div>
-
               {/* 2. Homeroom Teacher */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <span style={{ fontSize: '9px', fontWeight: 700, color: '#475569' }}>
@@ -808,9 +841,8 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 <div style={{ height: '54px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {signatory.homeroomTeacherSignatureUrl ? (
                     <img 
-                      src={signatory.homeroomTeacherSignatureUrl} 
+                      src={resolvedImages[signatory.homeroomTeacherSignatureUrl]} 
                       alt="Signature"
-                      onLoad={handleImageLoaded}
                       style={{ maxHeight: '48px', maxWidth: '120px', objectFit: 'contain' }}
                     />
                   ) : null}
@@ -827,35 +859,22 @@ export const ElementaryMonthlyReportDocument: React.FC<ElementaryMonthlyReportDo
                 </div>
               </div>
 
-              {/* 3. Principal */}
+              {/* 1. Parents / Guardian */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <span style={{ fontSize: '9px', fontWeight: 700, color: '#475569' }}>
-                  Kepala Sekolah,
+                  Mengetahui,
                 </span>
                 <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#0f172a', marginTop: '1px' }}>
-                  {signatory.principalTitle || 'Principal'}
+                  Parents / Guardian
                 </span>
                 <div style={{ height: '54px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {signatory.principalSignatureUrl ? (
-                    <img 
-                      src={signatory.principalSignatureUrl} 
-                      alt="Signature"
-                      onLoad={handleImageLoaded}
-                      style={{ maxHeight: '48px', maxWidth: '120px', objectFit: 'contain' }}
-                    />
-                  ) : null}
+                  {/* Space for physical or digital parent signature */}
                 </div>
-                <div style={{ width: '85%', borderTop: '1px solid #0f172a', paddingTop: '3px' }}>
-                  <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#0f172a', display: 'block' }}>
-                    {signatory.principalName}
-                  </span>
-                  {signatory.principalNiy && (
-                    <span style={{ fontSize: '8px', color: '#64748b' }}>
-                      NIY: {signatory.principalNiy}
-                    </span>
-                  )}
+                <div style={{ width: '80%', borderTop: '1px solid #0f172a', paddingTop: '3px' }}>
+                  <span style={{ fontSize: '9px', color: '#475569' }}>________________________</span>
                 </div>
               </div>
+
             </div>
           </div>
         </div>

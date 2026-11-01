@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { 
-  Eye, Download, Send, Undo2, CheckCircle2, AlertCircle, AlertTriangle, 
-  Calendar, RefreshCw, FileText, Lock, Users, Sparkles, ShieldCheck 
+import {
+  Eye, Download, Send, Undo2, CheckCircle2, AlertTriangle,
+  Calendar, RefreshCw, FileText, Users, ShieldCheck, History, X
 } from 'lucide-react';
-import type { 
+import type {
   ElementaryMonthlyCurriculumDoc,
   ElementaryMonthlyStudentScoreDoc,
   ElementaryMonthlyProjectDoc,
@@ -13,16 +13,22 @@ import type {
   PublishedElementaryMonthlyReportDoc,
   ElementaryMonthlyReportSignatory
 } from '../../../../types/elementaryMonthlyReport';
-import { 
-  validateElementaryMonthlyPublishEligibility
-} from '../../../../types/elementaryMonthlyReport';
-import { 
+import { validateElementaryMonthlyPublishEligibility } from '../../../../types/elementaryMonthlyReport';
+import {
   calculateStudentAttendanceSummary,
   fetchElementaryMonthlyAttendanceConfig,
   fetchPublishedElementaryMonthlyReports,
+  fetchElementaryMonthlyProjectDoc,
+  fetchElementaryMonthlyStudentPhotos,
+  fetchElementaryMonthlyStudentNarratives,
+  fetchElementaryMonthlyReportConfiguration,
+  fetchElementaryMonthlyPublicationHistory,
+  getPendingElementaryMonthlyPublication,
+  hasElementaryMonthlyPublishedPdf,
   publishElementaryMonthlyReport,
   sendElementaryMonthlyReportToPortal,
-  revokeElementaryMonthlyReportAccess
+  revokeElementaryMonthlyReportAccess,
+  ElementaryMonthlyPublicationError
 } from '../../../../services/elementaryMonthlyReportService';
 import type { Student, Class, User } from '../../../../types';
 import { MonthlyReportPreviewModal } from './MonthlyReportPreviewModal';
@@ -42,327 +48,335 @@ interface PublicationTrackingTabProps {
   onRefreshData?: () => void;
 }
 
+const EMPTY_SIGNATORY: ElementaryMonthlyReportSignatory = {
+  principalName: '', principalTitle: '', principalNiy: '', principalSignatureUrl: null,
+  homeroomTeacherId: '', homeroomTeacherName: '', homeroomTeacherNiy: '', homeroomTeacherSignatureUrl: null,
+  signingDate: '', signingLocation: ''
+};
+
 export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
-  curriculumDoc,
-  studentScoresMap,
-  students,
-  selectedClass,
-  selectedYear,
-  selectedSemester,
-  selectedMonth,
-  monthLabel,
-  currentUser,
-  onRefreshData
+  curriculumDoc, studentScoresMap, students, selectedClass,
+  selectedYear, selectedSemester, selectedMonth, monthLabel, currentUser, onRefreshData
 }) => {
-  // Attendance config & Published reports state
   const [attendanceConfig, setAttendanceConfig] = React.useState<ElementaryMonthlyAttendanceConfig | null>(null);
   const [publishedReportsMap, setPublishedReportsMap] = React.useState<Record<string, PublishedElementaryMonthlyReportDoc>>({});
-  const [loadingPublishData, setLoadingPublishData] = React.useState<boolean>(false);
-
-  // Photos, Project, Narratives state
+  const [loadingPublishData, setLoadingPublishData] = React.useState(false);
+  const [loadError, setLoadError] = React.useState('');
   const [projectDoc, setProjectDoc] = React.useState<ElementaryMonthlyProjectDoc | null>(null);
   const [photosMap, setPhotosMap] = React.useState<Record<string, ElementaryMonthlyStudentPhotoDoc>>({});
   const [narrativesMap, setNarrativesMap] = React.useState<Record<string, ElementaryMonthlyStudentNarrativeDoc>>({});
-
-  // Modals state
-  const [isAttendanceModalOpen, setIsAttendanceModalOpen] = React.useState<boolean>(false);
+  const [configuredSignatory, setConfiguredSignatory] = React.useState<ElementaryMonthlyReportSignatory>(EMPTY_SIGNATORY);
+  const [logoUrl, setLogoUrl] = React.useState<string | null>(null);
+  const [configurationIssues, setConfigurationIssues] = React.useState<string[]>([]);
+  const [pendingOperations, setPendingOperations] = React.useState<Record<string, string>>({});
+  const [isAttendanceModalOpen, setIsAttendanceModalOpen] = React.useState(false);
   const [previewStudent, setPreviewStudent] = React.useState<Student | null>(null);
-
-  // Processing state
+  const [previewVersion, setPreviewVersion] = React.useState<PublishedElementaryMonthlyReportDoc | null>(null);
+  const [historyStudent, setHistoryStudent] = React.useState<Student | null>(null);
+  const [historyReports, setHistoryReports] = React.useState<PublishedElementaryMonthlyReportDoc[]>([]);
+  const [historyLoading, setHistoryLoading] = React.useState(false);
   const [processingStudentId, setProcessingStudentId] = React.useState<string | null>(null);
-  const [isBatchProcessing, setIsBatchProcessing] = React.useState<boolean>(false);
+  const [processingMessage, setProcessingMessage] = React.useState('');
+  const [isBatchProcessing, setIsBatchProcessing] = React.useState(false);
+  const busyRef = React.useRef(false);
+  const requestRef = React.useRef(0);
+  const contextKey = JSON.stringify([selectedClass?.id, selectedYear, selectedSemester, selectedMonth]);
+  const currentContextRef = React.useRef(contextKey);
+  currentContextRef.current = contextKey;
+  const busy = isBatchProcessing || processingStudentId !== null;
 
-  // Signatory Profile
-  const signatory: ElementaryMonthlyReportSignatory = React.useMemo(() => {
-    return {
-      principalName: 'Dewi Masyitoh, M.Pd.',
-      principalTitle: 'Principal',
-      principalNiy: '19820512',
-      principalSignatureUrl: null,
-      homeroomTeacherName: selectedClass?.homeroomTeacherName || currentUser.displayName || currentUser.name || 'Homeroom Teacher',
-      homeroomTeacherNiy: (currentUser as any)?.niy || '',
-      homeroomTeacherSignatureUrl: (currentUser as any)?.signatureUrl || null,
-      signingDate: attendanceConfig?.signingDate || `${attendanceConfig?.endDate?.split('-')[2] || '31'} ${monthLabel}`,
-      signingLocation: attendanceConfig?.signingLocation || 'Depok'
-    };
-  }, [selectedClass, currentUser, attendanceConfig, monthLabel]);
+  const contextFor = React.useCallback((studentId: string) => ({
+    classId: selectedClass?.id || '', studentId,
+    academicYear: selectedYear, semester: selectedSemester, month: selectedMonth
+  }), [selectedClass?.id, selectedYear, selectedSemester, selectedMonth]);
 
-  // Load all required data for publishing & tracking
+  const signatory = React.useMemo<ElementaryMonthlyReportSignatory>(() => ({
+    ...configuredSignatory,
+    signingDate: attendanceConfig?.signingDate || '',
+    signingLocation: attendanceConfig?.signingLocation || ''
+  }), [configuredSignatory, attendanceConfig]);
+
+  React.useEffect(() => {
+    const pending: Record<string, string> = {};
+    for (const student of students) {
+      const operationId = getPendingElementaryMonthlyPublication(contextFor(student.id));
+      if (operationId) pending[student.id] = operationId;
+    }
+    setPendingOperations(pending);
+  }, [students, contextFor, currentUser.uid]);
+
   const loadData = React.useCallback(async () => {
+    const request = ++requestRef.current;
     if (!selectedClass || !selectedYear || !selectedSemester || !selectedMonth) return;
     setLoadingPublishData(true);
-
+    setLoadError('');
     try {
-      const { 
-        fetchElementaryMonthlyProjectDoc, 
-        fetchElementaryMonthlyStudentPhotos,
-        fetchElementaryMonthlyStudentNarratives 
-      } = await import('../../../../services/elementaryMonthlyReportService');
-
-      const [attConfig, pubReports, proj, photos, narratives] = await Promise.all([
+      const [attConfig, reports, project, photos, narratives, configuration] = await Promise.all([
         fetchElementaryMonthlyAttendanceConfig(selectedClass.id, selectedYear, selectedSemester, selectedMonth),
         fetchPublishedElementaryMonthlyReports(selectedClass.id, selectedYear, selectedSemester, selectedMonth),
         fetchElementaryMonthlyProjectDoc(selectedClass.id, selectedYear, selectedSemester, selectedMonth),
         fetchElementaryMonthlyStudentPhotos(selectedClass.id, selectedYear, selectedSemester, selectedMonth),
-        fetchElementaryMonthlyStudentNarratives(selectedClass.id, selectedYear, selectedSemester, selectedMonth)
+        fetchElementaryMonthlyStudentNarratives(selectedClass.id, selectedYear, selectedSemester, selectedMonth),
+        fetchElementaryMonthlyReportConfiguration(selectedClass)
       ]);
-
+      if (request !== requestRef.current) return;
       setAttendanceConfig(attConfig);
-
-      const pubMap: Record<string, PublishedElementaryMonthlyReportDoc> = {};
-      for (const r of pubReports) {
-        pubMap[r.studentId] = r;
+      const latest: Record<string, PublishedElementaryMonthlyReportDoc> = {};
+      for (const report of reports) {
+        if (!latest[report.studentId] || report.version > latest[report.studentId].version) latest[report.studentId] = report;
       }
-      setPublishedReportsMap(pubMap);
-
-      setProjectDoc(proj);
+      setPublishedReportsMap(latest);
+      setProjectDoc(project);
       setPhotosMap(photos);
       setNarrativesMap(narratives);
-    } catch (err) {
-      console.error('Error loading publication data:', err);
-      toast.error('Gagal memuat status publikasi & tracking.');
+      setConfiguredSignatory(configuration.signatory);
+      setLogoUrl(configuration.logoUrl);
+      setConfigurationIssues(configuration.issues);
+    } catch (error) {
+      if (request !== requestRef.current) return;
+      setConfiguredSignatory(EMPTY_SIGNATORY);
+      setLogoUrl(null);
+      setLoadError(error instanceof Error ? error.message : 'Gagal memuat data publikasi.');
+      toast.error('Gagal memuat data publikasi. Segarkan sebelum menerbitkan rapor.');
     } finally {
-      setLoadingPublishData(false);
+      if (request === requestRef.current) setLoadingPublishData(false);
     }
-  }, [selectedClass, selectedYear, selectedSemester, selectedMonth]);
+  }, [selectedClass?.id, selectedYear, selectedSemester, selectedMonth]);
 
   React.useEffect(() => {
-    loadData();
+    setAttendanceConfig(null);
+    setPublishedReportsMap({});
+    setProjectDoc(null);
+    setPhotosMap({});
+    setNarrativesMap({});
+    setConfiguredSignatory(EMPTY_SIGNATORY);
+    setLogoUrl(null);
+    setConfigurationIssues([]);
+    setPreviewStudent(null);
+    setPreviewVersion(null);
+    setHistoryStudent(null);
+    void loadData();
+    return () => { requestRef.current++; };
   }, [loadData]);
 
-  // Evaluation for each student
-  const studentEvaluations = React.useMemo(() => {
-    return students.map(st => {
-      const scoreDoc = studentScoresMap[st.id] || null;
-      const narrativeDoc = narrativesMap[st.id] || null;
-      const photoDoc = photosMap[st.id] || null;
-      const attSummary = calculateStudentAttendanceSummary(attendanceConfig, st.id);
-      const published = publishedReportsMap[st.id] || null;
-
-      const validation = validateElementaryMonthlyPublishEligibility({
-        student: { id: st.id, name: st.name },
-        curriculumDoc,
-        studentScoreDoc: scoreDoc,
-        narrativeDoc,
-        projectDoc,
-        photoDoc,
-        attendanceSummary: attSummary,
-        signatory
-      });
-
-      return {
-        student: st,
-        scoreDoc,
-        narrativeDoc,
-        photoDoc,
-        attSummary,
-        published,
-        validation
-      };
+  const studentEvaluations = React.useMemo(() => students.map(student => {
+    const scoreDoc = studentScoresMap[student.id] || null;
+    const narrativeDoc = narrativesMap[student.id] || null;
+    const photoDoc = photosMap[student.id] || null;
+    const attSummary = calculateStudentAttendanceSummary(attendanceConfig, student.id);
+    const published = publishedReportsMap[student.id] || null;
+    const validation = validateElementaryMonthlyPublishEligibility({
+      student: { id: student.id, name: student.name }, curriculumDoc,
+      studentScoreDoc: scoreDoc, narrativeDoc, projectDoc, photoDoc,
+      attendanceSummary: attSummary, signatory, logoUrl
     });
-  }, [students, studentScoresMap, narrativesMap, photosMap, attendanceConfig, publishedReportsMap, curriculumDoc, projectDoc, signatory]);
-
-  // Summary Counters
-  const counters = React.useMemo(() => {
-    let eligibleCount = 0;
-    let publishedCount = 0;
-    let sentCount = 0;
-    let openedCount = 0;
-
-    for (const item of studentEvaluations) {
-      if (item.validation.isEligible) eligibleCount++;
-      if (item.published && item.published.status === 'PUBLISHED') {
-        publishedCount++;
-        if (item.published.deliveryStatus === 'SENT') sentCount++;
-        if (item.published.isOpened) openedCount++;
-      }
+    const extraReasons = [...configurationIssues];
+    if (loadingPublishData) extraReasons.push('Data publikasi sedang dimuat.');
+    if (loadError) extraReasons.push('Data publikasi belum berhasil dimuat.');
+    if (extraReasons.length) {
+      validation.isEligible = false;
+      validation.blockingReasons.push(...extraReasons);
     }
+    return { student, scoreDoc, narrativeDoc, photoDoc, attSummary, published, validation };
+  }), [students, studentScoresMap, narrativesMap, photosMap, attendanceConfig,
+    publishedReportsMap, curriculumDoc, projectDoc, signatory, logoUrl, configurationIssues, loadingPublishData, loadError]);
 
-    return {
-      total: students.length,
-      eligible: eligibleCount,
-      published: publishedCount,
-      sent: sentCount,
-      opened: openedCount
-    };
-  }, [studentEvaluations, students.length]);
+  const counters = React.useMemo(() => ({
+    total: students.length,
+    eligible: studentEvaluations.filter(item => item.validation.isEligible || pendingOperations[item.student.id]).length,
+    published: studentEvaluations.filter(item => hasElementaryMonthlyPublishedPdf(item.published)).length,
+    sent: studentEvaluations.filter(item => hasElementaryMonthlyPublishedPdf(item.published) && item.published?.deliveryStatus === 'SENT').length,
+    opened: studentEvaluations.filter(item => hasElementaryMonthlyPublishedPdf(item.published) && item.published?.isOpened).length
+  }), [studentEvaluations, students.length, pendingOperations]);
 
-  // Single Publish Action
-  const handlePublishSingle = async (st: Student) => {
-    const item = studentEvaluations.find(e => e.student.id === st.id);
-    if (!item) return;
-
-    if (!item.validation.isEligible) {
-      toast.error(`Tidak dapat mempublikasikan: ${item.validation.blockingReasons[0]}`);
-      return;
-    }
-
-    setProcessingStudentId(st.id);
+  const publishItem = async (item: (typeof studentEvaluations)[number], startedContext: string) => {
+    const studentId = item.student.id;
+    if (!selectedClass) throw new Error('Pilih kelas terlebih dahulu.');
+    if (currentContextRef.current === startedContext) setProcessingStudentId(studentId);
     try {
-      const pubDoc = await publishElementaryMonthlyReport({
-        student: st,
-        classId: selectedClass!.id,
-        className: selectedClass!.name,
-        gradeLevel: selectedClass!.grade || 1,
-        academicYear: selectedYear,
-        semester: selectedSemester,
-        month: selectedMonth,
-        curriculumDoc: curriculumDoc!,
-        studentScoreDoc: item.scoreDoc,
-        projectDoc,
-        photoDoc: item.photoDoc,
-        narrativeDoc: item.narrativeDoc,
-        attendanceConfig,
-        signatory,
-        currentUser
-      });
-
-      setPublishedReportsMap(prev => ({
-        ...prev,
-        [st.id]: pubDoc
-      }));
-      toast.success(`Rapor ${st.name} berhasil diterbitkan (v${pubDoc.version}).`);
-    } catch (err: any) {
-      console.error('Error publishing report:', err);
-      toast.error(err.message || 'Gagal mempublikasikan rapor.');
-    } finally {
-      setProcessingStudentId(null);
-    }
-  };
-
-  // Batch Publish Action
-  const handleBatchPublish = async () => {
-    const eligibleStudents = studentEvaluations.filter(e => e.validation.isEligible);
-    if (eligibleStudents.length === 0) {
-      toast.error('Belum ada siswa yang memenuhi seluruh syarat penerbitan.');
-      return;
-    }
-
-    const confirmMsg = `Terbitkan ${eligibleStudents.length} rapor siswa yang memenuhi syarat? (${students.length - eligibleStudents.length} siswa belum lengkap dan akan dilewati)`;
-    if (!window.confirm(confirmMsg)) return;
-
-    setIsBatchProcessing(true);
-    let successCount = 0;
-    let failedCount = 0;
-
-    for (const item of eligibleStudents) {
-      try {
-        const pubDoc = await publishElementaryMonthlyReport({
-          student: item.student,
-          classId: selectedClass!.id,
-          className: selectedClass!.name,
-          gradeLevel: selectedClass!.grade || 1,
-          academicYear: selectedYear,
-          semester: selectedSemester,
-          month: selectedMonth,
-          curriculumDoc: curriculumDoc!,
-          studentScoreDoc: item.scoreDoc,
-          projectDoc,
-          photoDoc: item.photoDoc,
-          narrativeDoc: item.narrativeDoc,
-          attendanceConfig,
-          signatory,
-          currentUser
-        });
-
-        setPublishedReportsMap(prev => ({
-          ...prev,
-          [item.student.id]: pubDoc
-        }));
-        successCount++;
-      } catch (e) {
-        console.error(`Failed to publish student ${item.student.name}:`, e);
-        failedCount++;
-      }
-    }
-
-    setIsBatchProcessing(false);
-    if (failedCount === 0) {
-      toast.success(`Berhasil menerbitkan seluruh ${successCount} rapor siswa.`);
-    } else {
-      toast.warning(`Penerbitan selesai: ${successCount} berhasil, ${failedCount} gagal.`);
-    }
-  };
-
-  // Send to Portal Action (Single)
-  const handleSendToPortal = async (reportId: string, studentName: string) => {
-    try {
-      await sendElementaryMonthlyReportToPortal(reportId, currentUser);
-      setPublishedReportsMap(prev => {
-        const copy = { ...prev };
-        for (const k of Object.keys(copy)) {
-          if (copy[k].id === reportId) {
-            copy[k] = {
-              ...copy[k],
-              deliveryStatus: 'SENT',
-              isSentToPortal: true,
-              sentAt: Date.now(),
-              sentByName: currentUser.displayName || currentUser.name || 'Guru'
-            };
-          }
+      const published = await publishElementaryMonthlyReport({
+        student: item.student, classId: selectedClass.id, className: selectedClass.name,
+        gradeLevel: Number(selectedClass.grade), academicYear: selectedYear,
+        semester: selectedSemester, month: selectedMonth, curriculumDoc,
+        studentScoreDoc: item.scoreDoc, projectDoc, photoDoc: item.photoDoc,
+        narrativeDoc: item.narrativeDoc, attendanceConfig, signatory, currentUser,
+        onProgress: message => {
+          if (currentContextRef.current === startedContext) setProcessingMessage(message);
         }
-        return copy;
       });
-      toast.success(`Rapor ${studentName} berhasil dikirim ke portal siswa & orang tua.`);
-    } catch (err: any) {
-      console.error('Error sending report to portal:', err);
-      toast.error('Gagal mengirim rapor ke portal.');
+      if (currentContextRef.current === startedContext) {
+        setPublishedReportsMap(previous => ({ ...previous, [studentId]: published }));
+        setPendingOperations(previous => {
+          const next = { ...previous }; delete next[studentId]; return next;
+        });
+      }
+      return published;
+    } catch (error) {
+      if (currentContextRef.current === startedContext) {
+        const pending = getPendingElementaryMonthlyPublication(contextFor(studentId));
+        setPendingOperations(previous => {
+          const next = { ...previous };
+          if (pending) next[studentId] = pending;
+          else delete next[studentId];
+          return next;
+        });
+      }
+      throw error;
     }
   };
 
-  // Revoke Portal Access Action (Single)
-  const handleRevokePortal = async (reportId: string, studentName: string) => {
-    if (!window.confirm(`Tarik akses portal untuk rapor ${studentName}? Siswa dan orang tua tidak akan dapat melihat laporan ini.`)) return;
+  const handlePublishSingle = async (student: Student) => {
+    if (busyRef.current) return;
+    const item = studentEvaluations.find(e => e.student.id === student.id);
+    if (!item) return;
+    if (!item.validation.isEligible && !pendingOperations[student.id]) {
+      toast.error(item.validation.blockingReasons.join(' '));
+      return;
+    }
+    busyRef.current = true;
+    const startedContext = contextKey;
+    try {
+      const report = await publishItem(item, startedContext);
+      toast.success(`PDF ${student.name} dan metadata terbit telah dikonfirmasi (v${report.version}).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Publikasi gagal.';
+      if (error instanceof ElementaryMonthlyPublicationError && error.partialUpload) toast.warning(message, { duration: 12000 });
+      else toast.error(message, { duration: 9000 });
+    } finally {
+      busyRef.current = false;
+      setProcessingStudentId(null);
+      setProcessingMessage('');
+    }
+  };
 
+  const handleBatchPublish = async () => {
+    if (busyRef.current) return;
+    const eligible = studentEvaluations.filter(item => item.validation.isEligible || pendingOperations[item.student.id]);
+    if (!eligible.length) return;
+    if (!window.confirm(`Terbitkan atau pulihkan ${eligible.length} rapor? PDF dan metadata harus selesai sebelum status Terbit diberikan. Pengiriman portal tetap terpisah.`)) return;
+    busyRef.current = true;
+    setIsBatchProcessing(true);
+    const startedContext = contextKey;
+    let successCount = 0;
+    const failures: string[] = [];
+    try {
+      for (const item of eligible) {
+        try {
+          await publishItem(item, startedContext);
+          successCount++;
+        } catch (error) {
+          failures.push(`${item.student.name}: ${error instanceof Error ? error.message : 'Publikasi gagal'}`);
+        }
+      }
+      if (failures.length) {
+        toast.warning(`${successCount} selesai, ${failures.length} gagal atau menunggu pemulihan. ${failures[0]}`, { duration: 12000 });
+      } else toast.success(`${successCount} PDF dan metadata terbit telah dikonfirmasi.`);
+    } finally {
+      busyRef.current = false;
+      setIsBatchProcessing(false);
+      setProcessingStudentId(null);
+      setProcessingMessage('');
+    }
+  };
+
+  const handleSendToPortal = async (reportId: string, studentName: string) => {
+    if (busyRef.current) return;
+    const report = Object.values<PublishedElementaryMonthlyReportDoc>(publishedReportsMap).find(item => item.id === reportId);
+    if (!hasElementaryMonthlyPublishedPdf(report)) return;
+    busyRef.current = true;
+    setProcessingStudentId(report!.studentId);
+    setProcessingMessage('Mengirim ke portal');
+    const startedContext = contextKey;
+    try {
+      await sendElementaryMonthlyReportToPortal(reportId, currentUser, report!.version);
+      if (currentContextRef.current === startedContext) await loadData();
+      toast.success(`Rapor ${studentName} v${report!.version} dikirim ke portal.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Gagal mengirim rapor ke portal.');
+    } finally {
+      busyRef.current = false;
+      setProcessingStudentId(null);
+      setProcessingMessage('');
+    }
+  };
+
+  const handleRevokePortal = async (reportId: string, studentName: string) => {
+    if (busyRef.current) return;
+    if (!window.confirm(`Tarik akses portal untuk rapor ${studentName}?`)) return;
+    busyRef.current = true;
+    setIsBatchProcessing(true);
+    const startedContext = contextKey;
     try {
       await revokeElementaryMonthlyReportAccess(reportId, currentUser);
-      setPublishedReportsMap(prev => {
-        const copy = { ...prev };
-        for (const k of Object.keys(copy)) {
-          if (copy[k].id === reportId) {
-            copy[k] = {
-              ...copy[k],
-              deliveryStatus: 'REVOKED',
-              isSentToPortal: false
-            };
-          }
-        }
-        return copy;
-      });
-      toast.success(`Akses portal untuk rapor ${studentName} berhasil ditarik.`);
-    } catch (err: any) {
-      console.error('Error revoking report access:', err);
-      toast.error('Gagal menarik akses portal.');
+      if (currentContextRef.current === startedContext) await loadData();
+      toast.success(`Akses portal untuk rapor ${studentName} ditarik.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Gagal menarik akses portal.');
+    } finally {
+      busyRef.current = false;
+      setIsBatchProcessing(false);
     }
   };
 
-  // Batch Send All Published to Portal
   const handleBatchSendToPortal = async () => {
-    const publishedUnsent = Object.values(publishedReportsMap).filter(r => r.deliveryStatus !== 'SENT');
-    if (publishedUnsent.length === 0) {
-      toast.info('Seluruh rapor yang telah terbit sudah dikirim ke portal.');
-      return;
-    }
-
-    if (!window.confirm(`Kirim ${publishedUnsent.length} rapor yang telah terbit ke portal siswa & orang tua?`)) return;
-
+    if (busyRef.current) return;
+    const reports = Object.values<PublishedElementaryMonthlyReportDoc>(publishedReportsMap).filter(report => hasElementaryMonthlyPublishedPdf(report) && report.deliveryStatus !== 'SENT');
+    if (!reports.length) { toast.info('Tidak ada PDF terbit yang menunggu pengiriman.'); return; }
+    if (!window.confirm(`Kirim ${reports.length} rapor yang memiliki PDF terbit ke portal siswa & orang tua?`)) return;
+    busyRef.current = true;
     setIsBatchProcessing(true);
+    const startedContext = contextKey;
     let successCount = 0;
-    for (const r of publishedUnsent) {
-      try {
-        await sendElementaryMonthlyReportToPortal(r.id, currentUser);
-        successCount++;
-      } catch (e) {
-        console.error('Error sending report in batch:', e);
+    try {
+      for (const report of reports) {
+        try {
+          await sendElementaryMonthlyReportToPortal(report.id, currentUser, report.version);
+          successCount++;
+        } catch (error) {
+          toast.error(`${report.studentNameSnapshot}: ${error instanceof Error ? error.message : 'Pengiriman gagal'}`);
+        }
       }
+      if (currentContextRef.current === startedContext) await loadData();
+      if (successCount === reports.length) toast.success(`${successCount} rapor dikirim ke portal.`);
+      else toast.warning(`${successCount} terkirim, ${reports.length - successCount} gagal.`);
+    } finally {
+      busyRef.current = false;
+      setIsBatchProcessing(false);
     }
-    setIsBatchProcessing(false);
-    toast.success(`${successCount} rapor berhasil dikirim ke portal siswa & orang tua.`);
-    loadData();
+  };
+
+  const handleHistory = async (student: Student) => {
+    const startedContext = contextKey;
+    setHistoryStudent(student);
+    setHistoryReports([]);
+    setHistoryLoading(true);
+    try {
+      const reports = await fetchElementaryMonthlyPublicationHistory(contextFor(student.id));
+      if (currentContextRef.current === startedContext) setHistoryReports(reports);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Riwayat versi tidak dapat dimuat.');
+    } finally {
+      if (currentContextRef.current === startedContext) setHistoryLoading(false);
+    }
   };
 
   return (
     <div className="space-y-6">
+      {(loadError || configurationIssues.length > 0) && (
+        <div role="alert" className="border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>Konfigurasi publikasi perlu dilengkapi.</strong>
+          {loadError && <p className="mt-1">{loadError}</p>}
+          {configurationIssues.length > 0 && (
+            <ul className="mt-1 list-disc pl-5">{configurationIssues.map(issue => <li key={issue}>{issue}</li>)}</ul>
+          )}
+          <p className="mt-1">Preview draft tetap tersedia. Publikasi memerlukan data dan konfigurasi yang tervalidasi.</p>
+        </div>
+      )}
+      {busy && (
+        <div role="status" aria-live="polite" className="border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+          {processingMessage || 'Memproses operasi yang dipilih.'}
+        </div>
+      )}
       {/* Overview Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex items-center gap-3">
@@ -381,7 +395,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
           </div>
           <div>
             <div className="text-xl font-black text-emerald-700">{counters.eligible}</div>
-            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Siap Terbit</div>
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Siap / Pulihkan</div>
           </div>
         </div>
 
@@ -391,7 +405,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
           </div>
           <div>
             <div className="text-xl font-black text-purple-700">{counters.published}</div>
-            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Terbit (Snapshot)</div>
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Terbit (PDF Drive)</div>
           </div>
         </div>
 
@@ -452,24 +466,24 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
       {/* Batch Operations Bar */}
       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="text-xs text-slate-600">
-          <span className="font-bold text-slate-900">Operasi Massal Kelas:</span> Publikasi rapor membuat snapshot permanen berversi. Pengiriman ke portal dilakukan secara terpisah.
+          <span className="font-bold text-slate-900">Operasi Massal Kelas:</span> Publikasi membuat PDF Drive dan snapshot berversi. Tombol Pulihkan melanjutkan operasi yang sama. Pengiriman ke portal dilakukan terpisah.
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={handleBatchPublish}
-            disabled={isBatchProcessing || counters.eligible === 0}
+            disabled={busy || counters.eligible === 0}
             className="px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
           >
             <ShieldCheck size={14} />
-            <span>Terbitkan Semua yang Siap ({counters.eligible})</span>
+            <span>Terbitkan / Pulihkan ({counters.eligible})</span>
           </button>
 
           <button
             type="button"
             onClick={handleBatchSendToPortal}
-            disabled={isBatchProcessing || counters.published === 0}
+            disabled={busy || counters.published === 0}
             className="px-3.5 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
           >
             <Send size={14} />
@@ -488,7 +502,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
           <button
             type="button"
             onClick={loadData}
-            disabled={loadingPublishData}
+            disabled={loadingPublishData || busy}
             className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
           >
             <RefreshCw size={13} className={loadingPublishData ? 'animate-spin' : ''} />
@@ -505,7 +519,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
                 <th className="py-3 px-3 text-center">LO Nilai</th>
                 <th className="py-3 px-3 text-center">Narasi</th>
                 <th className="py-3 px-3 text-center">Presensi</th>
-                <th className="py-3 px-3 text-center">Status Snapshot</th>
+                <th className="py-3 px-3 text-center">Status PDF</th>
                 <th className="py-3 px-3 text-center">Portal Siswa</th>
                 <th className="py-3 px-3 text-center">Tracking</th>
                 <th className="py-3 px-3 text-right">Aksi</th>
@@ -524,14 +538,14 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
                     for (const lo of lg.learningObjectives || []) {
                       totalLo++;
                       const sc = scoreDoc?.scores?.[lo.id];
-                      if (sc !== undefined && sc !== null && sc !== '') filledLo++;
+                      if (typeof sc === 'number' && Number.isFinite(sc) && sc >= 0 && sc <= 100) filledLo++;
                     }
                   }
                 }
                 const isLoComplete = totalLo > 0 && filledLo === totalLo;
 
                 // Narrative Status
-                const isNarApproved = narrativeDoc?.reviewStatus === 'APPROVED' && !narrativeDoc?.isSourceStale;
+                const isNarApproved = narrativeDoc?.reviewStatus === 'APPROVED' && !validation.blockingReasons.some(reason => /usang|stale|narasi|Academic Comments|Social Emotional/i.test(reason));
 
                 return (
                   <tr key={st.id} className="hover:bg-slate-50/60 transition-colors">
@@ -539,6 +553,14 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
                     <td className="py-3 px-3">
                       <div className="font-bold text-slate-900">{st.name}</div>
                       <div className="text-[10px] text-slate-500">NISN: {(st as any).nisn || (st as any).nis || '-'}</div>
+                      {!validation.isEligible && (
+                        <details className="mt-1 text-[10px] text-amber-800 max-w-sm">
+                          <summary className="cursor-pointer">Syarat belum lengkap</summary>
+                          <ul className="list-disc pl-4 whitespace-normal">
+                            {validation.blockingReasons.map((reason, reasonIndex) => <li key={`${reasonIndex}-${reason}`}>{reason}</li>)}
+                          </ul>
+                        </details>
+                      )}
                     </td>
 
                     {/* LO Score Status */}
@@ -590,7 +612,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
 
                     {/* Published Snapshot Status */}
                     <td className="py-3 px-3 text-center">
-                      {published && published.status === 'PUBLISHED' ? (
+                      {hasElementaryMonthlyPublishedPdf(published) ? (
                         <div>
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
                             <span>v{published.version} Terbit</span>
@@ -601,9 +623,10 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
                         </div>
                       ) : (
                         <span className="text-[10px] text-slate-400 font-semibold">
-                          Belum Terbit
+                          {published ? (published.driveFileId || published.driveFileUrl || published.fileName || published.driveFolderId ? `v${published.version}; PDF belum terverifikasi` : `Snapshot lama v${published.version}; PDF belum tersedia`) : 'Belum Terbit'}
                         </span>
                       )}
+                      {pendingOperations[st.id] && <div className="text-[10px] font-semibold text-amber-700 mt-1">Operasi perlu dipulihkan</div>}
                     </td>
 
                     {/* Portal Delivery */}
@@ -639,32 +662,45 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
                         {/* Preview Internal Button (always accessible) */}
                         <button
                           type="button"
-                          onClick={() => setPreviewStudent(st)}
+                          onClick={() => { setPreviewVersion(null); setPreviewStudent(st); }}
                           className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition-colors flex items-center gap-1 cursor-pointer"
                           title="Preview Internal"
                         >
                           <Eye size={12} />
                           <span>Preview</span>
                         </button>
+                        {published && (
+                          <button type="button" onClick={() => { void handleHistory(st); }} title="Riwayat versi terbit"
+                            className="p-1.5 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50">
+                            <History size={13} />
+                          </button>
+                        )}
+                        {hasElementaryMonthlyPublishedPdf(published) && (
+                          <a href={published!.driveFileUrl} target="_blank" rel="noopener noreferrer" title={`Buka PDF asli v${published!.version} di Drive`}
+                            className="p-1.5 border border-slate-300 rounded-lg text-blue-700 hover:bg-blue-50">
+                            <Download size={13} />
+                          </a>
+                        )}
 
                         {/* Publish Snapshot Button */}
                         <button
                           type="button"
                           onClick={() => handlePublishSingle(st)}
-                          disabled={isProcessing || !validation.isEligible}
+                          disabled={busy || (!validation.isEligible && !pendingOperations[st.id])}
                           className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                          title={validation.isEligible ? 'Terbitkan Rapor' : validation.blockingReasons.join('\n')}
+                          title={pendingOperations[st.id] ? 'Pulihkan operasi yang sama tanpa membuat PDF ganda' : validation.isEligible ? 'Validasi, buat PDF, unggah ke Drive, lalu simpan metadata' : validation.blockingReasons.join('\n')}
                         >
                           <ShieldCheck size={12} />
-                          <span>{isProcessing ? 'Proses...' : published ? 'Update' : 'Publish'}</span>
+                          <span>{isProcessing ? 'Memproses' : pendingOperations[st.id] ? 'Pulihkan' : published ? 'Terbitkan Versi' : 'Publish PDF'}</span>
                         </button>
 
                         {/* Send / Revoke Portal Button */}
-                        {published ? (
+                        {published && (hasElementaryMonthlyPublishedPdf(published) || published.deliveryStatus === 'SENT') ? (
                           published.deliveryStatus === 'SENT' ? (
                             <button
                               type="button"
                               onClick={() => handleRevokePortal(published.id, st.name)}
+                              disabled={busy}
                               className="px-2 py-1 text-[11px] font-bold rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 transition-colors cursor-pointer"
                               title="Tarik Akses Portal"
                             >
@@ -674,6 +710,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
                             <button
                               type="button"
                               onClick={() => handleSendToPortal(published.id, st.name)}
+                              disabled={busy || !hasElementaryMonthlyPublishedPdf(published)}
                               className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-colors flex items-center gap-1 cursor-pointer"
                               title="Kirim ke Portal Siswa & Orang Tua"
                             >
@@ -692,6 +729,39 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
         </div>
       </div>
 
+      {historyStudent && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Riwayat versi rapor">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h3 className="font-bold">Riwayat rapor — {historyStudent.name}</h3>
+              <button type="button" onClick={() => setHistoryStudent(null)} aria-label="Tutup riwayat"><X size={20} /></button>
+            </div>
+            {historyLoading ? <p>Memuat versi terbit.</p> : historyReports.length === 0 ? <p>Belum ada riwayat versi yang tersimpan.</p> : (
+              <div className="space-y-3">
+                {historyReports.map(report => (
+                  <div key={`${report.id}-${report.version}`} className="border border-slate-200 p-3 flex flex-wrap justify-between items-center gap-3">
+                    <div>
+                      <div className="font-semibold">Versi {report.version} · {new Date(report.generatedAt).toLocaleString('id-ID')}</div>
+                      <div className="text-xs text-slate-500">{report.fileName || (report.driveFileId || report.driveFileUrl || report.driveFolderId ? 'PDF belum terverifikasi' : 'Snapshot lama; PDF tidak tercatat')}</div>
+                      {report.fileName && !hasElementaryMonthlyPublishedPdf(report) && <div className="text-xs text-amber-700">PDF belum terverifikasi</div>}
+                      <div className="text-xs text-slate-500">{report.generatedByName || ''}</div>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      <button type="button" className="text-blue-700 font-semibold" onClick={() => {
+                        setPreviewVersion(report); setPreviewStudent(historyStudent); setHistoryStudent(null);
+                      }}>Lihat versi</button>
+                      {hasElementaryMonthlyPublishedPdf(report) && (
+                        <a href={report.driveFileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 font-semibold">PDF asli</a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Attendance Config Modal */}
       {isAttendanceModalOpen && (
         <AttendanceConfigModal
@@ -706,7 +776,7 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
           students={students}
           currentConfig={attendanceConfig}
           currentUser={currentUser}
-          onSaved={loadData}
+          onSaved={() => { void loadData(); onRefreshData?.(); }}
         />
       )}
 
@@ -714,10 +784,10 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
       {previewStudent && (
         <MonthlyReportPreviewModal
           isOpen={!!previewStudent}
-          onClose={() => setPreviewStudent(null)}
+          onClose={() => { setPreviewStudent(null); setPreviewVersion(null); }}
           student={previewStudent}
           allStudents={students}
-          onSelectStudent={(st) => setPreviewStudent(st)}
+          onSelectStudent={(st) => { setPreviewVersion(null); setPreviewStudent(st); }}
           classInfo={selectedClass}
           academicYear={selectedYear}
           semester={selectedSemester}
@@ -730,7 +800,8 @@ export const PublicationTrackingTab: React.FC<PublicationTrackingTabProps> = ({
           photoDoc={photosMap[previewStudent.id] || null}
           attendanceSummary={calculateStudentAttendanceSummary(attendanceConfig, previewStudent.id)}
           signatory={signatory}
-          publishedReport={publishedReportsMap[previewStudent.id] || null}
+          logoUrl={logoUrl}
+          publishedReport={previewVersion || publishedReportsMap[previewStudent.id] || null}
         />
       )}
     </div>

@@ -14,6 +14,7 @@ import { uploadPlanPhoto, getPlanPhotoBase64 } from "./src/lib/googleDrive";
 import { handleStudentLearningProgress } from "./server/studentLearningProgress.server";
 import { handleStudentLpuLevels, isStudentLpuLevelsRequest } from "./server/studentLpuLevels.server";
 import { elementaryMonthlyPhotoRouter } from "./server/elementaryMonthlyDrivePhoto.server";
+import { elementaryMonthlyPublicationRouter } from "./server/elementaryMonthlyPublication.server";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -32,6 +33,7 @@ app.all("/api/student-learning-progress", (req, res) => {
 });
 
 app.use("/api/elementary-monthly", elementaryMonthlyPhotoRouter);
+app.use("/api/elementary-monthly/reports", elementaryMonthlyPublicationRouter);
 
 // --- Firebase Admin Initialization ---
 try {

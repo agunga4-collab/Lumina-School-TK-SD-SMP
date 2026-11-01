@@ -1,4 +1,4 @@
-import { db, handleFirestoreError } from '../lib/firebase';
+import { auth, db, handleFirestoreError } from '../lib/firebase';
 import { 
   doc, 
   getDoc, 
@@ -7,14 +7,32 @@ import {
   query, 
   where, 
   getDocs, 
-  writeBatch 
+  writeBatch,
+  runTransaction
 } from 'firebase/firestore';
 import type { 
   ElementaryMonthlyCurriculumDoc, 
   ElementaryMonthlyStudentScoreDoc, 
   ElementaryMonthlySubject 
 } from '../types/elementaryMonthlyReport';
-import type { User, Student } from '../types';
+import type { User, Student, Class } from '../types';
+import {
+  buildElementaryMonthlyAttendanceSummary,
+  resolveElementaryMonthlyTeacherId,
+  resolveElementaryMonthlyLogo,
+  resolveElementaryMonthlySignatory
+} from '../lib/elementaryMonthlyReportModel';
+
+type ElementaryMonthlyWriteInput<T extends {
+  id: string;
+  createdAt: number;
+  createdBy: string;
+  createdByName?: string;
+  updatedAt: number;
+  updatedBy: string;
+  updatedByName?: string;
+}> = Omit<T, 'id' | 'createdAt' | 'createdBy' | 'createdByName' | 'updatedAt' | 'updatedBy' | 'updatedByName'> &
+  Partial<Pick<T, 'id' | 'createdAt' | 'createdBy' | 'createdByName'>>;
 
 export function normalizeAcademicYear(academicYear: string): string {
   return academicYear ? academicYear.replace(/\//g, '_') : '2025_2026';
@@ -113,11 +131,7 @@ export async function fetchElementaryMonthlyCurriculum(
  * Saves the entire curriculum structure (subjects, LGs, LOs, KKMs) for a monthly context.
  */
 export async function saveElementaryMonthlyCurriculum(
-  curriculum: Omit<ElementaryMonthlyCurriculumDoc, 'updatedAt' | 'updatedBy' | 'updatedByName'> & {
-    createdAt?: number;
-    createdBy?: string;
-    createdByName?: string;
-  },
+  curriculum: ElementaryMonthlyWriteInput<ElementaryMonthlyCurriculumDoc>,
   user?: User | null
 ): Promise<void> {
   try {
@@ -309,7 +323,7 @@ export async function saveBulkElementaryMonthlyScores(params: {
     }
     return count;
   } catch (err: any) {
-    handleFirestoreError(err, 'batch', 'elem_monthly_student_scores/bulk');
+    handleFirestoreError(err, 'write', 'elem_monthly_student_scores/bulk');
     throw err;
   }
 }
@@ -374,7 +388,7 @@ export async function importTableElementaryMonthlyScores(params: {
     }
     return updatedCount;
   } catch (err: any) {
-    handleFirestoreError(err, 'batch', 'elem_monthly_student_scores/import');
+    handleFirestoreError(err, 'write', 'elem_monthly_student_scores/import');
     throw err;
   }
 }
@@ -736,11 +750,7 @@ export async function fetchElementaryMonthlyProjectDoc(
  * Saves class-level project documentation.
  */
 export async function saveElementaryMonthlyProjectDoc(
-  projectDoc: Omit<import('../types/elementaryMonthlyReport').ElementaryMonthlyProjectDoc, 'updatedAt' | 'updatedBy' | 'updatedByName'> & {
-    createdAt?: number;
-    createdBy?: string;
-    createdByName?: string;
-  },
+  projectDoc: ElementaryMonthlyWriteInput<import('../types/elementaryMonthlyReport').ElementaryMonthlyProjectDoc>,
   user?: User | null
 ): Promise<void> {
   try {
@@ -810,11 +820,7 @@ export async function fetchElementaryMonthlyStudentPhotos(
  * Saves photo documentation for a single student.
  */
 export async function saveElementaryMonthlyStudentPhotoDoc(
-  photoDoc: Omit<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentPhotoDoc, 'updatedAt' | 'updatedBy' | 'updatedByName'> & {
-    createdAt?: number;
-    createdBy?: string;
-    createdByName?: string;
-  },
+  photoDoc: ElementaryMonthlyWriteInput<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentPhotoDoc>,
   user?: User | null
 ): Promise<void> {
   try {
@@ -944,7 +950,7 @@ export async function bulkApplyElementaryMonthlyPhotos(params: {
     }
     return count;
   } catch (err: any) {
-    handleFirestoreError(err, 'batch', 'elem_monthly_student_photos/bulk');
+    handleFirestoreError(err, 'write', 'elem_monthly_student_photos/bulk');
     throw err;
   }
 }
@@ -1009,11 +1015,7 @@ export async function fetchElementaryMonthlyStudentNarratives(
  * Saves narrative documentation for a single student (Academic + SEL).
  */
 export async function saveElementaryMonthlyStudentNarrativeDoc(
-  narrativeDoc: Omit<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentNarrativeDoc, 'updatedAt' | 'updatedBy' | 'updatedByName'> & {
-    createdAt?: number;
-    createdBy?: string;
-    createdByName?: string;
-  },
+  narrativeDoc: ElementaryMonthlyWriteInput<import('../types/elementaryMonthlyReport').ElementaryMonthlyStudentNarrativeDoc>,
   user?: User | null
 ): Promise<void> {
   try {
@@ -1135,7 +1137,7 @@ export async function bulkSubmitElementaryMonthlyNarratives(params: {
     }
     return count;
   } catch (err: any) {
-    handleFirestoreError(err, 'batch', 'elem_monthly_student_narratives/bulkSubmit');
+    handleFirestoreError(err, 'write', 'elem_monthly_student_narratives/bulkSubmit');
     throw err;
   }
 }
@@ -1240,7 +1242,7 @@ export async function bulkApproveElementaryMonthlyNarratives(params: {
     }
     return count;
   } catch (err: any) {
-    handleFirestoreError(err, 'batch', 'elem_monthly_student_narratives/bulkApprove');
+    handleFirestoreError(err, 'write', 'elem_monthly_student_narratives/bulkApprove');
     throw err;
   }
 }
@@ -1478,10 +1480,6 @@ import type {
   ElementaryMonthlyStudentPhotoDoc,
   ElementaryMonthlyStudentNarrativeDoc
 } from '../types/elementaryMonthlyReport';
-import {
-  calculateLGAverageAndPredicate,
-  validateElementaryMonthlyPublishEligibility
-} from '../types/elementaryMonthlyReport';
 
 export function buildMonthlyAttendanceConfigDocId(
   classId: string,
@@ -1592,49 +1590,7 @@ export function calculateStudentAttendanceSummary(
   config: ElementaryMonthlyAttendanceConfig | null,
   studentId: string
 ): ElementaryMonthlyAttendanceSummary {
-  if (!config) {
-    return {
-      startDate: '',
-      endDate: '',
-      presentDays: 0,
-      totalDays: 0,
-      percentage: 0,
-      basisDescription: 'Belum dikonfigurasi',
-      isAvailable: false
-    };
-  }
-
-  const record = config.studentAttendanceMap?.[studentId];
-  const totalDays = (record && typeof record.totalDays === 'number' && record.totalDays > 0)
-    ? record.totalDays
-    : config.totalSchoolDays;
-
-  if (!record || typeof record.presentDays !== 'number' || totalDays <= 0) {
-    return {
-      startDate: config.startDate || '',
-      endDate: config.endDate || '',
-      presentDays: 0,
-      totalDays: totalDays || 0,
-      percentage: 0,
-      basisDescription: 'Data presensi siswa belum diisi (tidak diasumsikan 100%)',
-      isAvailable: false
-    };
-  }
-
-  const presentDays = Math.max(0, Math.min(record.presentDays, totalDays));
-  const rawPct = (presentDays / totalDays) * 100;
-  const percentage = Math.round(rawPct * 10) / 10;
-  const basisDescription = `${presentDays} dari ${totalDays} hari sekolah (${percentage}%)`;
-
-  return {
-    startDate: config.startDate || '',
-    endDate: config.endDate || '',
-    presentDays,
-    totalDays,
-    percentage,
-    basisDescription,
-    isAvailable: true
-  };
+  return buildElementaryMonthlyAttendanceSummary(config, studentId);
 }
 
 export async function fetchPublishedElementaryMonthlyReports(
@@ -1660,10 +1616,198 @@ export async function fetchPublishedElementaryMonthlyReports(
   }
 }
 
+export interface ElementaryMonthlyReportConfiguration {
+  logoUrl: string | null;
+  signatory: ElementaryMonthlyReportSignatory;
+  issues: string[];
+}
+
+/** Read the official Elementary configuration and the assigned teacher's profile. */
+export async function fetchElementaryMonthlyReportConfiguration(
+  classInfo: Class,
+  attendanceConfig: ElementaryMonthlyAttendanceConfig | null = null
+): Promise<ElementaryMonthlyReportConfiguration> {
+  const [configSnap, logosSnap, classSnap] = await Promise.all([
+    getDoc(doc(db, 'reportConfig', 'ELEMENTARY')),
+    getDoc(doc(db, 'settings', 'logos')),
+    getDoc(doc(db, 'classes', classInfo.id))
+  ]);
+  const config = configSnap.exists() ? configSnap.data() : {};
+  const logos = logosSnap.exists() ? logosSnap.data() : null;
+  const actualClass = classSnap.exists() ? classSnap.data() as Class : classInfo;
+  const issues: string[] = [];
+  if (!configSnap.exists()) issues.push('Report Config Elementary belum tersedia.');
+  if (!classSnap.exists()) issues.push('Data kelas resmi belum tersedia.');
+  let teacherId = '';
+  let assignedClass: Class | null = actualClass;
+  try {
+    teacherId = resolveElementaryMonthlyTeacherId(actualClass);
+  } catch (error) {
+    assignedClass = null;
+    issues.push(error instanceof Error ? error.message : 'Penugasan wali kelas tidak valid.');
+  }
+  let teacher: Partial<User> | null = null;
+  if (teacherId) {
+    const teacherSnap = await getDoc(doc(db, 'users', teacherId));
+    if (teacherSnap.exists()) teacher = teacherSnap.data() as Partial<User>;
+  }
+  if (!teacher) issues.push('Profil wali kelas yang ditugaskan belum tersedia.');
+  const logoUrl = resolveElementaryMonthlyLogo(logos) || null;
+  if (!logoUrl) issues.push('Logo resmi Elementary belum diatur pada menu Logo.');
+  return {
+    logoUrl,
+    issues,
+    signatory: resolveElementaryMonthlySignatory({
+      classData: assignedClass,
+      teacherProfile: teacher,
+      reportConfig: config,
+      attendanceConfig
+    })
+  };
+}
+
+export interface ElementaryMonthlyPublicationContext {
+  classId: string;
+  studentId: string;
+  academicYear: string;
+  semester: string;
+  month: string;
+}
+
+type MonthlyPublicationStatus = 'PREPARED' | 'UPLOADING' | 'UPLOADED' | 'PUBLISHED' | 'RECOVERABLE' | 'SUPERSEDED';
+
+interface MonthlyPublicationOperation {
+  success: true;
+  operationId: string;
+  status: MonthlyPublicationStatus;
+  version: number;
+  reportSnapshot: ElementaryMonthlyReportSnapshot;
+  driveFileId: string;
+  driveFolderId?: string;
+  fileName: string;
+  publishedReport?: PublishedElementaryMonthlyReportDoc;
+}
+
+export class ElementaryMonthlyPublicationError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly operationId?: string,
+    public readonly partialUpload = false,
+    public readonly retryable = true
+  ) {
+    super(message);
+    this.name = 'ElementaryMonthlyPublicationError';
+  }
+}
+
+const pendingMonthlyOperations = new Map<string, string>();
+const activeMonthlyPublications = new Map<string, Promise<PublishedElementaryMonthlyReportDoc>>();
+
+function monthlyPublicationStorageKey(context: ElementaryMonthlyPublicationContext): string {
+  return `lumina:monthly-lower-publication:${auth.currentUser?.uid || 'signed-out'}:${encodeURIComponent(JSON.stringify([
+    context.classId, context.studentId, context.academicYear, context.semester, context.month
+  ]))}`;
+}
+
+/** Only a recovery operation ID is retained locally; no PDF, token, or snapshot is stored. */
+export function getPendingElementaryMonthlyPublication(context: ElementaryMonthlyPublicationContext): string | null {
+  const key = monthlyPublicationStorageKey(context);
+  const inMemory = pendingMonthlyOperations.get(key);
+  if (inMemory) return inMemory;
+  try {
+    const saved = window.localStorage.getItem(key);
+    if (saved && /^[A-Za-z0-9_-]{1,200}$/.test(saved)) return saved;
+  } catch {
+    // Server-side idempotency remains authoritative when browser storage is unavailable.
+  }
+  return null;
+}
+
+function rememberMonthlyOperation(context: ElementaryMonthlyPublicationContext, operationId: string | null): void {
+  const key = monthlyPublicationStorageKey(context);
+  if (operationId) pendingMonthlyOperations.set(key, operationId);
+  else pendingMonthlyOperations.delete(key);
+  try {
+    if (operationId) window.localStorage.setItem(key, operationId);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // A retry still resolves the same operation on the server.
+  }
+}
+
+async function monthlyPublicationRequest<T>(
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const current = auth.currentUser;
+  if (!current) throw new ElementaryMonthlyPublicationError('Sesi berakhir. Masuk kembali sebelum mempublikasikan.', 'UNAUTHENTICATED', undefined, false, false);
+  const token = await current.getIdToken();
+  let response: Response;
+  try {
+    response = await fetch(`/api/elementary-monthly/reports${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
+      },
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+  } catch {
+    throw new ElementaryMonthlyPublicationError('Koneksi publikasi terputus. Gunakan Pulihkan untuk memeriksa operasi yang sama sebelum mencoba ulang.', 'NETWORK_ERROR');
+  }
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data?.success !== true) {
+    throw new ElementaryMonthlyPublicationError(
+      typeof data?.error === 'string' ? data.error : `Backend publikasi tidak memberi respons yang valid (HTTP ${response.status}). Pastikan seluruh file pengganti telah dipasang.`,
+      typeof data?.code === 'string' ? data.code : `HTTP_${response.status}`,
+      typeof data?.operationId === 'string' ? data.operationId : undefined,
+      data?.partialUpload === true,
+      data?.retryable !== false
+    );
+  }
+  return data as T;
+}
+
+export function hasElementaryMonthlyPublishedPdf(report: PublishedElementaryMonthlyReportDoc | null | undefined): boolean {
+  return !!(report?.status === 'PUBLISHED' && report.driveFileId && report.driveFileUrl && report.fileName);
+}
+
+function requireUploadedMonthlyReport(operation: MonthlyPublicationOperation): PublishedElementaryMonthlyReportDoc {
+  const report = operation.publishedReport;
+  if (operation.status !== 'PUBLISHED' || !hasElementaryMonthlyPublishedPdf(report) || !report?.driveFolderId) {
+    throw new ElementaryMonthlyPublicationError(
+      'Publikasi belum selesai: PDF Drive dan metadata terbit belum terkonfirmasi. Gunakan Pulihkan pada operasi yang sama.',
+      'INCOMPLETE_PUBLICATION', operation.operationId, operation.status === 'UPLOADED' || operation.status === 'RECOVERABLE'
+    );
+  }
+  return report;
+}
+
+async function monthlyPdfToBase64(blob: Blob): Promise<string> {
+  if (blob.type !== 'application/pdf' || blob.size === 0) {
+    throw new Error('Renderer tidak menghasilkan PDF yang valid.');
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('PDF tidak dapat dibaca untuk pengunggahan.'));
+    reader.onload = () => {
+      const value = typeof reader.result === 'string' ? reader.result.split(',')[1] : '';
+      if (!value) reject(new Error('Isi PDF kosong.'));
+      else resolve(value);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
+
 /**
- * Builds an immutable snapshot and publishes the Monthly Report for a student.
+ * The server reloads authoritative sources and reserves one immutable version.
+ * The very same snapshot renderer used in preview creates the PDF. Completion
+ * is reported only after Drive upload AND the publication metadata commit.
  */
-export async function publishElementaryMonthlyReport(params: {
+export function publishElementaryMonthlyReport(params: {
   student: Student;
   classId: string;
   className: string;
@@ -1671,7 +1815,7 @@ export async function publishElementaryMonthlyReport(params: {
   academicYear: string;
   semester: string;
   month: string;
-  curriculumDoc: ElementaryMonthlyCurriculumDoc;
+  curriculumDoc: ElementaryMonthlyCurriculumDoc | null;
   studentScoreDoc: ElementaryMonthlyStudentScoreDoc | null;
   projectDoc: ElementaryMonthlyProjectDoc | null;
   photoDoc: ElementaryMonthlyStudentPhotoDoc | null;
@@ -1679,179 +1823,159 @@ export async function publishElementaryMonthlyReport(params: {
   attendanceConfig: ElementaryMonthlyAttendanceConfig | null;
   signatory: ElementaryMonthlyReportSignatory;
   currentUser: User;
+  onProgress?: (message: string) => void;
 }): Promise<PublishedElementaryMonthlyReportDoc> {
-  const {
-    student,
-    classId,
-    className,
-    gradeLevel,
-    academicYear,
-    semester,
-    month,
-    curriculumDoc,
-    studentScoreDoc,
-    projectDoc,
-    photoDoc,
-    narrativeDoc,
-    attendanceConfig,
-    signatory,
-    currentUser
-  } = params;
-
-  const attendanceSummary = calculateStudentAttendanceSummary(attendanceConfig, student.id);
-
-  // Pre-publish gate validation
-  const validation = validateElementaryMonthlyPublishEligibility({
-    student: { id: student.id, name: student.name },
-    curriculumDoc,
-    studentScoreDoc,
-    narrativeDoc,
-    projectDoc,
-    photoDoc,
-    attendanceSummary,
-    signatory
-  });
-
-  if (!validation.isEligible) {
-    throw new Error(`Gagal mempublikasikan rapor: ${validation.blockingReasons.join(' ')}`);
-  }
-
-  // Calculate LG results summary for the snapshot
-  const scores = studentScoreDoc?.scores || {};
-  const lgResults: Record<string, any> = {};
-  for (const sub of curriculumDoc.subjects) {
-    for (const lg of sub.learningGoals || []) {
-      const kkm = lg.kkmOverride || sub.kkm || 70;
-      lgResults[lg.id] = calculateLGAverageAndPredicate(scores, lg.learningObjectives || [], kkm);
-    }
-  }
-
-  const docId = buildPublishedMonthlyReportDocId(academicYear, semester, month, classId, student.id);
-  const now = Date.now();
-
-  // Check if existing document to increment version
-  let version = 1;
-  let prevDoc: PublishedElementaryMonthlyReportDoc | null = null;
-  try {
-    const existingSnap = await getDoc(doc(db, 'elem_monthly_published_reports', docId));
-    if (existingSnap.exists()) {
-      prevDoc = existingSnap.data() as PublishedElementaryMonthlyReportDoc;
-      version = (prevDoc.version || 1) + 1;
-    }
-  } catch (e) {
-    console.warn('Could not read previous published report version:', e);
-  }
-
-  const snapshot: ElementaryMonthlyReportSnapshot = {
-    student: {
-      id: student.id,
-      name: student.name,
-      nisn: (student as any).nisn || (student as any).nis || '-',
-      className,
-      grade: gradeLevel
-    },
-    academicYear,
-    semester,
-    month,
-    monthLabel: formatMonthLabel(month),
-    curriculum: curriculumDoc,
-    scoresSummary: {
-      scores,
-      lgResults
-    },
-    project: {
-      projectTitle: projectDoc!.projectTitle,
-      projectOverview: projectDoc!.projectOverview,
-      sharedAlbumLink: projectDoc?.sharedAlbumLink || ''
-    },
-    photos: {
-      identityPhotoUrl: photoDoc?.identityPhotoUrl || '',
-      snapshots: photoDoc!.snapshots,
-      albumLink: photoDoc?.albumLink || ''
-    },
-    narratives: {
-      academicComment: narrativeDoc!.academicComment,
-      selProfile: narrativeDoc!.selProfile,
-      approvedByName: narrativeDoc?.approvedByName || '',
-      approvedAt: narrativeDoc?.approvedAt || now
-    },
-    attendance: attendanceSummary,
-    signatory
+  const context: ElementaryMonthlyPublicationContext = {
+    classId: params.classId,
+    studentId: params.student.id,
+    academicYear: params.academicYear,
+    semester: params.semester,
+    month: params.month
   };
+  const key = monthlyPublicationStorageKey(context);
+  const running = activeMonthlyPublications.get(key);
+  if (running) return running;
+  const run = (async () => {
+    let operationId = getPendingElementaryMonthlyPublication(context) || undefined;
+    let knownUploaded = false;
+    try {
+      params.onProgress?.('Memvalidasi data dan memeriksa versi');
+      let operation: MonthlyPublicationOperation;
+      if (operationId) {
+        try {
+          operation = await monthlyPublicationRequest<MonthlyPublicationOperation>(`/status/${encodeURIComponent(operationId)}`);
+        } catch (error) {
+          if (error instanceof ElementaryMonthlyPublicationError && ['NOT_FOUND', 'OPERATION_NOT_FOUND', 'HTTP_404', 'SOURCE_CHANGED'].includes(error.code)) {
+            rememberMonthlyOperation(context, null);
+            operationId = undefined;
+            operation = await monthlyPublicationRequest<MonthlyPublicationOperation>('/prepare', context);
+          } else throw error;
+        }
+      } else {
+        operation = await monthlyPublicationRequest<MonthlyPublicationOperation>('/prepare', context);
+      }
+      operationId = operation.operationId;
+      if (!operationId) throw new Error('Backend tidak mengembalikan ID operasi publikasi.');
+      rememberMonthlyOperation(context, operationId);
+      if (operation.status === 'PUBLISHED') {
+        const report = requireUploadedMonthlyReport(operation);
+        rememberMonthlyOperation(context, null);
+        return report;
+      }
+      if (operation.status === 'SUPERSEDED') {
+        throw new ElementaryMonthlyPublicationError('Sumber rapor telah berubah. Segarkan data lalu terbitkan versi dari sumber terbaru.', 'SOURCE_CHANGED', operationId);
+      }
+      knownUploaded = operation.status === 'UPLOADED';
+      if (operation.status === 'PREPARED' || operation.status === 'UPLOADED' || operation.status === 'RECOVERABLE' || operation.status === 'UPLOADING') {
+        params.onProgress?.('Memeriksa operasi tersimpan dan memulihkan metadata');
+        try {
+          const recovered = await monthlyPublicationRequest<MonthlyPublicationOperation>('/publish', { operationId });
+          const report = requireUploadedMonthlyReport(recovered);
+          rememberMonthlyOperation(context, null);
+          return report;
+        } catch (error) {
+          if (!(error instanceof ElementaryMonthlyPublicationError && error.code === 'PDF_REQUIRED')) throw error;
+        }
+      }
+      if (!operation.reportSnapshot) throw new Error('Snapshot terverifikasi tidak tersedia untuk renderer PDF.');
+      params.onProgress?.('Memuat gambar dan merender PDF');
+      const { renderElementaryMonthlyReportPdf } = await import('../lib/elementaryMonthlyReportPdf');
+      const pdfBlob = await renderElementaryMonthlyReportPdf(operation.reportSnapshot);
+      const pdfBase64 = await monthlyPdfToBase64(pdfBlob);
+      params.onProgress?.('Mengunggah PDF dan menyimpan metadata');
+      const result = await monthlyPublicationRequest<MonthlyPublicationOperation>('/publish', { operationId, pdfBase64 });
+      const report = requireUploadedMonthlyReport(result);
+      rememberMonthlyOperation(context, null);
+      return report;
+    } catch (error) {
+      const failure = error instanceof ElementaryMonthlyPublicationError ? error : new ElementaryMonthlyPublicationError(
+        error instanceof Error ? error.message : 'Publikasi rapor gagal.', 'RENDER_OR_PUBLICATION_FAILED', operationId, knownUploaded
+      );
+      if (failure.code === 'SOURCE_CHANGED') {
+        rememberMonthlyOperation(context, null);
+        throw new ElementaryMonthlyPublicationError(failure.message, failure.code, undefined, false, true);
+      }
+      if (failure.operationId && !operationId) operationId = failure.operationId;
+      if (operationId) rememberMonthlyOperation(context, operationId);
+      // A lost HTTP response is not evidence that the upload failed. Inspect the
+      // same durable operation; never allocate another PDF ID in this catch.
+      if (operationId && !['IN_PROGRESS', 'RENDER_OR_PUBLICATION_FAILED'].includes(failure.code)) {
+        try {
+          const status = await monthlyPublicationRequest<MonthlyPublicationOperation>(`/status/${encodeURIComponent(operationId)}`);
+          if (status.status === 'PUBLISHED') {
+            const report = requireUploadedMonthlyReport(status);
+            rememberMonthlyOperation(context, null);
+            return report;
+          }
+          knownUploaded = knownUploaded || status.status === 'UPLOADED';
+        } catch {
+          // Keep the operation ID so the next explicit retry can recover it.
+        }
+      }
+      const partialUpload = failure.partialUpload || knownUploaded;
+      const message = partialUpload
+        ? `${failure.message} PDF sudah terunggah atau menunggu konfirmasi metadata. Gunakan Pulihkan; versi dan ID file yang sama akan digunakan kembali.`
+        : failure.message;
+      throw new ElementaryMonthlyPublicationError(message, failure.code, operationId, partialUpload, failure.retryable);
+    }
+  })();
+  activeMonthlyPublications.set(key, run);
+  void run.finally(() => activeMonthlyPublications.delete(key)).catch(() => undefined);
+  return run;
+}
 
-  const publishedDoc: PublishedElementaryMonthlyReportDoc = {
-    id: docId,
-    unit: 'ELEMENTARY',
-    reportType: 'MONTHLY_REPORT',
-    studentId: student.id,
-    studentNameSnapshot: student.name,
-    nisnSnapshot: (student as any).nisn || (student as any).nis || '-',
-    classId,
-    classNameSnapshot: className,
-    gradeSnapshot: gradeLevel,
-    academicYear,
-    semester,
-    month,
-    monthLabel: formatMonthLabel(month),
-    version,
-    status: 'PUBLISHED',
-    deliveryStatus: prevDoc?.deliveryStatus || 'NOT_SENT',
-    isSentToPortal: prevDoc?.isSentToPortal || false,
-    sentAt: prevDoc?.sentAt || null,
-    sentBy: prevDoc?.sentBy || null,
-    sentByName: prevDoc?.sentByName || null,
-    reportSnapshot: snapshot,
-    generatedBy: currentUser.uid || (currentUser as any).id || 'system',
-    generatedByName: currentUser.displayName || currentUser.name || 'Guru',
-    generatedAt: now,
-    isOpened: prevDoc?.isOpened || false,
-    firstOpenedAt: prevDoc?.firstOpenedAt || null,
-    lastOpenedAt: prevDoc?.lastOpenedAt || null,
-    openCount: prevDoc?.openCount || 0,
-    openedByEmail: prevDoc?.openedByEmail || null,
-    createdAt: prevDoc?.createdAt || now,
-    updatedAt: now
-  };
-
-  await setDoc(doc(db, 'elem_monthly_published_reports', docId), publishedDoc);
-  return publishedDoc;
+export async function fetchElementaryMonthlyPublicationHistory(
+  context: ElementaryMonthlyPublicationContext
+): Promise<PublishedElementaryMonthlyReportDoc[]> {
+  const search = new URLSearchParams({ ...context });
+  const result = await monthlyPublicationRequest<{ success: true; publishedReports: PublishedElementaryMonthlyReportDoc[] }>(`/history?${search.toString()}`);
+  return (result.publishedReports || []).sort((a, b) => b.version - a.version);
 }
 
 export async function sendElementaryMonthlyReportToPortal(
   reportId: string,
-  currentUser: User
+  currentUser: User,
+  expectedVersion?: number
 ): Promise<void> {
-  const now = Date.now();
   const ref = doc(db, 'elem_monthly_published_reports', reportId);
-  await setDoc(
-    ref,
-    {
+  await runTransaction(db, async transaction => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error('Rapor terbit tidak ditemukan.');
+    const report = snap.data() as PublishedElementaryMonthlyReportDoc;
+    if (!hasElementaryMonthlyPublishedPdf(report)) {
+      throw new Error(report.driveFileId || report.driveFileUrl || report.fileName || report.driveFolderId
+        ? 'Metadata PDF rapor belum lengkap atau belum terverifikasi. Pulihkan publikasi sebelum mengirim ke portal.'
+        : 'Rapor ini baru memiliki snapshot. Terbitkan PDF ke Drive sebelum mengirim ke portal.');
+    }
+    if (expectedVersion !== undefined && report.version !== expectedVersion) {
+      throw new Error('Versi rapor berubah. Segarkan dan periksa versi terbaru sebelum mengirim ke portal.');
+    }
+    const now = Date.now();
+    transaction.update(ref, {
       deliveryStatus: 'SENT',
       isSentToPortal: true,
       sentAt: now,
-      sentBy: currentUser.uid || (currentUser as any).id || 'system',
-      sentByName: currentUser.displayName || currentUser.name || 'Guru',
+      sentBy: currentUser.uid,
+      sentByName: currentUser.displayName || '',
       updatedAt: now
-    },
-    { merge: true }
-  );
+    });
+  });
 }
 
 export async function revokeElementaryMonthlyReportAccess(
   reportId: string,
-  currentUser: User
+  _currentUser: User
 ): Promise<void> {
-  const now = Date.now();
   const ref = doc(db, 'elem_monthly_published_reports', reportId);
-  await setDoc(
-    ref,
-    {
+  await runTransaction(db, async transaction => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error('Rapor terbit tidak ditemukan.');
+    transaction.update(ref, {
       deliveryStatus: 'REVOKED',
       isSentToPortal: false,
-      updatedAt: now
-    },
-    { merge: true }
-  );
+      updatedAt: Date.now()
+    });
+  });
 }
 
 export async function trackElementaryMonthlyReportOpened(
