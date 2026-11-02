@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { X, Calendar, BookOpen, AlertCircle, Sparkles, Brain, Award, Heart, ShieldAlert, Loader2, UserPlus, ClipboardList, CheckCircle2, Save, Check } from 'lucide-react';
-import { threeWayConferenceService } from '../../../services/threeWayConferenceService';
+import {
+  conferenceDetailSafeService as threeWayConferenceService,
+} from '../../../services/conferenceDetailSafeService';
 import { auth } from '../../../lib/firebase';
 import type { Student, StudentConferenceResponse, MentorAssignment, SmartGoal } from '../../../types';
 import { toast } from 'sonner';
@@ -433,7 +435,11 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
           }
         } catch (err: any) {
           console.error(`[ViewResponse] Error loading response doc ID ${responseId} for period ${periodId}:`, err);
-          setError(`Failed to load response for ID ${responseId}. Please verify network connection or permissions.`);
+          setError(
+  err instanceof Error
+    ? err.message
+    : 'Gagal membaca respons. Periksa koneksi dan izin akses.'
+);
         } finally {
           setIsLoading(false);
         }
@@ -480,7 +486,9 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
   };
 
   const getCurrentStatus = () => {
-    if (!response) return 'DRAFT';
+    if (isLoading) return 'LOADING';
+if (error) return 'READ_ERROR';
+if (!response) return 'NOT_FOUND';
     const mockResponse = {
       ...response,
       sectionReviews: {
@@ -505,7 +513,21 @@ export const ConferenceResponseDetailDialog: React.FC<ConferenceResponseDetailDi
       );
     }
     switch (status) {
+      case 'LOADING':
+      case 'READ_ERROR':
+      case 'NOT_FOUND':
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200">
+            {status === 'LOADING'
+              ? 'Memuat...'
+              : status === 'READ_ERROR'
+                ? 'Gagal membaca'
+                : 'Tidak ditemukan'}
+          </span>
+        );
+
       case 'DRAFT':
+
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
             Draft
