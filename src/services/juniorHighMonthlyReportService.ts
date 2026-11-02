@@ -623,6 +623,7 @@ export async function fetchStudentPreviousGencomHistory(
         where('academicYear', '==', academicYear)
       );
       const midtermSnap = await getDocs(midtermQ);
+      const currentPeriodDate = new Date(`${currentPeriodKey}-01T00:00:00Z`).getTime();
 
       midtermSnap.docs.forEach((d) => {
         const data = d.data();
@@ -633,22 +634,25 @@ export async function fetchStudentPreviousGencomHistory(
         const mTerm = String(data.midtermTerm || '1');
         const termLabel = mTerm === '2' ? 'Midterm 2' : 'Midterm 1';
         const label = `${termLabel} (Semester ${mSem})`;
-
-        // Determine if this midterm is strictly previous to currentPeriodKey
-        // In Indonesian school calendar:
-        // Semester 1 Midterm occurs around October (e.g. 2026-10).
-        // Semester 2 Midterm occurs around March (e.g. 2027-03).
-        const midtermKey = mSem === '1' ? `${currentPeriodKey.split('-')[0]}-09-midterm` : `${currentPeriodKey.split('-')[0]}-03-midterm`;
+        const midtermKey = `${academicYear.replace('/', '-')}-S${mSem}-T${mTerm}-midterm`;
 
         let isPrevious = false;
-        if (currentSemester === '2') {
-          // In semester 2, Semester 1 midterm is always previous
-          if (mSem === '1') isPrevious = true;
-          // In semester 2, Midterm 2 is previous only if month is after March
-          else if (currentPeriodKey >= `${currentPeriodKey.split('-')[0]}-04`) isPrevious = true;
-        } else {
-          // In semester 1, Midterm 1 is previous only if month is November or December
-          if (mSem === '1' && currentPeriodKey >= `${currentPeriodKey.split('-')[0]}-11`) isPrevious = true;
+        if (Number(mSem) < Number(currentSemester)) {
+          isPrevious = true;
+        } else if (Number(mSem) === Number(currentSemester)) {
+          const midtermUpdatedAt = Number(data.updatedAt) || Number(data.approvedAt) || Number(data.submittedForReviewAt) || 0;
+          if (midtermUpdatedAt > 0 && !isNaN(midtermUpdatedAt)) {
+            if (midtermUpdatedAt < currentPeriodDate) {
+              isPrevious = true;
+            }
+          } else {
+            const [curYear, curMonth] = currentPeriodKey.split('-').map(Number);
+            if (Number(currentSemester) === 1 && curMonth > 10) {
+              isPrevious = true;
+            } else if (Number(currentSemester) === 2 && curMonth > 3) {
+              isPrevious = true;
+            }
+          }
         }
 
         if (isPrevious) {
@@ -663,7 +667,7 @@ export async function fetchStudentPreviousGencomHistory(
             status: data.generalComment?.isFinal ? 'FINAL' : 'DRAFT',
             reviewStatus: data.generalCommentReviewStatus || 'DRAFT',
             reviewedByName: data.approvedByName,
-            updatedAt: data.updatedAt ? new Date(data.updatedAt).toISOString() : undefined,
+            updatedAt: data.updatedAt ? new Date(Number(data.updatedAt)).toISOString() : (data.updatedAt ? String(data.updatedAt) : undefined),
             updatedByName: data.updatedBy
           });
         }
@@ -672,8 +676,13 @@ export async function fetchStudentPreviousGencomHistory(
       console.warn('Could not query Midterm history records:', midtermErr);
     }
 
-    // Sort descending by periodKey
-    results.sort((a, b) => b.periodKey.localeCompare(a.periodKey));
+    // Sort descending by periodKey and updatedAt
+    results.sort((a, b) => {
+      if (b.periodKey !== a.periodKey) {
+        return b.periodKey.localeCompare(a.periodKey);
+      }
+      return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    });
   } catch (err) {
     console.error('Error fetching previous gencom history:', err);
   }

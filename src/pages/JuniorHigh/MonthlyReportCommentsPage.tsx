@@ -346,6 +346,7 @@ function MonthlyReportCommentsContent() {
 
   // Inline history states (Eye toggle, NOT popup)
   const [expandedHistoryStudentIds, setExpandedHistoryStudentIds] = React.useState<Record<string, boolean>>({});
+  const [expandedGeneratorHistory, setExpandedGeneratorHistory] = React.useState<boolean>(false);
   const [historyDataMap, setHistoryDataMap] = React.useState<Record<string, PreviousGencomHistoryItem[]>>({});
   const [loadingHistoryMap, setLoadingHistoryMap] = React.useState<Record<string, boolean>>({});
 
@@ -656,7 +657,14 @@ function MonthlyReportCommentsContent() {
     }
 
     setGenDraftText(existing?.generalComment || '');
+    setExpandedGeneratorHistory(false);
     setShowGeneratorModal(true);
+
+    if (!historyDataMap[student.id]) {
+      fetchStudentPreviousGencomHistory(student.id, selectedYear, selectedMonth, selectedSemester)
+        .then(res => setHistoryDataMap(m => ({ ...m, [student.id]: res })))
+        .catch(err => console.error('Error preloading history for generator:', err));
+    }
 
     // Load custom options for this class
     try {
@@ -3075,7 +3083,97 @@ function MonthlyReportCommentsContent() {
 
               {/* Modal Body - Scrollable */}
               <div className="p-6 overflow-y-auto space-y-5 text-xs text-slate-700">
-                
+
+                {/* Collapsible Previous Gencom History Panel */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sid = generatorStudent.id;
+                      setExpandedGeneratorHistory(prev => !prev);
+                      if (!historyDataMap[sid] && !loadingHistoryMap[sid]) {
+                        setLoadingHistoryMap(m => ({ ...m, [sid]: true }));
+                        fetchStudentPreviousGencomHistory(sid, selectedYear, selectedMonth, selectedSemester)
+                          .then(res => setHistoryDataMap(m => ({ ...m, [sid]: res })))
+                          .catch(err => console.error(err))
+                          .finally(() => setLoadingHistoryMap(m => ({ ...m, [sid]: false })));
+                      }
+                    }}
+                    className="w-full px-4 py-3 flex items-center justify-between bg-slate-100 hover:bg-slate-150 transition-colors text-left cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 font-bold text-slate-800 text-xs">
+                      <Clock size={15} className="text-[#002366]" />
+                      <span>Riwayat Komentar Sebelumnya (Monthly & Midterm)</span>
+                      {historyDataMap[generatorStudent.id] && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-100 text-[#002366] font-semibold">
+                          {historyDataMap[generatorStudent.id].length} riwayat
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-slate-500 font-semibold flex items-center gap-1">
+                      {expandedGeneratorHistory ? 'Tutup' : 'Buka'} {expandedGeneratorHistory ? '▲' : '▼'}
+                    </span>
+                  </button>
+
+                  {expandedGeneratorHistory && (
+                    <div className="p-4 space-y-3 bg-white border-t border-slate-200">
+                      {loadingHistoryMap[generatorStudent.id] ? (
+                        <div className="text-center py-3 text-xs text-slate-400">
+                          <RefreshCw size={13} className="animate-spin inline mr-1.5 text-[#002366]" /> Memuat riwayat siswa...
+                        </div>
+                      ) : (!historyDataMap[generatorStudent.id] || historyDataMap[generatorStudent.id].length === 0) ? (
+                        <div className="text-xs text-slate-400 italic text-center py-2 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                          Belum ada riwayat komentar Monthly atau Midterm pada periode sebelumnya dalam tahun ajaran ini.
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                          {historyDataMap[generatorStudent.id].map((hist, idx) => (
+                            <div key={idx} className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1.5 shadow-2xs">
+                              <div className="flex items-center justify-between text-[11px]">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-[#002366] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                                    {hist.source === 'MONTHLY' ? 'Monthly' : 'Midterm'} · {hist.periodLabel}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500">Sem {hist.semester} ({selectedYear})</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${hist.status === 'FINAL' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                                    {hist.status}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (genDraftText.trim()) {
+                                        const confirmUse = window.confirm(
+                                          `Draf narasi saat ini sudah terisi. Apakah Anda ingin memasukkan referensi komentar riwayat (${hist.periodLabel}) ke draf?`
+                                        );
+                                        if (!confirmUse) return;
+                                      }
+                                      setGenDraftText(hist.commentText);
+                                      toast.success(`Komentar riwayat (${hist.periodLabel}) dimuat ke draf narasi.`);
+                                    }}
+                                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white hover:bg-blue-50 text-[#002366] border border-slate-300 transition-colors cursor-pointer"
+                                    title="Gunakan sebagai referensi / salin ke draf"
+                                  >
+                                    Gunakan
+                                  </button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-700 font-sans leading-relaxed whitespace-pre-wrap bg-white p-2.5 rounded border border-slate-200">
+                                {hist.commentText}
+                              </p>
+                              <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                                <span>Diedit oleh: {hist.updatedByName || 'Guru'}</span>
+                                <span>{formatDateTime(hist.updatedAt)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* 1. Student Calling Name & Gender Identitas */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                   <div>
