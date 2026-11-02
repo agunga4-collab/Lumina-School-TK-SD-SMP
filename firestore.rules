@@ -74,6 +74,140 @@ service cloud.firestore {
       allow list, delete: if false;
     }
 
+    // Monthly-only access policy: staff may edit across classes inside their unit.
+    // Reviewer rights are intentionally separate from rubric/admin rights.
+    function monthlyV2Unit(unit) {
+      let u = currentUser();
+      let assigned = u.get('assignedUnits', []);
+      return u.get('unitId', '') in [unit, 'ALL'] || u.get('unit', '') in [unit, 'ALL'] ||
+        (assigned is list && assigned.hasAny([unit, 'ALL']));
+    }
+    function monthlyV2Staff(unit) {
+      return isActive() && (isAdmin() || (
+        userRole() in ['TEACHER', 'HOMEROOM_TEACHER', 'HEAD_UNIT', 'HEAD_JUNIOR',
+          'PRINCIPAL', 'VICE_PRINCIPAL', 'COORDINATOR', 'SECRETARY_ELEM',
+          'SECRETARY_JH', 'COUNSELOR', 'BK_MENTOR', 'MTSS_ACADEMIC_PJ'] &&
+        (monthlyV2Unit(unit) || (unit == 'JUNIOR_HIGH' && userRole() == 'HEAD_JUNIOR' &&
+          currentUser().get('unitId', '') == '' && currentUser().get('unit', '') == ''))
+      ));
+    }
+    function monthlyV2Reviewer(unit) {
+      return isActive() && (
+        (userRole() == 'HEAD_UNIT' && monthlyV2Unit(unit)) ||
+        (unit == 'JUNIOR_HIGH' && userRole() == 'HEAD_JUNIOR' &&
+          (monthlyV2Unit(unit) || (currentUser().get('unitId', '') == '' && currentUser().get('unit', '') == '')))
+      );
+    }
+    function monthlyV2Class(data, unit) {
+      let c = get(/databases/$(database)/documents/classes/$(data.classId)).data;
+      return data.classId is string && c.get('unitId', c.get('unit', '')) == unit &&
+        c.get('status', 'active') != 'archived' &&
+        c.get('academicYear', '') == data.academicYear;
+    }
+    function monthlyV2Identity(before, after) {
+      return after.get('id', '') == before.get('id', '') &&
+        after.studentId == before.studentId && after.classId == before.classId &&
+        after.academicYear == before.academicYear && after.semester == before.semester &&
+        after.get('month', '') == before.get('month', '') &&
+        after.get('periodKey', '') == before.get('periodKey', '') &&
+        after.get('createdAt', null) == before.get('createdAt', null) &&
+        after.get('createdBy', null) == before.get('createdBy', null);
+    }
+    function monthlyV2Unlocked(status) {
+      return status in ['DRAFT', 'NEEDS_REVISION', 'REVISION_REQUESTED'];
+    }
+    function monthlyV2PackageInitial(p) {
+      return p is map && p.get('reviewStatus', 'DRAFT') == 'DRAFT' &&
+        p.keys().hasOnly(['reviewStatus']);
+    }
+    function monthlyV2PackageChange(before, after, reviewer) {
+      let oldStatus = before.get('reviewStatus', 'DRAFT');
+      let nextStatus = after.get('reviewStatus', 'DRAFT');
+      let changed = after.diff(before).affectedKeys();
+      return before == after || (
+        monthlyV2Unlocked(oldStatus) && nextStatus == 'DRAFT' && changed.hasOnly(['reviewStatus'])
+      ) || (
+        monthlyV2Unlocked(oldStatus) && nextStatus == 'SUBMITTED' &&
+        after.get('submittedBy', '') == request.auth.uid &&
+        after.get('sourceHash', '') is string && after.get('sourceHash', '').size() > 0 &&
+        changed.hasOnly(['reviewStatus', 'submittedAt', 'submittedBy', 'submittedByName', 'sourceHash', 'isSourceStale'])
+      ) || (
+        reviewer && oldStatus == 'SUBMITTED' && nextStatus in ['APPROVED', 'NEEDS_REVISION'] &&
+        after.get('reviewedBy', '') == request.auth.uid && after.get('reviewedRole', '') == userRole() &&
+        (nextStatus != 'APPROVED' || (before.get('isSourceStale', false) != true && before.get('sourceHash', '') != '')) &&
+        (nextStatus != 'NEEDS_REVISION' || (after.get('reviewNotes', '') is string && after.get('reviewNotes', '').size() > 0)) &&
+        changed.hasOnly(['reviewStatus', 'reviewNotes', 'reviewedAt', 'reviewedBy', 'reviewedByName', 'reviewedRole', 'isSourceStale'])
+      ) || (
+        reviewer && oldStatus in ['SUBMITTED', 'APPROVED'] && nextStatus == 'DRAFT' &&
+        after.get('reviewedBy', null) in ['', null] && after.get('reviewedAt', null) in ['', null] &&
+        changed.hasOnly(['reviewStatus', 'reviewedAt', 'reviewedBy', 'reviewedByName', 'reviewedRole', 'sourceHash', 'isSourceStale', 'reviewNotes'])
+      );
+    }
+    function monthlyV2UpperContent(before, after) {
+      let m = before.get('monthlyProgressReview', {});
+      let l = before.get('litNumReview', {});
+      return (monthlyV2Unlocked(m.get('reviewStatus', 'DRAFT')) ||
+          (after.get('monthlyGeneralComment', '') == before.get('monthlyGeneralComment', '') &&
+           after.get('monthlyGeneralCommentDraft', '') == before.get('monthlyGeneralCommentDraft', ''))) &&
+        (monthlyV2Unlocked(l.get('reviewStatus', 'DRAFT')) ||
+          (after.get('bahasaIndonesiaNarrative', '') == before.get('bahasaIndonesiaNarrative', '') &&
+           after.get('englishNarrative', '') == before.get('englishNarrative', '') &&
+           after.get('mathematicsNarrative', '') == before.get('mathematicsNarrative', '') &&
+           after.get('bahasaIndonesiaDraft', '') == before.get('bahasaIndonesiaDraft', '') &&
+           after.get('englishDraft', '') == before.get('englishDraft', '') &&
+           after.get('mathematicsDraft', '') == before.get('mathematicsDraft', '')));
+    }
+    function monthlyV2UpperUpdate(before, after) {
+      return monthlyV2Identity(before, after) && monthlyV2UpperContent(before, after) &&
+        monthlyV2PackageChange(before.get('monthlyProgressReview', {}), after.get('monthlyProgressReview', {}), monthlyV2Reviewer('ELEMENTARY')) &&
+        monthlyV2PackageChange(before.get('litNumReview', {}), after.get('litNumReview', {}), monthlyV2Reviewer('ELEMENTARY')) &&
+        after.diff(before).affectedKeys().hasOnly(['monthlyGeneralComment', 'monthlyGeneralCommentDraft',
+          'bahasaIndonesiaNarrative', 'bahasaIndonesiaDraft', 'englishNarrative', 'englishDraft',
+          'mathematicsNarrative', 'mathematicsDraft', 'monthlyProgressReview', 'litNumReview',
+          'narrativeLanguage', 'updatedAt', 'updatedBy', 'updatedByName']);
+    }
+    function monthlyV2JHNoApproval(data) {
+      return data.get('reviewedByUid', '') in ['', null] && data.get('reviewedByName', '') in ['', null] &&
+        data.get('reviewedByRole', '') in ['', null] && data.get('reviewedAt', null) in ['', null] &&
+        data.get('approvedBy', '') in ['', null] && data.get('approvedAt', null) in ['', null] &&
+        data.get('approvedByUid', '') in ['', null] && data.get('approvedByName', '') in ['', null] &&
+        data.get('approvedByRole', '') in ['', null] && data.get('reviewHistory', []).size() == 0;
+    }
+    function monthlyV2JHHistory(before, after, reviewer) {
+      let oldList = before.get('reviewHistory', []);
+      let nextList = after.get('reviewHistory', []);
+      return nextList == oldList || (
+        nextList is list && nextList.size() == oldList.size() + 1 && nextList.hasAll(oldList) &&
+        nextList[0].get('actorId', '') == request.auth.uid &&
+        nextList[0].get('commentSnapshot', '') == after.get('generalComment', '') &&
+        (reviewer || !(nextList[0].get('action', '') in ['APPROVED', 'REVISION_REQUESTED', 'REVISION_OPENED']))
+      );
+    }
+    function monthlyV2JHUpdate(before, after) {
+      let prev = before.get('reviewStatus', 'DRAFT');
+      let next = after.get('reviewStatus', 'DRAFT');
+      let changed = after.diff(before).affectedKeys();
+      let reviewer = monthlyV2Reviewer('JUNIOR_HIGH');
+      return monthlyV2Identity(before, after) && monthlyV2JHHistory(before, after, reviewer) && (
+        (monthlyV2Unlocked(prev) && next in ['DRAFT', 'SUBMITTED', 'REVISION_REQUESTED'] &&
+          (next != 'REVISION_REQUESTED' || next == prev) &&
+          (next != 'SUBMITTED' || (after.get('submittedByUid', '') == request.auth.uid &&
+            after.get('generalComment', '') is string && after.get('generalComment', '').size() > 0)) &&
+          !changed.hasAny(['reviewedAt', 'reviewedByUid', 'reviewedByName', 'reviewedByRole', 'reviewFeedback',
+            'approvedAt', 'approvedBy', 'approvedByUid', 'approvedByName', 'approvedByRole'])) ||
+        (reviewer && prev == 'SUBMITTED' && next in ['APPROVED', 'REVISION_REQUESTED'] &&
+          after.get('reviewedByUid', '') == request.auth.uid && after.get('reviewedByRole', '') == userRole() &&
+          (next != 'REVISION_REQUESTED' || (after.get('reviewFeedback', '') is string && after.get('reviewFeedback', '').size() > 0)) &&
+          changed.hasOnly(['reviewStatus', 'reviewedAt', 'reviewedByUid', 'reviewedByName', 'reviewedByRole',
+            'reviewFeedback', 'reviewHistory', 'version', 'updatedAt'])) ||
+        (reviewer && prev in ['SUBMITTED', 'APPROVED'] && next == 'REVISION_REQUESTED' &&
+          after.get('reviewedByUid', '') == request.auth.uid && after.get('reviewedByRole', '') == userRole() &&
+          after.get('reviewFeedback', '') is string && after.get('reviewFeedback', '').size() > 0 &&
+          changed.hasOnly(['reviewStatus', 'reviewedAt', 'reviewedByUid', 'reviewedByName', 'reviewedByRole',
+            'reviewFeedback', 'reviewHistory', 'version', 'updatedAt']))
+      );
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -1609,11 +1743,8 @@ service cloud.firestore {
         isOwnStudentData(resource.data.studentId) ||
         isLinkedStudent(resource.data.studentId)
       );
-      allow create: if (isAdmin() || (
-          isJuniorHighStaff() && (
-            !isTeacher() || isTeacherAssignedToClass(request.resource.data.classId)
-          )
-        )) &&
+      allow create: if monthlyV2Staff('JUNIOR_HIGH') &&
+        monthlyV2Class(request.resource.data, 'JUNIOR_HIGH') &&
         request.resource.data.unit == "JUNIOR_HIGH" &&
         request.resource.data.reportType == "MONTHLY_REPORT" &&
         request.resource.data.generatedBy == request.auth.uid &&
@@ -2051,22 +2182,25 @@ service cloud.firestore {
     }
 
     match /elem_monthly_curriculum/{docId} {
-      allow read: if isActive() && isElementaryStaff();
-      allow write: if isActive() && isElementaryStaff();
+      allow read: if isActive() && monthlyV2Staff('ELEMENTARY');
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_student_scores/{docId} {
       allow read: if isActive() && (
-        isElementaryStaff() ||
+        monthlyV2Staff('ELEMENTARY') ||
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
-      allow write: if isActive() && isElementaryStaff();
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_project_docs/{docId} {
-      allow read: if isActive() && (isElementaryStaff() || isSignedIn());
-      allow write: if isActive() && isElementaryStaff();
+      allow read: if isActive() && (monthlyV2Staff('ELEMENTARY') || isSignedIn());
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_student_photos/{docId} {
@@ -2083,22 +2217,22 @@ service cloud.firestore {
         );
       }
       allow read: if isActive() && (
-        isElementaryStaff() ||
+        monthlyV2Staff('ELEMENTARY') ||
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
-      allow create: if isActive() && isElementaryStaff() &&
+      allow create: if isActive() && monthlyV2Staff('ELEMENTARY') &&
         isMonthlyUpperPhotoClass(request.resource.data);
-      allow update: if isActive() && isElementaryStaff() &&
+      allow update: if isActive() && monthlyV2Staff('ELEMENTARY') &&
         isMonthlyUpperPhotoClass(resource.data) && isMonthlyUpperPhotoClass(request.resource.data) &&
         request.resource.data.classId == resource.data.classId &&
         request.resource.data.studentId == resource.data.studentId;
-      allow delete: if isActive() && isElementaryStaff() && isMonthlyUpperPhotoClass(resource.data);
+      allow delete: if isActive() && monthlyV2Staff('ELEMENTARY') && isMonthlyUpperPhotoClass(resource.data);
     }
 
     match /elem_monthly_student_narratives/{docId} {
       allow read: if isActive() && (
-        isElementaryStaff() ||
+        monthlyV2Staff('ELEMENTARY') ||
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
@@ -2115,7 +2249,9 @@ service cloud.firestore {
     }
 
     match /elem_monthly_attendance_configs/{configId} {
-      allow read, write: if isActive() && isElementaryStaff();
+      allow read: if monthlyV2Staff('ELEMENTARY');
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_published_reports/{reportId} {
@@ -2145,42 +2281,57 @@ service cloud.firestore {
 
     // === ELEMENTARY MONTHLY REPORT (UPPER GRADE 4-6) ===
     match /elem_monthly_upper_curricula/{docId} {
-      allow read, write: if isActive() && isElementaryStaff();
+      allow read: if monthlyV2Staff('ELEMENTARY');
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_upper_student_data/{docId} {
       allow read: if isActive() && (
-        isElementaryStaff() ||
+        monthlyV2Staff('ELEMENTARY') ||
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
-      allow write: if isActive() && isElementaryStaff();
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_upper_litnum_records/{docId} {
       allow read: if isActive() && (
-        isElementaryStaff() ||
+        monthlyV2Staff('ELEMENTARY') ||
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
-      allow write: if isActive() && isElementaryStaff();
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_upper_litnum_class_configs/{docId} {
-      allow read, write: if isActive() && isElementaryStaff();
+      allow read: if monthlyV2Staff('ELEMENTARY');
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_upper_attendance_configs/{configId} {
-      allow read, write: if isActive() && isElementaryStaff();
+      allow read: if monthlyV2Staff('ELEMENTARY');
+      allow create, update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY');
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY');
     }
 
     match /elem_monthly_upper_narratives/{docId} {
       allow read: if isActive() && (
-        isElementaryStaff() ||
+        monthlyV2Staff('ELEMENTARY') ||
         (resource != null && isOwnStudentData(resource.data.studentId)) ||
         (resource != null && isLinkedStudent(resource.data.studentId))
       );
-      allow write: if isActive() && isElementaryStaff();
+      allow create: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(incoming(), 'ELEMENTARY') &&
+        monthlyV2PackageInitial(incoming().get('monthlyProgressReview', {})) &&
+        monthlyV2PackageInitial(incoming().get('litNumReview', {}));
+      allow update: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY') &&
+        monthlyV2UpperUpdate(existing(), incoming());
+      allow delete: if monthlyV2Staff('ELEMENTARY') && monthlyV2Class(existing(), 'ELEMENTARY') &&
+        monthlyV2Unlocked(existing().get('monthlyProgressReview', {}).get('reviewStatus', 'DRAFT')) &&
+        monthlyV2Unlocked(existing().get('litNumReview', {}).get('reviewStatus', 'DRAFT'));
     }
 
     match /elem_monthly_upper_published_reports/{reportId} {
@@ -2623,19 +2774,16 @@ service cloud.firestore {
     }
 
     match /junior_high_monthly_report_comments/{commentId} {
-      allow read: if isActive() && (isJuniorHighStaff() || isAdmin());
-      allow write: if isActive() && (isJuniorHighStaff() || isAdmin()) &&
-        incoming().unit == 'JUNIOR_HIGH' &&
-        incoming().reportType == 'MONTHLY_PROGRESS' &&
-        (
-          !('reviewStatus' in incoming()) ||
-          incoming().reviewStatus == 'DRAFT' ||
-          incoming().reviewStatus == 'SUBMITTED' ||
-          (
-            incoming().reviewStatus in ['APPROVED', 'REVISION_REQUESTED'] &&
-            (isAdmin() || userRole() in ['HEAD_UNIT', 'HEAD_JUNIOR', 'PRINCIPAL', 'VICE_PRINCIPAL'])
-          )
-        );
+      allow read: if monthlyV2Staff('JUNIOR_HIGH');
+      allow create: if monthlyV2Staff('JUNIOR_HIGH') && monthlyV2Class(incoming(), 'JUNIOR_HIGH') &&
+        incoming().unit == 'JUNIOR_HIGH' && incoming().reportType == 'MONTHLY_PROGRESS' &&
+        incoming().get('reviewStatus', 'DRAFT') == 'DRAFT' && monthlyV2JHNoApproval(incoming());
+      allow update: if monthlyV2Staff('JUNIOR_HIGH') && monthlyV2Class(existing(), 'JUNIOR_HIGH') &&
+        incoming().unit == existing().unit && incoming().unit == 'JUNIOR_HIGH' &&
+        incoming().reportType == existing().reportType && incoming().reportType == 'MONTHLY_PROGRESS' &&
+        monthlyV2JHUpdate(existing(), incoming());
+      allow delete: if monthlyV2Staff('JUNIOR_HIGH') && monthlyV2Class(existing(), 'JUNIOR_HIGH') &&
+        monthlyV2Unlocked(existing().get('reviewStatus', 'DRAFT'));
     }
 
     match /manual_junior_high_report_links/{linkId} {

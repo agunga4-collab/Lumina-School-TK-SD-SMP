@@ -101,8 +101,10 @@ export function canManageMonthlyPhotoClass(actor: { uid: string; email?: string;
   if (declaredUnit && !units.some(unit => unit === 'ELEMENTARY' || unit === 'ALL')) return false;
   if (['HEAD_UNIT', 'PRINCIPAL', 'VICE_PRINCIPAL', 'SECRETARY_ELEM', 'COORDINATOR'].includes(role)) return true;
   if (!['TEACHER', 'HOMEROOM_TEACHER', 'COUNSELOR', 'BK_MENTOR'].includes(role)) return false;
-  const ids = [cls.homeroomTeacherId, ...['assignedTeacherIds', 'homeroomTeacherIds', 'waliKelasIds', 'gpkTeacherIds'].flatMap(key => Array.isArray(cls[key]) ? cls[key] : []), ...(Array.isArray(cls.teacherAssignments) ? cls.teacherAssignments.map((assignment: any) => assignment.userId) : [])];
-  return ids.includes(actor.uid);
+  // Monthly is shared across Elementary classes; assignment is not an edit permission.
+  // A teacher must still explicitly belong to Elementary/ALL. Other scope and
+  // private-file checks remain in authorizeScope/authorizedFile.
+  return units.some(unit => unit === 'ELEMENTARY' || unit === 'ALL');
 }
 
 function sameYear(left: unknown, right: unknown): boolean {
@@ -239,7 +241,7 @@ export function createElementaryMonthlyPhotoService(deps: MonthlyPhotoDependenci
         if (!permitted) throw new PhotoHttpError(403, 'PHOTO_SCOPE_DENIED', 'Anda tidak memiliki akses pada siswa ini.');
       }
     }
-    if ((!studentId || options.write) && !staffAccess) throw new PhotoHttpError(403, 'PHOTO_SCOPE_DENIED', 'Anda tidak ditugaskan pada kelas ini.');
+    if ((!studentId || options.write) && !staffAccess) throw new PhotoHttpError(403, 'PHOTO_SCOPE_DENIED', 'Akun staf Elementary aktif dengan cakupan unit yang sesuai diperlukan.');
     return {
       classId, studentId, ...period, className: String(classData.name || classId),
       studentName: String(studentData.name || studentData.fullName || studentId), gradeLevel,

@@ -21,6 +21,15 @@ export function canManageSELRubrics(actor: MonthlyPhotoActor): boolean {
   const units = [p.unitId, p.unit, ...(p.assignedUnits || [])].filter(Boolean);
   return ['HEAD_UNIT', 'PRINCIPAL'].includes(p.role) && (!units.length || units.some(u => ['ELEMENTARY', 'ALL'].includes(u)));
 }
+/** Monthly narrative approval is separate from rubric administration. */
+export function canReviewMonthlySELNarratives(actor: MonthlyPhotoActor): boolean {
+  const p = actor.profile || {};
+  if (!actor.uid || p.status !== 'active' || String(p.role || '').trim().toUpperCase() !== 'HEAD_UNIT') return false;
+  const units = [p.unitId, p.unit, ...(Array.isArray(p.assignedUnits) ? p.assignedUnits : [])]
+    .filter(value => typeof value === 'string')
+    .map(value => value.trim().toUpperCase());
+  return units.includes('ELEMENTARY') || units.includes('ALL');
+}
 export function selBindingId(input: any): string {
   return hash([input.classId, normalizedPhotoYear(input.academicYear), String(input.semester), input.month]);
 }
@@ -174,11 +183,11 @@ export function createElementaryMonthlySELService(deps: SELDependencies) {
         return { narrativeDoc: result };
       }
       if (action === 'approve' || action === 'revision') {
-        admin(actor);
+        if (!canReviewMonthlySELNarratives(actor)) fail(403, 'SEL_REVIEWER_REQUIRED', 'Hanya Kepala Unit Elementary yang berwenang meninjau narasi Monthly.');
         if (old.reviewStatus !== 'SUBMITTED') fail(409, 'SEL_REVIEW_STATE', 'Hanya narasi yang diajukan yang dapat ditinjau.');
       }
       if (action === 'unlock') {
-        if (old.reviewStatus === 'APPROVED') admin(actor);
+        if (old.reviewStatus === 'APPROVED' && !canReviewMonthlySELNarratives(actor)) fail(403, 'SEL_REVIEWER_REQUIRED', 'Hanya Kepala Unit Elementary yang berwenang membuka kembali narasi yang disetujui.');
         if (!['SUBMITTED', 'APPROVED'].includes(old.reviewStatus)) fail(409, 'SEL_UNLOCK_STATE', 'Narasi sudah terbuka.');
       }
       if (action === 'submit') {
