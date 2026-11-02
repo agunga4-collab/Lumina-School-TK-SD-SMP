@@ -1268,8 +1268,8 @@ const NarrativeAndApprovalTabInner: React.FC<NarrativeAndApprovalTabProps> = ({
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
                       Kalimat Pembuka Akademik:
                     </label>
-                    <input
-                      type="text"
+                    <textarea
+                      rows={2}
                       value={academicOpening}
                       onChange={(e) => {
                         setAcademicOpening(e.target.value);
@@ -1278,7 +1278,7 @@ const NarrativeAndApprovalTabInner: React.FC<NarrativeAndApprovalTabProps> = ({
                       }}
                       disabled={isLocked}
                       placeholder="Pada bulan ini, capaian pembelajaran ananda adalah sebagai berikut:"
-                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100"
+                      className="w-full text-xs p-2.5 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 resize-y"
                     />
                   </div>
 
@@ -1397,8 +1397,8 @@ const NarrativeAndApprovalTabInner: React.FC<NarrativeAndApprovalTabProps> = ({
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
                       Kalimat Penutup Akademik:
                     </label>
-                    <input
-                      type="text"
+                    <textarea
+                      rows={2}
                       value={academicClosing}
                       onChange={(e) => {
                         setAcademicClosing(e.target.value);
@@ -1407,7 +1407,7 @@ const NarrativeAndApprovalTabInner: React.FC<NarrativeAndApprovalTabProps> = ({
                       }}
                       disabled={isLocked}
                       placeholder="Dukungan berkelanjutan di rumah senantiasa menjadi penyemangat ananda..."
-                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100"
+                      className="w-full text-xs p-2.5 border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 resize-y"
                     />
                   </div>
 

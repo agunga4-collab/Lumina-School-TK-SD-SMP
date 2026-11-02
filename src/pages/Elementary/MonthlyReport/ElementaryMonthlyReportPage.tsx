@@ -19,6 +19,7 @@ import {
   getMonthOptionsForAcademicYear,
   formatMonthLabel
 } from '../../../services/elementaryMonthlyReportService';
+import { getJakartaDefaultMonth } from '../../../services/juniorHighMonthlyReportService';
 import { LearningGoalsScoreGrid } from './components/LearningGoalsScoreGrid';
 import { ProjectAndPhotoTab } from './components/ProjectAndPhotoTab';
 import { NarrativeAndApprovalTab } from './components/NarrativeAndApprovalTab';
@@ -68,12 +69,10 @@ export default function ElementaryMonthlyReportPage() {
 
   const urlMonth = searchParams.get('month');
   const [selectedMonth, setSelectedMonth] = React.useState<string>(() => {
-    if (urlMonth) return urlMonth;
-    // Current YYYY-MM
-    const today = new Date();
-    const currentYm = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-    const match = monthOptions.find(m => m.value === currentYm);
-    return match ? match.value : monthOptions[0]?.value || '2025-08';
+    if (urlMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(urlMonth)) return urlMonth;
+    const defaultYm = getJakartaDefaultMonth();
+    const match = monthOptions.find(m => m.value === defaultYm);
+    return match ? match.value : monthOptions[0]?.value || defaultYm;
   });
 
   // Classes & Student state
